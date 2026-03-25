@@ -46,6 +46,19 @@ def _parse_fetch_marker(text: str) -> dict | None:
         return None
 
 
+def _get_savings_plan(item: dict) -> dict:
+    sp = item.get("savingsPlan") or []
+    rates = {}
+    for entry in sp:
+        term = entry.get("term", "")
+        price = entry.get("retailPrice") or entry.get("unitPrice") or 0.0
+        if "1" in term:
+            rates["1Y"] = price
+        elif "3" in term:
+            rates["3Y"] = price
+    return rates
+
+
 def _format_pricing(params: dict, items: list[dict]) -> str:
     sku = params['sku']
     region = params['region']
@@ -73,12 +86,22 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
     ri1 = find_price(items, os_type, 'Reservation', '1 Year')
     ri3 = find_price(items, os_type, 'Reservation', '3 Years')
 
-    # Windows RI total = compute RI cost + Windows license cost
-    # License cost = (Windows PAYG - Linux PAYG) * 730 — constant across RI terms
-    linux_payg_item = find_price(items, 'Linux', 'Consumption') if os_type == 'Windows' else None
-    win_lic_monthly = (
-        max(0.0, (price_h - linux_payg_item['retailPrice']) * HOURS_PER_MONTH)
-        if os_type == 'Windows' and linux_payg_item
+    # Always find Linux item directly by filtering productName
+    linux_items = [
+        i for i in items
+        if 'windows' not in (i.get('productName') or '').lower()
+        and (i.get('priceType') or i.get('type')) == 'Consumption'
+        and 'spot' not in (i.get('skuName') or '').lower()
+        and 'low priority' not in (i.get('skuName') or '').lower()
+        and 'Hour' in (i.get('unitOfMeasure') or '')
+    ]
+    linux_payg_direct = sorted(linux_items, key=lambda x: x['retailPrice'])[0] if linux_items else None
+    sp_linux = linux_payg_direct if linux_payg_direct else (payg_item if os_type == 'Linux' else None)
+    sp_rates = _get_savings_plan(sp_linux) if sp_linux else {}
+
+    win_lic_payg = (
+        max(0.0, (price_h - linux_payg_direct['retailPrice']) * HOURS_PER_MONTH)
+        if os_type == 'Windows' and linux_payg_direct
         else 0.0
     )
 
@@ -109,15 +132,46 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
     out += f"Per VM:  {currency} {f4(price_h)}/hr  |  {c(price_m)}/month\n"
     if qty > 1:
         out += f"Total:   {c(price_m * qty)}/month\n"
+    if os_type == 'Windows' and linux_payg_direct:
+        ahb_payg_m = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH
+        out += f"AHB PAYG: {currency} {ahb_payg_m:.2f}/month  (save {pct(price_m, ahb_payg_m)}% vs Windows PAYG RRP)\n"
+
+    out += "\n--- Savings Plan (flexible, compute discount only) ---\n"
+    if sp_rates:
+        if os_type == "Windows":
+            out += f"License: {c(win_lic_payg)}/month  (at RRP, no discount)\n\n"
+        if "1Y" in sp_rates:
+            sp1_compute = sp_rates["1Y"] * HOURS_PER_MONTH
+            sp1_total = sp1_compute + win_lic_payg
+            sp1_compute_base = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH if linux_payg_direct else price_m
+            out += f"1-Year Savings Plan  (~{pct(sp1_compute_base, sp1_compute)}% compute discount):\n"
+            out += f"  Compute: {c(sp1_compute)}/month  (discounted)\n"
+            if os_type == "Windows":
+                out += f"  License: {c(win_lic_payg)}/month  (at RRP)\n"
+            out += f"  Total:   {c(sp1_total)}/month\n"
+            if qty > 1:
+                out += f"  {qty} VMs:  {c(sp1_total * qty)}/month\n"
+        if "3Y" in sp_rates:
+            sp3_compute = sp_rates["3Y"] * HOURS_PER_MONTH
+            sp3_total = sp3_compute + win_lic_payg
+            out += f"\n3-Year Savings Plan  (~{pct(sp1_compute_base, sp3_compute)}% compute discount):\n"
+            out += f"  Compute: {c(sp3_compute)}/month  (discounted)\n"
+            if os_type == "Windows":
+                out += f"  License: {c(win_lic_payg)}/month  (at RRP)\n"
+            out += f"  Total:   {c(sp3_total)}/month\n"
+            if qty > 1:
+                out += f"  {qty} VMs:  {c(sp3_total * qty)}/month\n"
+    else:
+        out += "Savings Plan: not available for this VM\n"
 
     out += "\n--- Reserved Instances (vs PAYG) ---\n"
     if ri1:
         r1_compute = ri_monthly(ri1)
-        r1_m = r1_compute + win_lic_monthly
+        r1_m = r1_compute + win_lic_payg
         out += f"1-Year RI  (save {pct(price_m, r1_m)}%):\n"
         out += f"  Per VM:  {c(r1_m)}/month"
-        if os_type == 'Windows' and win_lic_monthly > 0:
-            out += f"  ({c(r1_compute)} compute + {c(win_lic_monthly)} Win license)"
+        if os_type == 'Windows' and win_lic_payg > 0:
+            out += f"  ({c(r1_compute)} compute + {c(win_lic_payg)} Win license)"
         out += "\n"
         if qty > 1:
             out += f"  Total:   {c(r1_m * qty)}/month\n"
@@ -126,11 +180,11 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
 
     if ri3:
         r3_compute = ri_monthly(ri3)
-        r3_m = r3_compute + win_lic_monthly
+        r3_m = r3_compute + win_lic_payg
         out += f"3-Year RI  (save {pct(price_m, r3_m)}%):\n"
         out += f"  Per VM:  {c(r3_m)}/month"
-        if os_type == 'Windows' and win_lic_monthly > 0:
-            out += f"  ({c(r3_compute)} compute + {c(win_lic_monthly)} Win license)"
+        if os_type == 'Windows' and win_lic_payg > 0:
+            out += f"  ({c(r3_compute)} compute + {c(win_lic_payg)} Win license)"
         out += "\n"
         if qty > 1:
             out += f"  Total:   {c(r3_m * qty)}/month\n"
@@ -139,7 +193,7 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
 
     # Always show HB section for Windows VMs
     if os_type == 'Windows':
-        hb_p = find_price(items, 'Linux', 'Consumption')
+        hb_p = linux_payg_direct
         hb_r1 = find_price(items, 'Linux', 'Reservation', '1 Year')
         hb_r3 = find_price(items, 'Linux', 'Reservation', '3 Years')
 
@@ -148,15 +202,16 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
 
         if hb_p:
             hb_m = hb_p['retailPrice'] * HOURS_PER_MONTH
-            out += f"PAYG + HB:      {c(hb_m)}/month  (save {pct(price_m, hb_m)}% vs Windows PAYG)\n"
+            out += f"PAYG + HB:      {c(hb_m)}/month  (save {pct(price_m, hb_m)}% vs Windows PAYG RRP)\n"
         if hb_r1:
             h1_m = ri_monthly(hb_r1)
-            out += f"1-Year RI + HB: {c(h1_m)}/month  (save {pct(price_m, h1_m)}% vs Windows PAYG)\n"
+            out += f"1-Year RI + HB: {c(h1_m)}/month  (save {pct(price_m, h1_m)}% vs Windows PAYG RRP)\n"
         if hb_r3:
             h3_m = ri_monthly(hb_r3)
-            out += f"3-Year RI + HB: {c(h3_m)}/month  (save {pct(price_m, h3_m)}% vs Windows PAYG)\n"
+            out += f"3-Year RI + HB: {c(h3_m)}/month  (save {pct(price_m, h3_m)}% vs Windows PAYG RRP)\n"
 
-    out += f"\nMonthly estimates based on {HOURS_PER_MONTH} hours. Prices are retail list rates."
+    out += f"\nAll prices are Microsoft Retail RRP. CSP pricing will be lower.\n"
+    out += f"Monthly estimates based on {HOURS_PER_MONTH} hours."
     return out
 
 
