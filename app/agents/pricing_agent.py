@@ -3,9 +3,7 @@ import logging
 import os
 import re
 
-import anthropic
-
-from app.services.azure_pricing import fetch_prices
+from app.services.azure_pricing import fetch_prices, fetch_temp_storage_gb
 from app.utils.pricing_calculator import HOURS_PER_MONTH, detect_item_os, find_price, ri_monthly
 from app.utils.region_normalizer import display_region
 
@@ -59,7 +57,7 @@ def _get_savings_plan(item: dict) -> dict:
     return rates
 
 
-def _format_pricing(params: dict, items: list[dict]) -> str:
+def _format_pricing(params: dict, items: list[dict], temp_storage_gb: int | None = None) -> str:
     sku = params['sku']
     region = params['region']
     os_type = params['os']
@@ -124,6 +122,8 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
         out += " + Azure Hybrid Benefit"
     out += "\n"
     out += f"Region:   {reg}\n"
+    if temp_storage_gb:
+        out += f"Temp Storage: {temp_storage_gb} GB SSD (included)\n"
     if qty > 1:
         out += f"Quantity: {qty} VMs\n"
     out += "\n"
@@ -176,7 +176,10 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
         if qty > 1:
             out += f"  Total:   {c(r1_m * qty)}/month\n"
     else:
-        out += "1-Year RI: not available in this region\n"
+        if payg_item:
+            out += "1-Year RI: not available via public API for this SKU — verify at azure.com/calculator\n"
+        else:
+            out += "1-Year RI: not available in this region\n"
 
     if ri3:
         r3_compute = ri_monthly(ri3)
@@ -189,7 +192,10 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
         if qty > 1:
             out += f"  Total:   {c(r3_m * qty)}/month\n"
     else:
-        out += "3-Year RI: not available in this region\n"
+        if payg_item:
+            out += "3-Year RI: not available via public API for this SKU — verify at azure.com/calculator\n"
+        else:
+            out += "3-Year RI: not available in this region\n"
 
     # Always show HB section for Windows VMs
     if os_type == 'Windows':
@@ -216,32 +222,42 @@ def _format_pricing(params: dict, items: list[dict]) -> str:
 
 
 async def run(messages: list[dict]) -> dict:
-    """
-    Run the pricing agent.
-    Returns {"reply": str, "type": "conversation" | "pricing"}
-    """
-    client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    import httpx
+    endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+    api_key = os.environ["AZURE_OPENAI_KEY"]
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 
-    response = await client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=messages,
-    )
+    url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=2024-02-01"
 
-    claude_text = response.content[0].text if response.content else ""
+    # Convert Anthropic message format to OpenAI format
+    oai_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for m in messages:
+        oai_messages.append({"role": m["role"], "content": m["content"]})
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            url,
+            headers={"api-key": api_key, "Content-Type": "application/json"},
+            json={"model": deployment, "messages": oai_messages, "max_tokens": 1024}
+        )
+        if not response.is_success:
+            logger.error("Azure OpenAI error %s: %s", response.status_code, response.text)
+        response.raise_for_status()
+        data = response.json()
+
+    claude_text = data["choices"][0]["message"]["content"]
     fetch_params = _parse_fetch_marker(claude_text)
 
     if fetch_params:
-        sku = fetch_params['sku']
-        region = fetch_params['region']
-        logger.debug("FETCH_PRICING triggered: sku=%s region=%s os=%s", sku, region, fetch_params.get('os'))
+        sku = fetch_params["sku"]
+        region = fetch_params["region"]
+        logger.debug("FETCH_PRICING triggered: sku=%s region=%s os=%s", sku, region, fetch_params.get("os"))
         try:
             items = await fetch_prices(region, sku)
         except Exception as e:
             return {"reply": f"Error reaching Azure Pricing API: {e}", "type": "pricing"}
-
-        pricing_text = _format_pricing(fetch_params, items)
+        temp_storage_gb = await fetch_temp_storage_gb(sku, region)
+        pricing_text = _format_pricing(fetch_params, items, temp_storage_gb)
         return {"reply": pricing_text, "type": "pricing"}
 
     return {"reply": claude_text, "type": "conversation"}
