@@ -1,7 +1,5 @@
 import logging
-import os
 import re
-import subprocess
 
 import httpx
 
@@ -71,35 +69,46 @@ async def fetch_prices(region: str, sku: str) -> list[dict]:
 
 
 async def fetch_temp_storage_gb(sku: str, region: str) -> int | None:
-    """
-    Fetch temporary storage size for a VM SKU using ARM SKU capabilities API.
-    Returns storage in GB or None if not available.
-    """
-    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
-        url = f"https://management.azure.com/subscriptions/{os.environ.get('AZURE_SUBSCRIPTION_ID', '')}/providers/Microsoft.Compute/skus"
-        params = {
-            "api-version": "2021-07-01",
-            "$filter": f"location eq '{region}'"
-        }
-        result = subprocess.run(
-            ["az", "account", "get-access-token", "--query", "accessToken", "-o", "tsv"],
-            capture_output=True, text=True
-        )
-        token = result.stdout.strip()
-
-        response = await client.get(
-            url,
-            params=params,
-            headers={"Authorization": f"Bearer {token}"}
-        )
-        if not response.is_success:
-            return None
-
-        skus = response.json().get("value", [])
-        for s in skus:
-            if s.get("name") == sku and s.get("resourceType") == "virtualMachines":
-                for cap in s.get("capabilities", []):
-                    if cap.get("name") == "MaxResourceVolumeMB":
-                        mb = int(cap.get("value", 0))
-                        return mb // 1024 if mb > 0 else None
+    import os
+    subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
+    if not subscription_id:
         return None
+    try:
+        tenant_id = os.environ.get('AZURE_TENANT_ID', '')
+        client_id = os.environ.get('AZURE_CLIENT_ID', '')
+        client_secret = os.environ.get('AZURE_CLIENT_SECRET', '')
+        if not all([tenant_id, client_id, client_secret]):
+            async with httpx.AsyncClient(timeout=5) as client:
+                token_response = await client.get(
+                    'http://169.254.169.254/metadata/identity/oauth2/token',
+                    params={'api-version': '2018-02-01', 'resource': 'https://management.azure.com/'},
+                    headers={'Metadata': 'true'}
+                )
+                if not token_response.is_success:
+                    return None
+                token = token_response.json().get('access_token')
+        else:
+            async with httpx.AsyncClient(timeout=5) as client:
+                token_response = await client.post(
+                    f'https://login.microsoftonline.com/{tenant_id}/oauth2/token',
+                    data={'grant_type': 'client_credentials', 'client_id': client_id, 'client_secret': client_secret, 'resource': 'https://management.azure.com/'}
+                )
+                if not token_response.is_success:
+                    return None
+                token = token_response.json().get('access_token')
+        if not token:
+            return None
+        async with httpx.AsyncClient(timeout=10) as client:
+            url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus"
+            response = await client.get(url, params={'api-version': '2021-07-01', '$filter': f"location eq '{region}'"}, headers={'Authorization': f'Bearer {token}'})
+            if not response.is_success:
+                return None
+            for s in response.json().get('value', []):
+                if s.get('name') == sku and s.get('resourceType') == 'virtualMachines':
+                    for cap in s.get('capabilities', []):
+                        if cap.get('name') == 'MaxResourceVolumeMB':
+                            mb = int(cap.get('value', 0))
+                            return mb // 1024 if mb > 0 else None
+    except Exception:
+        return None
+    return None
