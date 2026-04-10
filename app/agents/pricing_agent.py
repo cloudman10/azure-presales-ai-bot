@@ -30,6 +30,12 @@ RULES:
   this exact JSON and nothing else:
   FETCH_PRICING:{"sku":"<normalized>","region":"<armRegionName>","os":"<Windows|Linux>","qty":<n>,"storage_gb":null,"wants_hb":false,"wants_ri":null}
 - Normalize SKU to Standard_ format: Standard_D4s_v5, Standard_E8-4ads_v7
+- CRITICAL: Constrained vCPU SKUs MUST keep the hyphen. The format is Standard_X{size}-{vcpu}{suffix}_vN
+  - e42adsv5 → Standard_E4-2ads_v5 (NOT Standard_E42ads_v5)
+  - e84adsv5 → Standard_E8-4ads_v5 (NOT Standard_E84ads_v5)
+  - e164adsv5 → Standard_E16-4ads_v5 (NOT Standard_E164ads_v5)
+  - e328adsv5 → Standard_E32-8ads_v5 (NOT Standard_E328ads_v5)
+  - Rule: if digits run together without hyphen, split where second number is 2, 4, 8, or 16
 - Normalize region to armRegionName: australiaeast, southeastasia, eastus
 - Never make up prices"""
 
