@@ -1,3 +1,7 @@
+## Azure Resources
+
+- **Subscription ID:** dd5a4d29-50b0-4330-b83a-37094699272c
+
 ## Key Pricing Logic
 
 <!-- Pricing logic documentation goes here -->
