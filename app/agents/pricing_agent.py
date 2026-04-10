@@ -255,6 +255,13 @@ async def run(messages: list[dict]) -> dict:
     fetch_params = _parse_fetch_marker(claude_text)
 
     if fetch_params:
+        from app.utils.sku_normalizer import normalize_sku_name
+        raw_sku = fetch_params.get('sku', '')
+        normalized = normalize_sku_name(raw_sku)
+        if normalized:
+            fetch_params['sku'] = normalized
+
+    if fetch_params:
         sku = fetch_params["sku"]
         region = fetch_params["region"]
         logger.debug("FETCH_PRICING triggered: sku=%s region=%s os=%s", sku, region, fetch_params.get("os"))
