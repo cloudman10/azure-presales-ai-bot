@@ -7,30 +7,37 @@
 - **App Service Plan:** hyperxen-pricing-bot-plan (B1, Linux)
 - **Managed Identity:** Enabled (Principal ID: 1781559f-16d2-4fbc-9140-87489df58699)
 - **Service Principal:** hyperxen-app-sp (Reader role on subscription)
+- **Azure AI Search:** hyperxen-search (Free tier, Australia East)
+- **Search Endpoint:** https://hyperxen-search.search.windows.net
+- **Search Index:** vm-skus (894 active SKUs indexed, 291 retired flagged)
 
 ## Project Structure
 
 ```
 app/
   agents/
-    orchestrator.py       ← routes user messages to the right agent
-    pricing_agent.py      ← LLM conversation loop + pricing output formatter
-    sku_agent.py          ← SKU Normalizer Agent (rule-based, no LLM)
+    orchestrator.py          ← routes user messages to the right agent
+    pricing_agent.py         ← LLM conversation loop + pricing output formatter
+    sku_agent.py             ← SKU Normalizer Agent (rule-based, no LLM)
+    sku_advisor_agent.py     ← SKU Advisor (scenario-based, Azure AI Search)
+    report_agent.py          ← Report Agent (Excel/PDF generation)
   routers/
-    chat.py               ← FastAPI /api/chat endpoint
+    chat.py                  ← FastAPI /api/chat, /api/report/excel, /api/report/pdf
   services/
-    azure_pricing.py      ← Azure Retail Prices API + ARM SKU capabilities
+    azure_pricing.py         ← Azure Retail Prices API + ARM SKU capabilities
   utils/
-    sku_normalizer.py     ← normalize_sku_name(), extract_sku()
-    pricing_calculator.py ← PAYG / RI / Savings Plan calculations
-    region_normalizer.py  ← city → armRegionName mapping
+    sku_normalizer.py        ← normalize_sku_name(), extract_sku()
+    pricing_calculator.py    ← PAYG / RI / Savings Plan calculations
+    region_normalizer.py     ← 60+ city → armRegionName mapping
   models/
     schemas.py
   config/
     settings.py
   main.py
+scripts/
+  index_vm_skus.py           ← VM SKU indexer for Azure AI Search
 static/
-  index.html              ← chat UI
+  index.html                 ← chat UI with Excel/PDF download buttons
 ```
 
 ## What's Built and Working
@@ -42,6 +49,10 @@ static/
 - Python SKU normalization always overrides LLM output to prevent hallucinated SKU names
 - Temp storage display via Azure ARM API + Managed Identity (only shown when present)
 - Deployed to Azure App Service (Australia East) — live and serving traffic
+- **SKU Advisor Agent** — scenario-based VM recommendations via 5-state pure-Python conversation flow; queries Azure AI Search vm-skus index for top 3 matches; fetches live pricing; user selects 1/2/3/all for full pricing breakdown
+- **Report Agent** — Excel (.xlsx) and PDF download from any pricing result; HyperXen.ai branding; section-aware formatting; download buttons appear inline after every pricing response
+- **60+ city-to-region mapping** — covers Australia, Asia Pacific, Middle East, Europe, Americas, Africa
+- **Modern SKU generation preference** — v4/v5/v6 ranked above v1/v2 in advisor recommendations; Promo and Basic variants excluded
 
 ## Roadmap
 
@@ -57,6 +68,8 @@ static/
 | 8 | ✅ Done | Temp storage via ARM SKU capabilities API |
 | 9 | ✅ Done | Deployed to Azure App Service (Bicep), URL live |
 | 10 | ⏳ Blocked | Waiting for Claude Foundry quota (currently using GPT-4o via Azure AI Foundry) |
+| 11 | ✅ Done | SKU Advisor Agent with Azure AI Search, scenario-based recommendations, 5-state conversation flow |
+| 12 | ✅ Done | Report Agent, Excel and PDF download, download buttons in UI |
 
 ## Environment Variables
 
@@ -70,6 +83,8 @@ static/
 | `AZURE_TENANT_ID` | `ceba3126-eb69-4216-9b6f-623fdd3f19de` |
 | `AZURE_CLIENT_ID` | Service principal client ID (hyperxen-app-sp) |
 | `AZURE_CLIENT_SECRET` | Service principal secret |
+| `AZURE_SEARCH_ENDPOINT` | `https://hyperxen-search.search.windows.net` |
+| `AZURE_SEARCH_API_KEY` | Azure AI Search admin key |
 | `ENVIRONMENT` | `dev` / `prod` |
 | `PORT` | `8000` |
 
