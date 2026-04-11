@@ -18,7 +18,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizedQuery
 
-from app.services.azure_pricing import fetch_prices
+from app.services.azure_pricing import fetch_prices, fetch_temp_storage_gb
 from app.utils.pricing_calculator import HOURS_PER_MONTH, find_price
 from app.utils.region_normalizer import display_region, extract_region
 
@@ -383,8 +383,8 @@ def format_recommendations(
         lines.append("")   # blank line between options
 
     lines.append(
-        'Which option would you like full pricing details for? '
-        'Reply with **1**, **2**, or **3**'
+        "Which option would you like full pricing details for? "
+        "Reply with **1**, **2**, or **3** — or type **all** to see full pricing for all three."
     )
     return "\n".join(lines)
 
@@ -392,6 +392,38 @@ def format_recommendations(
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent entry point
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_selection(msg: str) -> list[int] | None:
+    """
+    Returns a list of 0-based indices for the chosen option(s), or None.
+    Handles: "1", "option 1", "go with 2", "all", "all three", etc.
+    """
+    lower = msg.strip().lower()
+    if re.search(r'\ball\b', lower):
+        return [0, 1, 2]
+    m = re.search(r'\b([123])\b', lower)
+    if m:
+        return [int(m.group(1)) - 1]
+    return None
+
+
+async def _show_full_pricing(skus: list[str], region: str, os_type: str) -> str:
+    """Fetch live pricing and format full breakdown for each chosen SKU."""
+    from app.agents.pricing_agent import _format_pricing
+
+    parts = []
+    for sku_name in skus:
+        try:
+            items    = await fetch_prices(region, sku_name)
+            temp_gb  = await fetch_temp_storage_gb(sku_name, region)
+            params   = {"sku": sku_name, "region": region, "os": os_type,
+                        "qty": 1, "wants_hb": False}
+            parts.append(_format_pricing(params, items, temp_gb))
+        except Exception as e:
+            parts.append(f"Could not fetch pricing for {sku_name}: {e}")
+
+    return "\n\n---\n\n".join(parts)
+
 
 _EMPTY_STATE = lambda: {
     "vcpus": None, "ram_gb": None, "users": None,
@@ -401,13 +433,14 @@ _EMPTY_STATE = lambda: {
 
 async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     """
-    Pure Python 4-state machine. No LLM calls in states 1–3.
-    Only STATE 4 touches external services (Azure AI Search + Azure Pricing API).
+    Pure Python state machine. No LLM calls anywhere in this agent.
+    All external calls are Azure AI Search + Azure Pricing API only.
 
       State 1 → collect sizing (vCPUs/RAM or user count)
       State 2 → collect region
       State 3 → collect OS
       State 4 → search_skus() + fetch_prices() + format_recommendations()
+      State 5 → user picks 1/2/3/all → _show_full_pricing()
     """
     # ── Extract latest user message ────────────────────────────────────────────
     user_message = ""
@@ -417,6 +450,21 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             break
 
     logger.info("sku_advisor: message='%s'", user_message[:80])
+
+    # ── STATE 5: user is selecting from previously shown recommendations ───────
+    picks_key = f"{session_id}_advisor_picks"
+    picks = sessions.get(picks_key)
+    if picks:
+        selection = _parse_selection(user_message)
+        if selection is None:
+            return {
+                "reply": "Please reply with **1**, **2**, or **3** — or type **all** to see full pricing for all three.",
+                "type": "conversation",
+            }
+        sessions.pop(picks_key, None)
+        chosen_skus = [picks["skus"][i] for i in selection if i < len(picks["skus"])]
+        reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"])
+        return {"reply": reply, "type": "pricing"}
 
     # ── Load or initialise per-session state ───────────────────────────────────
     state_key = f"{session_id}_advisor_state"
@@ -501,5 +549,11 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
 
     reply = format_recommendations(top3, state, prices)
 
-    sessions[state_key] = _EMPTY_STATE()   # reset for next query
+    # Store picks so the user can select 1/2/3/all in the next turn
+    sessions[picks_key] = {
+        "skus":   [s.get("sku_name") for s in top3],
+        "region": state["region"],
+        "os":     state["os"],
+    }
+    sessions[state_key] = _EMPTY_STATE()   # reset advisor state
     return {"reply": reply, "type": "advisor"}

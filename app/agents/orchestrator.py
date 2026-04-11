@@ -58,15 +58,17 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     history.append({"role": "user", "content": message})
 
     # ── Routing ───────────────────────────────────────────────────────────────
-    # If advisor flow is already in progress, keep routing there regardless of
-    # what the user says (they're answering advisor questions, not starting fresh)
+    # Route to advisor if: mid-flow, awaiting a pick selection, or new scenario query
     state_key = f"{session_id}_advisor_state"
+    picks_key = f"{session_id}_advisor_picks"
+
     in_advisor_flow = bool(
         sessions.get(state_key) and
         any(v is not None for v in sessions[state_key].values())
     )
+    has_advisor_picks = bool(sessions.get(picks_key))
 
-    if in_advisor_flow or detect_scenario_query(message):
+    if has_advisor_picks or in_advisor_flow or detect_scenario_query(message):
         logger.debug("session=%s routing to sku_advisor_agent (in_flow=%s)", session_id, in_advisor_flow)
         result = await sku_advisor_agent.run(history, session_id, sessions)
 
