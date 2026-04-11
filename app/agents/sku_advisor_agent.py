@@ -46,6 +46,11 @@ _WORKLOAD_WORDS = {
 _SCENARIO_WORDS = {
     "build", "host", "migrate", "run", "deploy",
     "need a server", "need vms", "need a vm",
+    # User uncertainty phrases — no SKU name known
+    "don't know the vm", "don't know which vm", "don't know the name",
+    "don't know the exact", "not sure which vm", "not sure what vm",
+    "unsure which vm", "need a recommendation", "recommend a vm",
+    "what vm", "which vm should", "which vm do",
 }
 
 _RESOURCE_WORDS = {
@@ -444,7 +449,7 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     logger.info("sku_advisor: state=%s", state)
 
     # ── STATE 1: sizing ────────────────────────────────────────────────────────
-    has_sizing = (state["vcpus"] and state["ram_gb"]) or state["users"]
+    has_sizing = bool(state["vcpus"] or state["ram_gb"] or state["users"])
     if not has_sizing:
         sessions[state_key] = state
         return {
