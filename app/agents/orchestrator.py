@@ -4,6 +4,7 @@ import os
 import anthropic
 
 from app.agents import pricing_agent
+from app.agents.sku_advisor_agent import detect_scenario_query
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,16 @@ def is_pricing_request(message: str) -> bool:
 async def run(session_id: str, message: str, sessions: dict) -> dict:
     """
     Orchestrator entry point for all user messages.
-    Returns {"reply": str, "type": "conversation" | "pricing"}
+
+    Routing priority:
+      1. detect_scenario_query → sku_advisor_agent  (no SKU name, workload-based)
+      2. is_pricing_request    → pricing_agent       (has SKU / price keywords)
+      3. fallback              → general Claude conversation
+
+    Returns {"reply": str, "type": "conversation" | "pricing" | "advisor"}
     """
+    from app.agents import sku_advisor_agent
+
     # Get or create session history
     if session_id not in sessions:
         sessions[session_id] = []
@@ -48,11 +57,15 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     # Append user message
     history.append({"role": "user", "content": message})
 
-    # Route to pricing agent if: message matches pricing keywords OR session
-    # already has history (conversation in progress — maintain routing context)
-    if is_pricing_request(message) or len(history) > 1:
+    # ── Routing ───────────────────────────────────────────────────────────────
+    if detect_scenario_query(message):
+        logger.debug("session=%s routing to sku_advisor_agent", session_id)
+        result = await sku_advisor_agent.run(history)
+
+    elif is_pricing_request(message) or len(history) > 1:
         logger.debug("session=%s routing to pricing_agent", session_id)
         result = await pricing_agent.run(history)
+
     else:
         logger.debug("session=%s routing to orchestrator (general)", session_id)
         result = await _call_claude(history)
