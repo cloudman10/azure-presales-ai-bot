@@ -20,7 +20,7 @@ from azure.search.documents.models import VectorizedQuery
 
 from app.services.azure_pricing import fetch_prices
 from app.utils.pricing_calculator import HOURS_PER_MONTH, find_price
-from app.utils.region_normalizer import display_region
+from app.utils.region_normalizer import display_region, extract_region
 
 logger = logging.getLogger(__name__)
 
@@ -388,13 +388,21 @@ def format_recommendations(
 # Agent entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run(messages: list[dict]) -> dict:
+_EMPTY_STATE = lambda: {
+    "vcpus": None, "ram_gb": None, "users": None,
+    "workload": None, "region": None, "os": None,
+}
+
+
+async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     """
     Main entry point called by the orchestrator.
 
-    Takes the full conversation history (same interface as pricing_agent.run).
-    Uses the last user message to derive requirements, searches the index,
-    fetches live prices for the top 3 SKUs, and returns formatted recommendations.
+    Implements a strict 4-state conversation machine:
+      State 1 → collect sizing (vCPUs/RAM or user count + workload)
+      State 2 → collect region
+      State 3 → collect OS
+      State 4 → search SKUs and show top-3 recommendations with live pricing
     """
     # Extract the most recent user message
     user_message = ""
@@ -403,44 +411,102 @@ async def run(messages: list[dict]) -> dict:
             user_message = m["content"]
             break
 
-    logger.info("sku_advisor: parsing '%s'", user_message[:80])
+    logger.info("sku_advisor: message='%s'", user_message[:80])
 
+    # ── Load or initialise per-session advisor state ───────────────────────────
+    state_key = f"{session_id}_advisor_state"
+    state: dict = sessions.get(state_key) or _EMPTY_STATE()
+
+    # ── Parse current message and merge into state (never overwrite with None) ─
     reqs = parse_requirements(user_message)
-    logger.info("sku_advisor: requirements=%s", reqs)
 
-    # If user count given but no specs, estimate from users
-    if reqs["users"] and not reqs["vcpus"] and not reqs["ram_gb"]:
-        specs = estimate_specs_from_users(reqs["users"], reqs["workload"])
-        reqs["vcpus"]  = specs["vcpus"]
-        reqs["ram_gb"] = specs["ram_gb"]
-        logger.info("sku_advisor: estimated from %d users → %s", reqs["users"], specs)
+    if reqs["vcpus"] and not state["vcpus"]:
+        state["vcpus"] = reqs["vcpus"]
+    if reqs["ram_gb"] and not state["ram_gb"]:
+        state["ram_gb"] = reqs["ram_gb"]
+    if reqs["users"] and not state["users"]:
+        state["users"] = reqs["users"]
+    # Only accept non-default workload from parsing
+    if reqs["workload"] and reqs["workload"] != "general" and not state["workload"]:
+        state["workload"] = reqs["workload"]
 
-    # Search for matching SKUs
-    skus = search_skus(reqs)
-    if not skus:
+    # Use the richer extract_region for region detection
+    if not state["region"]:
+        region_match = extract_region(user_message)
+        if region_match:
+            state["region"] = region_match["arm_name"]
+        elif reqs["region"]:
+            state["region"] = reqs["region"]
+
+    if reqs["os"] and not state["os"]:
+        state["os"] = reqs["os"]
+
+    logger.info("sku_advisor: state=%s", state)
+
+    # ── STATE 1: sizing ────────────────────────────────────────────────────────
+    has_sizing = (state["vcpus"] and state["ram_gb"]) or state["users"]
+    if not has_sizing:
+        sessions[state_key] = state
         return {
             "reply": (
-                "I couldn't find VMs matching those requirements in my index. "
-                "Could you clarify the workload type or specs? "
-                "For example: 'I need 4 vCPUs and 16 GB RAM for a web app in Australia East.'"
+                "How many vCPUs and how much RAM do you need? "
+                "Or describe your workload — e.g. '500 concurrent users running a web app' "
+                "or '8 vCPUs and 32 GB RAM'."
             ),
             "type": "advisor",
         }
 
-    region  = reqs.get("region") or DEFAULT_REGION
-    os_type = reqs.get("os") or "Linux"
+    # ── STATE 2: region ────────────────────────────────────────────────────────
+    if not state["region"]:
+        sessions[state_key] = state
+        return {
+            "reply": "Which Azure region would you like to deploy in? (e.g. Australia East, East US, West Europe, Singapore)",
+            "type": "advisor",
+        }
 
-    # Fetch live prices for top 3 in parallel
+    # ── STATE 3: OS ────────────────────────────────────────────────────────────
+    if not state["os"]:
+        sessions[state_key] = state
+        return {
+            "reply": "Windows or Linux?",
+            "type": "advisor",
+        }
+
+    # ── STATE 4: all collected — search and recommend ──────────────────────────
+    # Estimate vCPUs/RAM from user count if still missing
+    if state["users"] and not state["vcpus"] and not state["ram_gb"]:
+        specs = estimate_specs_from_users(state["users"], state["workload"])
+        state["vcpus"]  = specs["vcpus"]
+        state["ram_gb"] = specs["ram_gb"]
+        logger.info("sku_advisor: estimated from %d users → %s", state["users"], specs)
+
+    skus = search_skus(state)
+    if not skus:
+        # Reset state so user can try again with different specs
+        sessions[state_key] = _EMPTY_STATE()
+        return {
+            "reply": (
+                "I couldn't find VMs matching those requirements in my index. "
+                "Could you clarify the workload type or specs? "
+                "For example: '4 vCPUs and 16 GB RAM for a web app in Australia East'."
+            ),
+            "type": "advisor",
+        }
+
     top3 = skus[:3]
     prices: list[list[dict] | None] = []
     for sku_doc in top3:
         sku_name = sku_doc.get("sku_name", "")
         try:
-            items = await fetch_prices(region, sku_name)
+            items = await fetch_prices(state["region"], sku_name)
             prices.append(items)
         except Exception as e:
             logger.warning("sku_advisor: price fetch failed for %s: %s", sku_name, e)
             prices.append(None)
 
-    reply = format_recommendations(top3, reqs, prices)
+    reply = format_recommendations(top3, state, prices)
+
+    # Reset state after recommendations so follow-up starts fresh
+    sessions[state_key] = _EMPTY_STATE()
+
     return {"reply": reply, "type": "advisor"}

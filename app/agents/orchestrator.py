@@ -60,7 +60,7 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     # ── Routing ───────────────────────────────────────────────────────────────
     if detect_scenario_query(message):
         logger.debug("session=%s routing to sku_advisor_agent", session_id)
-        result = await sku_advisor_agent.run(history)
+        result = await sku_advisor_agent.run(history, session_id, sessions)
 
     elif is_pricing_request(message) or len(history) > 1:
         logger.debug("session=%s routing to pricing_agent", session_id)
