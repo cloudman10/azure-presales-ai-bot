@@ -283,7 +283,25 @@ def search_skus(requirements: dict) -> list[dict]:
             order_by=["vcpus asc", "ram_gb asc"],
             top=5,
         )
-        return [dict(r) for r in results]
+        raw = [dict(r) for r in results]
+
+        def generation_score(sku: dict) -> int:
+            name = sku.get("sku_name", "")
+            if "_v5" in name or "_v6" in name or "_v7" in name:
+                return 3
+            if "_v4" in name or "_v3" in name:
+                return 2
+            if "_v2" in name:
+                return 1
+            return 0  # v1 or no version — oldest
+
+        # Exclude Promo and Basic variants
+        filtered = [s for s in raw if "Promo" not in s.get("sku_name", "") and "Basic" not in s.get("sku_name", "")]
+
+        # Sort by generation descending, then vcpus asc
+        sorted_skus = sorted(filtered, key=lambda x: (-generation_score(x), x.get("vcpus", 0)))
+
+        return sorted_skus[:5]
     except Exception as e:
         logger.error("Azure AI Search query failed: %s", e)
         return []
