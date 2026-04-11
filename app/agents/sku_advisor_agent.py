@@ -401,15 +401,15 @@ _EMPTY_STATE = lambda: {
 
 async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     """
-    Main entry point called by the orchestrator.
+    Pure Python 4-state machine. No LLM calls in states 1–3.
+    Only STATE 4 touches external services (Azure AI Search + Azure Pricing API).
 
-    Implements a strict 4-state conversation machine:
-      State 1 → collect sizing (vCPUs/RAM or user count + workload)
+      State 1 → collect sizing (vCPUs/RAM or user count)
       State 2 → collect region
       State 3 → collect OS
-      State 4 → search SKUs and show top-3 recommendations with live pricing
+      State 4 → search_skus() + fetch_prices() + format_recommendations()
     """
-    # Extract the most recent user message
+    # ── Extract latest user message ────────────────────────────────────────────
     user_message = ""
     for m in reversed(messages):
         if m.get("role") == "user":
@@ -418,24 +418,25 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
 
     logger.info("sku_advisor: message='%s'", user_message[:80])
 
-    # ── Load or initialise per-session advisor state ───────────────────────────
+    # ── Load or initialise per-session state ───────────────────────────────────
     state_key = f"{session_id}_advisor_state"
     state: dict = sessions.get(state_key) or _EMPTY_STATE()
 
-    # ── Parse current message and merge into state (never overwrite with None) ─
+    # ── Merge parsed fields into state (never overwrite an existing value) ─────
     reqs = parse_requirements(user_message)
 
-    if reqs["vcpus"] and not state["vcpus"]:
+    if reqs["vcpus"]  and not state["vcpus"]:
         state["vcpus"] = reqs["vcpus"]
     if reqs["ram_gb"] and not state["ram_gb"]:
         state["ram_gb"] = reqs["ram_gb"]
-    if reqs["users"] and not state["users"]:
+    if reqs["users"]  and not state["users"]:
         state["users"] = reqs["users"]
-    # Only accept non-default workload from parsing
     if reqs["workload"] and reqs["workload"] != "general" and not state["workload"]:
         state["workload"] = reqs["workload"]
+    if reqs["os"] and not state["os"]:
+        state["os"] = reqs["os"]
 
-    # Use the richer extract_region for region detection
+    # Region: prefer the richer extract_region (covers cities + ARM names)
     if not state["region"]:
         region_match = extract_region(user_message)
         if region_match:
@@ -443,42 +444,32 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         elif reqs["region"]:
             state["region"] = reqs["region"]
 
-    if reqs["os"] and not state["os"]:
-        state["os"] = reqs["os"]
-
     logger.info("sku_advisor: state=%s", state)
+    sessions[state_key] = state   # persist after every turn
 
-    # ── STATE 1: sizing ────────────────────────────────────────────────────────
-    has_sizing = bool(state["vcpus"] or state["ram_gb"] or state["users"])
-    if not has_sizing:
-        sessions[state_key] = state
+    # ── STATE 1: need sizing ───────────────────────────────────────────────────
+    if not (state["vcpus"] or state["ram_gb"] or state["users"]):
         return {
-            "reply": (
-                "How many vCPUs and how much RAM do you need? "
-                "Or describe your workload — e.g. '500 concurrent users running a web app' "
-                "or '8 vCPUs and 32 GB RAM'."
-            ),
-            "type": "advisor",
+            "reply": "How many vCPUs and how much RAM do you need? (e.g. '4 cores 16GB' or '8 vCPUs 32GB RAM')",
+            "type": "conversation",
         }
 
-    # ── STATE 2: region ────────────────────────────────────────────────────────
+    # ── STATE 2: need region ───────────────────────────────────────────────────
     if not state["region"]:
-        sessions[state_key] = state
         return {
-            "reply": "Which Azure region would you like to deploy in? (e.g. Australia East, East US, West Europe, Singapore)",
-            "type": "advisor",
+            "reply": "Which Azure region would you like to deploy in? (e.g. Sydney, Singapore, London, East US)",
+            "type": "conversation",
         }
 
-    # ── STATE 3: OS ────────────────────────────────────────────────────────────
+    # ── STATE 3: need OS ───────────────────────────────────────────────────────
     if not state["os"]:
-        sessions[state_key] = state
         return {
             "reply": "Windows or Linux?",
-            "type": "advisor",
+            "type": "conversation",
         }
 
-    # ── STATE 4: all collected — search and recommend ──────────────────────────
-    # Estimate vCPUs/RAM from user count if still missing
+    # ── STATE 4: all collected — search + price + format (no LLM) ─────────────
+    # Derive vCPU/RAM from user count if only users were given
     if state["users"] and not state["vcpus"] and not state["ram_gb"]:
         specs = estimate_specs_from_users(state["users"], state["workload"])
         state["vcpus"]  = specs["vcpus"]
@@ -486,16 +477,15 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         logger.info("sku_advisor: estimated from %d users → %s", state["users"], specs)
 
     skus = search_skus(state)
+
     if not skus:
-        # Reset state so user can try again with different specs
-        sessions[state_key] = _EMPTY_STATE()
+        sessions[state_key] = _EMPTY_STATE()   # reset so user can retry
         return {
             "reply": (
-                "I couldn't find VMs matching those requirements in my index. "
-                "Could you clarify the workload type or specs? "
-                "For example: '4 vCPUs and 16 GB RAM for a web app in Australia East'."
+                "I couldn't find VMs matching those requirements. "
+                "Try adjusting the specs — e.g. '4 vCPUs 16GB RAM for a web app'."
             ),
-            "type": "advisor",
+            "type": "conversation",
         }
 
     top3 = skus[:3]
@@ -511,7 +501,5 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
 
     reply = format_recommendations(top3, state, prices)
 
-    # Reset state after recommendations so follow-up starts fresh
-    sessions[state_key] = _EMPTY_STATE()
-
+    sessions[state_key] = _EMPTY_STATE()   # reset for next query
     return {"reply": reply, "type": "advisor"}
