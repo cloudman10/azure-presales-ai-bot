@@ -22,10 +22,81 @@ REGION_MAP: dict[str, str] = {
 
 # City → arm region name mappings
 CITY_MAP: dict[str, str] = {
-    'sydney': 'australiaeast',
+    # Australia
+    'sydney':    'australiaeast',
+    'canberra':  'australiaeast',
+    'brisbane':  'australiaeast',
+    'perth':     'australiaeast',
+    'adelaide':  'australiaeast',
     'melbourne': 'australiasoutheast',
-    'singapore': 'southeastasia',
-    'tokyo': 'japaneast',
+
+    # Asia Pacific
+    'singapore':   'southeastasia',
+    'tokyo':       'japaneast',
+    'osaka':       'japanwest',
+    'seoul':       'koreacentral',
+    'busan':       'koreasouth',
+    'mumbai':      'centralindia',
+    'pune':        'centralindia',
+    'hyderabad':   'centralindia',
+    'chennai':     'southindia',
+    'bangalore':   'southindia',
+    'hong kong':   'eastasia',
+    'hongkong':    'eastasia',
+    'beijing':     'chinanorth',
+    'shanghai':    'chinaeast',
+    'taipei':      'eastasia',
+    'kuala lumpur':'southeastasia',
+    'jakarta':     'southeastasia',
+    'bangkok':     'southeastasia',
+    'manila':      'southeastasia',
+
+    # Middle East
+    'dubai':     'uaenorth',
+    'abu dhabi': 'uaecentral',
+    'riyadh':    'saudiarabiawest',
+    'doha':      'qatarcentral',
+    'tel aviv':  'israelcentral',
+
+    # Europe
+    'london':     'uksouth',
+    'manchester': 'ukwest',
+    'amsterdam':  'westeurope',
+    'dublin':     'northeurope',
+    'paris':      'francecentral',
+    'frankfurt':  'germanywestcentral',
+    'berlin':     'germanywestcentral',
+    'zurich':     'switzerlandnorth',
+    'geneva':     'switzerlandwest',
+    'stockholm':  'swedencentral',
+    'oslo':       'norwayeast',
+    'helsinki':   'finlandcentral',
+    'warsaw':     'polandcentral',
+    'milan':      'italynorth',
+    'madrid':     'spaincentral',
+
+    # Americas
+    'new york':      'eastus',
+    'new york city': 'eastus',
+    'nyc':           'eastus',
+    'virginia':      'eastus',
+    'washington':    'eastus2',
+    'chicago':       'northcentralus',
+    'dallas':        'southcentralus',
+    'texas':         'southcentralus',
+    'phoenix':       'westus3',
+    'los angeles':   'westus',
+    'san francisco': 'westus',
+    'seattle':       'westus2',
+    'toronto':       'canadacentral',
+    'vancouver':     'canadacentral',
+    'montreal':      'canadaeast',
+    'sao paulo':     'brazilsouth',
+    'mexico city':   'mexicocentral',
+
+    # Africa
+    'johannesburg': 'southafricanorth',
+    'cape town':    'southafricawest',
 }
 
 
