@@ -6,3 +6,5 @@ python-dotenv
 pydantic
 pydantic-settings
 azure-search-documents>=11.6.0
+openpyxl
+reportlab

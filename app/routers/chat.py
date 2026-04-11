@@ -1,7 +1,10 @@
-from fastapi import APIRouter
+import io
 
-from app.agents import orchestrator
-from app.models.schemas import ChatRequest, ChatResponse, WelcomeResponse
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+
+from app.agents import orchestrator, report_agent
+from app.models.schemas import ChatRequest, ChatResponse, ReportRequest, WelcomeResponse
 
 router = APIRouter()
 
@@ -26,6 +29,26 @@ async def chat(request: ChatRequest) -> ChatResponse:
         reply=result["reply"],
         type=result["type"],
         session_id=request.session_id,
+    )
+
+
+@router.post("/report/excel")
+async def report_excel(request: ReportRequest) -> StreamingResponse:
+    data = report_agent.generate_excel(request.pricing_text, request.session_id)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="azure-vm-pricing.xlsx"'},
+    )
+
+
+@router.post("/report/pdf")
+async def report_pdf(request: ReportRequest) -> StreamingResponse:
+    data = report_agent.generate_pdf(request.pricing_text, request.session_id)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="azure-vm-pricing.pdf"'},
     )
 
 

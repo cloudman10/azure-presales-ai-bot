@@ -14,3 +14,8 @@ class ChatResponse(BaseModel):
 
 class WelcomeResponse(BaseModel):
     reply: str
+
+
+class ReportRequest(BaseModel):
+    session_id: str
+    pricing_text: str
