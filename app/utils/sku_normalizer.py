@@ -4,13 +4,40 @@ _STANDARD_VM_SIZES = {1, 2, 4, 8, 16, 32, 48, 64, 80, 96, 128, 192, 208, 416}
 _CONSTRAINED_SIZES = sorted({2, 4, 8, 16, 32, 48}, reverse=True)
 
 
+def _preprocess(raw: str) -> str:
+    """
+    Normalize raw user input before SKU pattern matching.
+
+    Applied in order (all before the prefix is stripped):
+      1. Prefix typos   : Standerd_ / Standar_ / standard_ → Standard_
+      2. Version spacing: " v5" / " V3" → "_v5" / "_v3"
+      3. Suffix typos   : adv\d → ads_v\d  |  [letter]sv\d → [letter]s_v\d
+      4. Constrained gap: digit space digit → digit-digit ("E4 2ads" → "E4-2ads")
+      5. Strip spaces   : remove any remaining whitespace
+    """
+    sku = raw.strip()
+    # 1. Prefix typos — Stan[anything]_ → Standard_  (covers Standerd_, Standar_, STANDARD_)
+    sku = re.sub(r'^Stan[a-z]*_', 'Standard_', sku, flags=re.IGNORECASE)
+    # 2. Space before version number: "D4S v5" → "D4S_v5"
+    sku = re.sub(r'\s+(v\d+)', r'_\1', sku, flags=re.IGNORECASE)
+    # 3a. "adv" suffix typo: "2adv5" → "2ads_v5"  (adv = misspelling of "ads" + version v)
+    sku = re.sub(r'adv(\d)', r'ads_v\1', sku, flags=re.IGNORECASE)
+    # 3b. "[letter]sv" suffix typo: "4asv5" → "4as_v5"; lookbehind guards against bare "sv"
+    #     after a digit (e.g. "d4sv5") which the downstream _ insertion already handles.
+    sku = re.sub(r'(?<=[A-Za-z])sv(\d)', r's_v\1', sku, flags=re.IGNORECASE)
+    # 4. Constrained vCPU spacing: "E4 2ads_v5" → "E4-2ads_v5"
+    sku = re.sub(r'(\d)\s+(\d)', r'\1-\2', sku)
+    # 5. Strip any remaining whitespace
+    sku = re.sub(r'\s+', '', sku)
+    return sku
+
+
 def normalize_sku_name(raw: str) -> str | None:
     if not raw:
         return None
-    sku = raw.strip()
+    sku = _preprocess(raw)
     if re.match(r'^Standard_', sku, re.IGNORECASE):
         sku = re.sub(r'^Standard_', '', sku, flags=re.IGNORECASE)
-    sku = re.sub(r'\s+', '', sku)
 
     # Handle constrained vCPU format: E8-4ads_v5 or E8-4adsv5
     constrained_match = re.match(r'^([A-Za-z])(\d+-\d+[A-Za-z]*)(_v\d+|v\d+)?$', sku, re.IGNORECASE)
