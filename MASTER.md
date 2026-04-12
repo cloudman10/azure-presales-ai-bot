@@ -7,6 +7,8 @@
 - **App Service Plan:** hyperxen-pricing-bot-plan (B1, Linux)
 - **Managed Identity:** Enabled (Principal ID: 1781559f-16d2-4fbc-9140-87489df58699)
 - **Service Principal:** hyperxen-app-sp (Reader role on subscription)
+- **Frontend:** Replit — https://replit.com/@ericbluesky/Hyperxen-UI
+- **Frontend URL:** HyperXen.ai (Replit hosted)
 - **Azure AI Search:** hyperxen-search (Free tier, Australia East)
 - **Search Endpoint:** https://hyperxen-search.search.windows.net
 - **Search Index:** vm-skus (894 active SKUs indexed, 291 retired flagged)
@@ -53,6 +55,8 @@ static/
 - **Report Agent** — Excel (.xlsx) and PDF download from any pricing result; HyperXen.ai branding; section-aware formatting; download buttons appear inline after every pricing response
 - **60+ city-to-region mapping** — covers Australia, Asia Pacific, Middle East, Europe, Americas, Africa
 - **Modern SKU generation preference** — v4/v5/v6 ranked above v1/v2 in advisor recommendations; Promo and Basic variants excluded
+- **Replit frontend (HyperXen.ai)** connected to Azure App Service backend
+- **Full end-to-end flow:** Replit UI → Azure App Service → GPT-4o + Azure Retail Prices API + Azure AI Search
 
 ## Roadmap
 
@@ -67,9 +71,10 @@ static/
 | 7 | ✅ Done | SKU normalization (including constrained vCPU) |
 | 8 | ✅ Done | Temp storage via ARM SKU capabilities API |
 | 9 | ✅ Done | Deployed to Azure App Service (Bicep), URL live |
-| 10 | ⏳ Blocked | Waiting for Claude Foundry quota (currently using GPT-4o via Azure AI Foundry) |
+| 10 | ⏳ Waiting for Microsoft quota approval | Claude via Foundry on hold — Microsoft quota approval pending |
 | 11 | ✅ Done | SKU Advisor Agent with Azure AI Search, scenario-based recommendations, 5-state conversation flow |
 | 12 | ✅ Done | Report Agent, Excel and PDF download, download buttons in UI |
+| 13 | ✅ Done | Replit Frontend — HyperXen.ai UI connected to Azure App Service backend |
 
 ## Environment Variables
 
