@@ -10,24 +10,14 @@
 | Item | Status |
 |------|--------|
 | Frontend (Replit UI) | ✅ Live |
-| Backend (Azure App Service) | ⚠️ 503 — Oryx build in progress / app not starting |
+| Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
 | LLM (GPT-4o via Azure AI Foundry) | ✅ Verified working |
 | Azure AI Search | ✅ Indexed (894 active SKUs) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
 
-### Active Issue
-App Service returning 503. Root cause identified:
-
-1. **Zip structure was broken** — previous deploys used `Compress-Archive` with absolute `FullName` paths, flattening directory structure. `app/`, `static/` never landed in `/home/site/wwwroot`. Fixed in latest deploy (passing directories directly to `Compress-Archive`).
-2. **Oryx build is slow** — new zip triggered a full Oryx pip install (~17+ min). Build is running in background on Azure. App will come up once Oryx finishes and the container restarts.
-3. **Startup command** set to: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-4. **PYTHONPATH** app setting: `/home/site/wwwroot`
-
-Once the current Oryx build completes, test with:
-```bash
-curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome
-```
+### All systems operational
+Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
 
 ---
 
@@ -152,16 +142,31 @@ azure-presales-ai-bot/
 
 ### Standard Deploy (Windows)
 
-```powershell
-cd "C:\Users\Admin\azure-presales-ai-bot"
-# Build zip with correct directory structure (pass dirs, not file list)
-if (Test-Path ".\deploy.zip") { Remove-Item ".\deploy.zip" -Force }
-Compress-Archive -Path ".\app", ".\static", ".\requirements.txt", ".\startup.sh" -DestinationPath ".\deploy.zip" -Force
-# Deploy
-az webapp deployment source config-zip --resource-group rg-hyperxen-app-dev --name hyperxen-pricing-bot-db5hmngq3woxa --src ".\deploy.zip"
+```bash
+cd "C:/Users/Admin/azure-presales-ai-bot"
+# Build zip using Python to ensure forward-slash paths (required for Linux extraction)
+python3 -c "
+import zipfile, os
+include = ['app', 'static', 'requirements.txt', 'startup.sh']
+exclude_dirs = {'.git', '.venv', '__pycache__', 'antenv'}
+with zipfile.ZipFile('deploy.zip', 'w', zipfile.ZIP_DEFLATED) as zf:
+    for item in include:
+        if os.path.isfile(item):
+            zf.write(item, item)
+        else:
+            for d, dirs, files in os.walk(item):
+                dirs[:] = [x for x in dirs if x not in exclude_dirs]
+                for f in files:
+                    if f.endswith('.pyc'): continue
+                    p = os.path.join(d, f)
+                    zf.write(p, p.replace(os.sep, '/'))
+"
+az webapp deployment source config-zip --resource-group rg-hyperxen-app-dev --name hyperxen-pricing-bot-db5hmngq3woxa --src deploy.zip
 ```
 
-> **Important:** Always pass directory names (not `$files.FullName`) to `Compress-Archive`. Passing absolute paths flattens the zip and `app/` never lands in wwwroot.
+> **Critical:** Always use Python's `zipfile` to build the zip on Windows — NOT `Compress-Archive`.
+> `Compress-Archive` uses backslash path separators (`app\main.py`). On Linux, those extract as
+> literal filenames with backslashes, not directory structure. Python's `zipfile` always uses `/`.
 
 ### Check Deploy Logs (if app crashes)
 
@@ -200,7 +205,7 @@ az deployment group create --resource-group rg-hyperxen-app-dev --template-file 
 | 11 | ✅ Done | SKU Advisor Agent with Azure AI Search |
 | 12 | ✅ Done | Report Agent — Excel/PDF download with HyperXen branding |
 | 13 | ✅ Done | Replit Frontend — HyperXen.ai connected to backend |
-| 14 | ⚠️ In Progress | Fix Oryx/zip deploy — app/ structure issue resolved, build running |
+| 14 | ✅ Done | Fix Oryx/zip deploy — Python zipfile (forward slashes), LF line endings, startup command |
 
 ---
 
