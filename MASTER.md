@@ -81,6 +81,9 @@ Azure App Service (Australia East)
 | `AZURE_OPENAI_DEPLOYMENT` | `gpt-4o` |
 | `AZURE_OPENAI_KEY` | (set in app settings) |
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (Oryx builds on deploy) |
+| `GUNICORN_CMD_ARGS` | `--worker-class=uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000` |
+
+> **Critical:** GUNICORN_CMD_ARGS forces uvicorn workers regardless of gunicorn.conf.py CWD — without this, Oryx auto-detect launches sync workers which fail with FastAPI (TypeError: FastAPI.__call__() missing 1 required positional argument: 'send').
 
 ---
 
