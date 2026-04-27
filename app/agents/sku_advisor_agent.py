@@ -532,9 +532,17 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     if reqs["os"] and not state["os"]:
         state["os"] = reqs["os"]
 
-    # Region: prefer the richer extract_region (covers cities + ARM names)
+    # Region: prefer the richer extract_region (covers cities + ARM names).
+    # Scan the full conversation history so a region mentioned in any prior
+    # message is picked up, not just the current one.
     if not state["region"]:
         region_match = extract_region(user_message)
+        if not region_match:
+            for msg in messages:
+                if msg.get("role") == "user" and msg["content"] != user_message:
+                    region_match = extract_region(msg["content"])
+                    if region_match:
+                        break
         if region_match:
             state["region"] = region_match["arm_name"]
         elif reqs["region"]:
