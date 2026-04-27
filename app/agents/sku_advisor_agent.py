@@ -517,28 +517,57 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     picks = sessions.get(picks_key)
     if picks:
         selection = _parse_selection(user_message)
-        # Treat standalone affirmatives ("yes", "ok", "sure", …) as option 1
-        # so the user doesn't get stuck in a loop after saying "yes".
+        # Treat standalone affirmatives ("yes", "ok", "sure", …) as option 1.
         if selection is None and user_message.strip().lower() in _AFFIRMATIVES:
             selection = [0]
-        if selection is None:
+        if selection is not None:
+            # Intentionally do NOT pop picks_key here.  Keeping it alive means
+            # the user can immediately follow up with "what about option 3?"
+            # without being re-asked for region or OS by the pricing agent.
+            # picks_key is only replaced when STATE 4 generates new recommendations.
+            chosen_skus = [picks["skus"][i] for i in selection if i < len(picks["skus"])]
+            reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"])
+            return {"reply": reply, "type": "pricing"}
+        # No option digit found — if the user is starting a new scenario query
+        # clear picks and fall through to the state machine; otherwise prompt.
+        if detect_scenario_query(user_message) or detect_sku_uncertainty(user_message):
+            sessions.pop(picks_key, None)
+            # fall through to state machine below
+        else:
             return {
                 "reply": "Please reply with **1**, **2**, or **3** — or type **all** to see full pricing for all three.",
                 "type": "conversation",
             }
-        sessions.pop(picks_key, None)
-        chosen_skus = [picks["skus"][i] for i in selection if i < len(picks["skus"])]
-        reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"])
-        return {"reply": reply, "type": "pricing"}
 
     # ── Load or initialise per-session state ───────────────────────────────────
     state_key = f"{session_id}_advisor_state"
     state: dict = sessions.get(state_key) or _EMPTY_STATE()
 
-    # ── Scan full conversation history oldest-first to populate state ─────────
-    # Running over every user message means context from any turn — including
-    # messages before the advisor was active — is captured so we never
-    # re-ask for information the user already provided.
+    # ── Phase 1: on fresh entry seed from the very first user message ─────────
+    # The opening message most often carries all context (specs, region, OS)
+    # even when the conversation was originally handled by another agent.
+    # Doing this explicitly before the full-history loop ensures nothing is
+    # missed when the advisor is entered mid-conversation.
+    if not any(v is not None for v in state.values()):
+        _first = next(
+            (m["content"] for m in messages if m.get("role") == "user"), ""
+        )
+        if _first:
+            _r0  = parse_requirements(_first)
+            _rm0 = extract_region(_first)
+            if _r0["vcpus"]:                                      state["vcpus"]    = _r0["vcpus"]
+            if _r0["ram_gb"]:                                     state["ram_gb"]   = _r0["ram_gb"]
+            if _r0["users"]:                                      state["users"]    = _r0["users"]
+            if _r0["workload"] and _r0["workload"] != "general":  state["workload"] = _r0["workload"]
+            if _r0["os"]:                                         state["os"]       = _r0["os"]
+            if _rm0:                                              state["region"]   = _rm0["arm_name"]
+            elif _r0["region"]:                                   state["region"]   = _r0["region"]
+            logger.debug(
+                "sku_advisor: seeded from first msg → vcpus=%s region=%s os=%s",
+                state["vcpus"], state["region"], state["os"],
+            )
+
+    # ── Phase 2: scan all user messages oldest-first to fill any gaps ─────────
     for _msg in messages:
         if _msg.get("role") != "user":
             continue
