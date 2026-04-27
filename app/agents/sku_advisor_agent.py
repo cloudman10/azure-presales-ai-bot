@@ -182,9 +182,10 @@ def parse_requirements(message: str) -> dict:
 
     # ── OS ───────────────────────────────────────────────────────────────────
     os_type = None
-    if "windows" in lower:
+    raw = message.lower().strip().replace(" ", "")
+    if any(w in raw for w in ["window", "windwos", "windoes", "widnows", "win"]):
         os_type = "Windows"
-    elif any(w in lower for w in ("linux", "ubuntu", "centos", "rhel", "debian")):
+    elif any(w in raw for w in ["linux", "linus", "linx", "lin"]):
         os_type = "Linux"
 
     # ── Storage ──────────────────────────────────────────────────────────────
@@ -434,11 +435,20 @@ def format_recommendations(
 def _parse_selection(msg: str) -> list[int] | None:
     """
     Returns a list of 0-based indices for the chosen option(s), or None.
-    Handles: "1", "option 1", "go with 2", "all", "all three", etc.
+    Handles: "1", "option 1", "go with 2", "all", "all three",
+             "what about option 2", "what about 2", "show me 3", etc.
     """
     lower = msg.strip().lower()
     if re.search(r'\ball\b', lower):
         return [0, 1, 2]
+    # Explicit selection phrases — match before bare-digit fallback
+    m = re.search(
+        r'(?:what\s+about\s+(?:option\s+)?|show\s+me\s+(?:option\s+)?|option\s+)([123])\b',
+        lower,
+    )
+    if m:
+        return [int(m.group(1)) - 1]
+    # Bare digit: "1", "2", "3", "go with 2", "I'll take 3", etc.
     m = re.search(r'\b([123])\b', lower)
     if m:
         return [int(m.group(1)) - 1]
