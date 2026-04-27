@@ -206,3 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 deploy.zip
+
+logs.zip
+webapp_logs.zip
+*.log.zip
