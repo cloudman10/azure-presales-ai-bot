@@ -58,6 +58,21 @@ _RESOURCE_WORDS = {
     "gb ram", "tb storage", "gb storage",
 }
 
+_SERIES_LABELS = {
+    "D": "General Purpose",
+    "E": "Memory Optimised",
+    "F": "Compute Optimised",
+    "B": "Burstable/Cost Optimised",
+}
+
+_PREFERRED_SERIES_ORDER = ["D", "E", "F", "B"]
+
+
+def _sku_series(sku_name: str) -> str:
+    """Return the VM series letter from a SKU name (e.g. Standard_D4s_v5 → 'D')."""
+    m = re.match(r'(?:Standard_)?([A-Za-z])', sku_name or "")
+    return m.group(1).upper() if m else "?"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. detect_scenario_query
@@ -246,13 +261,9 @@ def search_skus(requirements: dict) -> list[dict]:
     """
     Query the Azure AI Search vm-skus index for matching active SKUs.
 
-    Filters applied:
-      - retired eq false
-      - vcpus ge N  (if specified)
-      - ram_gb ge N (if specified)
-
-    Full-text search on use_cases for the workload type keyword.
-    Returns up to 5 results sorted vcpus asc, ram_gb asc.
+    Runs one search per series family (D/E/F/B) using name-prefix OData filters,
+    takes the best result from each family, then fills remaining slots from the
+    combined candidate pool. Always prefers newer generations (v5/v6/v7).
     """
     endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
     api_key  = os.environ.get("AZURE_SEARCH_API_KEY", "")
@@ -266,55 +277,91 @@ def search_skus(requirements: dict) -> list[dict]:
         credential=AzureKeyCredential(api_key),
     )
 
-    # Build OData filter
-    filters = ["retired eq false"]
+    # Base OData filter
+    base_filters = ["retired eq false"]
     vcpus  = requirements.get("vcpus")
     ram_gb = requirements.get("ram_gb")
     if vcpus:
-        filters.append(f"vcpus ge {vcpus}")
+        base_filters.append(f"vcpus ge {vcpus}")
     if ram_gb:
-        filters.append(f"ram_gb ge {ram_gb}")
-    odata_filter = " and ".join(filters)
+        base_filters.append(f"ram_gb ge {ram_gb}")
+    base_filter = " and ".join(base_filters)
 
-    # Search text — use workload as the free-text query against use_cases / description
-    workload    = requirements.get("workload") or "general"
-    search_text = workload
+    # (name_lo, name_hi_exclusive, search_text)
+    _SERIES_SEARCHES = [
+        ("Standard_D", "Standard_E", "general purpose web server"),
+        ("Standard_E", "Standard_F", "memory optimised database"),
+        ("Standard_F", "Standard_G", "compute optimised"),
+        ("Standard_B", "Standard_C", "burstable cost saving"),
+    ]
 
-    try:
-        results = client.search(
-            search_text=search_text,
-            filter=odata_filter,
-            search_fields=["use_cases", "description"],
-            order_by=["vcpus asc", "ram_gb asc"],
-            top=5,
-        )
-        raw = [dict(r) for r in results]
+    def generation_score(sku: dict) -> int:
+        name = sku.get("sku_name", "")
+        if "_v5" in name or "_v6" in name or "_v7" in name:
+            return 3
+        if "_v4" in name or "_v3" in name:
+            return 2
+        if "_v2" in name:
+            return 1
+        return 0
 
-        def generation_score(sku: dict) -> int:
+    def clean_and_sort(raw: list[dict]) -> list[dict]:
+        filtered = [s for s in raw
+                    if "Promo" not in s.get("sku_name", "")
+                    and "Basic" not in s.get("sku_name", "")]
+        filtered.sort(key=lambda x: (-generation_score(x), x.get("vcpus", 0)))
+        return filtered
+
+    per_family: list[dict | None] = []
+    all_candidates: list[dict] = []
+
+    for lo, hi, search_text in _SERIES_SEARCHES:
+        series_filter = f"{base_filter} and sku_name ge '{lo}' and sku_name lt '{hi}'"
+        try:
+            results = client.search(
+                search_text=search_text,
+                filter=series_filter,
+                search_fields=["use_cases", "description"],
+                order_by=["vcpus asc", "ram_gb asc"],
+                top=3,
+            )
+            clean = clean_and_sort([dict(r) for r in results])
+            per_family.append(clean[0] if clean else None)
+            all_candidates.extend(clean)
+        except Exception as e:
+            logger.error("Azure AI Search query failed for series %s: %s", lo, e)
+            per_family.append(None)
+
+    # One representative per family first, then fill from the rest
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for sku in per_family:
+        if sku is not None:
             name = sku.get("sku_name", "")
-            if "_v5" in name or "_v6" in name or "_v7" in name:
-                return 3
-            if "_v4" in name or "_v3" in name:
-                return 2
-            if "_v2" in name:
-                return 1
-            return 0  # v1 or no version — oldest
+            if name not in seen:
+                seen.add(name)
+                merged.append(sku)
 
-        # Exclude Promo and Basic variants
-        filtered = [s for s in raw if "Promo" not in s.get("sku_name", "") and "Basic" not in s.get("sku_name", "")]
+    all_candidates.sort(key=lambda x: (-generation_score(x), x.get("vcpus", 0)))
+    for sku in all_candidates:
+        if len(merged) >= 5:
+            break
+        name = sku.get("sku_name", "")
+        if name not in seen:
+            seen.add(name)
+            merged.append(sku)
 
-        # Sort by generation descending, then vcpus asc
-        sorted_skus = sorted(filtered, key=lambda x: (-generation_score(x), x.get("vcpus", 0)))
-
-        return sorted_skus[:5]
-    except Exception as e:
-        logger.error("Azure AI Search query failed: %s", e)
-        return []
+    return merged[:5]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. format_recommendations
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _label_for_sku(sku_name: str) -> str:
+    """Return a recommendation label based on the SKU series letter."""
+    return _SERIES_LABELS.get(_sku_series(sku_name), "Specialised")
+
 
 def format_recommendations(
     skus: list[dict],
@@ -327,13 +374,6 @@ def format_recommendations(
     region      = requirements.get("region") or DEFAULT_REGION
     os_type     = requirements.get("os") or "Linux"
     region_disp = display_region(region)
-
-    # Headings that describe why each option was chosen
-    _LABELS = [
-        "Recommended",
-        "Memory optimised",
-        "Cost optimised",
-    ]
 
     top3 = skus[:3]
     if not top3:
@@ -350,11 +390,9 @@ def format_recommendations(
         ram_gb          = sku_doc.get("ram_gb", "?")
         temp_storage_gb = sku_doc.get("temp_storage_gb", 0)
         use_cases       = sku_doc.get("use_cases", "")
-        label           = _LABELS[i] if i < len(_LABELS) else ""
+        label           = _label_for_sku(sku_name)
 
-        heading = f"Option {i + 1} — {sku_name}"
-        if label:
-            heading += f" ({label})"
+        heading = f"Option {i + 1} — {sku_name} ({label})"
         lines.append(heading)
 
         # Specs line
