@@ -25,7 +25,8 @@ Never make up prices or specifications.
 Keep responses concise and professional."""
 
 _UNCERTAINTY_PHRASES = [
-    "i don't know", "i dont know", "not sure", "no idea",
+    "i don't know", "i dont know", "don't know", "dont know",
+    "not sure", "no idea",
     "you choose", "you pick", "recommend", "suggest",
     "which vm", "which one", "help me choose", "help me pick",
 ]
@@ -140,12 +141,22 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
 
 
 async def _call_claude(messages: list[dict]) -> dict:
-    client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    response = await client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=512,
-        system=SYSTEM_PROMPT,
-        messages=messages,
-    )
-    text = response.content[0].text if response.content else ""
-    return {"reply": text, "type": "conversation"}
+    try:
+        client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        response = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=512,
+            system=SYSTEM_PROMPT,
+            messages=messages,
+        )
+        text = response.content[0].text if response.content else ""
+        return {"reply": text, "type": "conversation"}
+    except Exception as e:
+        logger.error("_call_claude failed: %s", e)
+        return {
+            "reply": (
+                "I'm not able to answer that right now, but I can help with Azure VM pricing. "
+                "Try asking for a specific VM SKU or describe your requirements."
+            ),
+            "type": "conversation",
+        }

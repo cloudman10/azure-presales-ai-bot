@@ -40,6 +40,19 @@ RULES:
 - Never make up prices"""
 
 
+_UNCERTAINTY_PHRASES = [
+    "i don't know", "i dont know", "don't know", "dont know",
+    "not sure", "no idea",
+    "you choose", "you pick", "recommend", "suggest",
+    "which vm", "which one", "help me choose", "help me pick",
+]
+
+
+def _user_is_uncertain_about_sku(message: str) -> bool:
+    lower = message.lower()
+    return any(phrase in lower for phrase in _UNCERTAINTY_PHRASES)
+
+
 def _parse_fetch_marker(text: str) -> dict | None:
     match = re.search(r'FETCH_PRICING:(\{[\s\S]+?\})', text)
     if not match:
@@ -229,6 +242,20 @@ def _format_pricing(params: dict, items: list[dict], temp_storage_gb: int | None
 
 async def run(messages: list[dict]) -> dict:
     import httpx
+
+    # If user expresses SKU uncertainty and no SKU has been established yet,
+    # hand off to sku_advisor_agent rather than looping the LLM.
+    user_message = next(
+        (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
+    )
+    history_text = " ".join(m["content"] for m in messages)
+    sku_already_known = bool(re.search(r'\bStandard_[A-Za-z]', history_text))
+    if _user_is_uncertain_about_sku(user_message) and not sku_already_known:
+        return {
+            "reply": "No problem! Let me switch to recommendation mode — I'll find the best VM for you based on your requirements.",
+            "handoff": "sku_advisor",
+        }
+
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
     api_key = os.environ["AZURE_OPENAI_KEY"]
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
