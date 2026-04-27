@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import anthropic
 
@@ -72,6 +73,31 @@ def is_pricing_request(message: str) -> bool:
     return any(keyword in lower for keyword in PRICING_KEYWORDS)
 
 
+def _has_recent_pricing_output(history: list[dict]) -> bool:
+    """True if a full pricing estimate block appears in a recent assistant message."""
+    for msg in reversed(history[-6:]):
+        if (msg.get("role") == "assistant"
+                and "=== Azure VM Pricing Estimate ===" in msg.get("content", "")):
+            return True
+    return False
+
+
+def _looks_like_option_pick(message: str) -> bool:
+    """True if message is selecting option 1/2/3 from a recommendation list.
+
+    Used to distinguish "option 2" (→ advisor STATE 5) from "same for linux?"
+    or "what about Sydney?" (→ pricing_agent follow-up).
+    """
+    lower = message.strip().lower()
+    if lower in {
+        "yes", "yeah", "yep", "yup", "sure", "ok", "okay",
+        "go", "proceed", "fetch", "now", "please", "do it", "all",
+    }:
+        return True
+    # Matches standalone 1/2/3 but NOT numbers like 16 or 32
+    return bool(re.search(r'\b[123]\b', lower))
+
+
 async def run(session_id: str, message: str, sessions: dict) -> dict:
     """
     Orchestrator entry point for all user messages.
@@ -94,7 +120,6 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     history.append({"role": "user", "content": message})
 
     # ── Routing ───────────────────────────────────────────────────────────────
-    # Route to advisor if: mid-flow, awaiting a pick selection, or new scenario query
     state_key = f"{session_id}_advisor_state"
     picks_key = f"{session_id}_advisor_picks"
 
@@ -104,7 +129,22 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     )
     has_advisor_picks = bool(sessions.get(picks_key))
 
-    if has_advisor_picks or in_advisor_flow or detect_scenario_query(message) or detect_sku_uncertainty(message):
+    # Route to advisor when:
+    #   • actively collecting requirements (in_advisor_flow)
+    #   • new workload/scenario/uncertainty query
+    #   • picks are live AND message is an option pick (1/2/3/yes/all)
+    #
+    # has_advisor_picks alone is NOT sufficient — a follow-up like
+    # "same for linux?" or "what about Sydney?" must reach pricing_agent,
+    # not get stuck in STATE 5 returning "please pick 1/2/3".
+    wants_advisor = (
+        in_advisor_flow
+        or detect_scenario_query(message)
+        or detect_sku_uncertainty(message)
+        or (has_advisor_picks and _looks_like_option_pick(message))
+    )
+
+    if wants_advisor:
         # Pre-seed advisor state with region/OS from earlier in the conversation
         if not in_advisor_flow and not has_advisor_picks:
             pre = _extract_state_from_history(history)
@@ -120,10 +160,11 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
                 sessions[state_key] = seed
                 logger.debug("session=%s advisor pre-seeded: region=%s os=%s",
                              session_id, pre["region"], pre["os"])
-        logger.debug("session=%s routing to sku_advisor_agent (in_flow=%s, uncertainty=%s)", session_id, in_advisor_flow, detect_sku_uncertainty(message))
+        logger.debug("session=%s routing to sku_advisor_agent (in_flow=%s, uncertainty=%s)",
+                     session_id, in_advisor_flow, detect_sku_uncertainty(message))
         result = await sku_advisor_agent.run(history, session_id, sessions)
 
-    elif is_pricing_request(message) or len(history) > 1:
+    elif is_pricing_request(message) or _has_recent_pricing_output(history) or len(history) > 1:
         logger.debug("session=%s routing to pricing_agent", session_id)
         result = await pricing_agent.run(history)
         if result.get("handoff") == "sku_advisor":
