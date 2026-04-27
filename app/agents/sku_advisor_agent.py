@@ -436,14 +436,21 @@ def _parse_selection(msg: str) -> list[int] | None:
     """
     Returns a list of 0-based indices for the chosen option(s), or None.
     Handles: "1", "option 1", "go with 2", "all", "all three",
-             "what about option 2", "what about 2", "show me 3", etc.
+             "what about option 2", "provide me pricing for option 2",
+             "pricing for 2", "option 2 pricing", "show me 3", etc.
     """
     lower = msg.strip().lower()
     if re.search(r'\ball\b', lower):
         return [0, 1, 2]
-    # Explicit selection phrases — match before bare-digit fallback
+    # Explicit selection phrases — matched before bare-digit fallback
     m = re.search(
-        r'(?:what\s+about\s+(?:option\s+)?|show\s+me\s+(?:option\s+)?|option\s+)([123])\b',
+        r'(?:'
+        r'what\s+about\s+(?:option\s+)?'
+        r'|show\s+me\s+(?:option\s+)?'
+        r'|(?:provide|get|fetch|give)\s+(?:me\s+)?(?:(?:full\s+)?pricing\s+for\s+)?(?:option\s+)?'
+        r'|pricing\s+for\s+(?:option\s+)?'
+        r'|option\s+'
+        r')([123])\b',
         lower,
     )
     if m:
@@ -478,6 +485,12 @@ _EMPTY_STATE = lambda: {
     "workload": None, "region": None, "os": None,
 }
 
+# Affirmative words that, when typed alone in STATE 5, map to "option 1"
+_AFFIRMATIVES = frozenset({
+    "yes", "yeah", "yep", "yup", "sure", "ok", "okay",
+    "go", "proceed", "fetch", "now", "please", "do it",
+})
+
 
 async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     """
@@ -504,6 +517,10 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     picks = sessions.get(picks_key)
     if picks:
         selection = _parse_selection(user_message)
+        # Treat standalone affirmatives ("yes", "ok", "sure", …) as option 1
+        # so the user doesn't get stuck in a loop after saying "yes".
+        if selection is None and user_message.strip().lower() in _AFFIRMATIVES:
+            selection = [0]
         if selection is None:
             return {
                 "reply": "Please reply with **1**, **2**, or **3** — or type **all** to see full pricing for all three.",
@@ -518,35 +535,31 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     state_key = f"{session_id}_advisor_state"
     state: dict = sessions.get(state_key) or _EMPTY_STATE()
 
-    # ── Merge parsed fields into state (never overwrite an existing value) ─────
-    reqs = parse_requirements(user_message)
-
-    if reqs["vcpus"]  and not state["vcpus"]:
-        state["vcpus"] = reqs["vcpus"]
-    if reqs["ram_gb"] and not state["ram_gb"]:
-        state["ram_gb"] = reqs["ram_gb"]
-    if reqs["users"]  and not state["users"]:
-        state["users"] = reqs["users"]
-    if reqs["workload"] and reqs["workload"] != "general" and not state["workload"]:
-        state["workload"] = reqs["workload"]
-    if reqs["os"] and not state["os"]:
-        state["os"] = reqs["os"]
-
-    # Region: prefer the richer extract_region (covers cities + ARM names).
-    # Scan the full conversation history so a region mentioned in any prior
-    # message is picked up, not just the current one.
-    if not state["region"]:
-        region_match = extract_region(user_message)
-        if not region_match:
-            for msg in messages:
-                if msg.get("role") == "user" and msg["content"] != user_message:
-                    region_match = extract_region(msg["content"])
-                    if region_match:
-                        break
-        if region_match:
-            state["region"] = region_match["arm_name"]
-        elif reqs["region"]:
-            state["region"] = reqs["region"]
+    # ── Scan full conversation history oldest-first to populate state ─────────
+    # Running over every user message means context from any turn — including
+    # messages before the advisor was active — is captured so we never
+    # re-ask for information the user already provided.
+    for _msg in messages:
+        if _msg.get("role") != "user":
+            continue
+        _text = _msg["content"]
+        _r = parse_requirements(_text)
+        if _r["vcpus"] and not state["vcpus"]:
+            state["vcpus"] = _r["vcpus"]
+        if _r["ram_gb"] and not state["ram_gb"]:
+            state["ram_gb"] = _r["ram_gb"]
+        if _r["users"] and not state["users"]:
+            state["users"] = _r["users"]
+        if _r["workload"] and _r["workload"] != "general" and not state["workload"]:
+            state["workload"] = _r["workload"]
+        if _r["os"] and not state["os"]:
+            state["os"] = _r["os"]
+        if not state["region"]:
+            _rm = extract_region(_text)
+            if _rm:
+                state["region"] = _rm["arm_name"]
+            elif _r["region"]:
+                state["region"] = _r["region"]
 
     logger.info("sku_advisor: state=%s", state)
     sessions[state_key] = state   # persist after every turn
