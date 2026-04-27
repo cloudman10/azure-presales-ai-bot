@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-04-26)
+## Current Status (2026-04-27)
 
 | Item | Status |
 |------|--------|
@@ -133,6 +133,12 @@ azure-presales-ai-bot/
 - Python SKU normalization always overrides LLM output to prevent hallucinated SKU names
 - Temp storage display via Azure ARM API + Managed Identity
 - SKU Advisor Agent — scenario-based VM recommendations via Azure AI Search; top 3 matches; live pricing fetch
+- SKU Advisor: series diversity — 4 per-family searches (D/E/F/B) guarantee one result per series with correct labels (General Purpose, Memory Optimised, Compute Optimised, Burstable/Cost Optimised)
+- SKU Advisor: region and OS carry-over from full conversation history — info stated before advisor started is captured without re-asking
+- SKU Advisor: typo-tolerant OS detection (`windwos`, `windoes`, `widnows`, `win` all map to Windows; `lin` prefix maps to Linux)
+- SKU Advisor: direct option 1/2/3 selection without confirmation loops — "option 2", "2", "what about option 2 pricing", standalone "yes"/"ok" all trigger immediate pricing fetch
+- SKU Advisor: follow-up pricing requests after full output (different region, different OS, more cores) handled by pricing_agent with full history context — no fallback to generic response
+- Uncertainty routing: "dont know", "don't know", "not sure", "recommend", "which vm" and similar phrases route to SKU Advisor instead of failing in the pricing flow
 - Report Agent — Excel (.xlsx) and PDF download from any pricing result; HyperXen.ai branding; download buttons appear inline
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
 - Modern SKU preference — v4/v5/v6 ranked above v1/v2; Promo/Basic excluded
