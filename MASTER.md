@@ -191,6 +191,8 @@ $content = Invoke-RestMethod -Uri $defaultLog.href -Headers @{Authorization="Bas
 
 ### Bicep Infrastructure
 
+> Always run `az deployment group what-if --resource-group rg-hyperxen-app-dev --template-file infra/main.bicep` before deploying Bicep to preview changes.
+
 ```bash
 az deployment group create --resource-group rg-hyperxen-app-dev --template-file infra/main.bicep
 ```
@@ -231,7 +233,6 @@ az deployment group create --resource-group rg-hyperxen-app-dev --template-file 
 | `AZURE_CLIENT_SECRET` | Service principal secret |
 | `AZURE_SEARCH_ENDPOINT` | `https://hyperxen-search.search.windows.net` |
 | `AZURE_SEARCH_API_KEY` | Azure AI Search admin key |
-| `PYTHONPATH` | `/home/site/wwwroot` (set as App Service app setting) |
 | `ANTHROPIC_API_KEY` | Anthropic API key (for future Claude integration) |
 | `ENVIRONMENT` | `dev` / `prod` |
 | `PORT` | `8000` |
