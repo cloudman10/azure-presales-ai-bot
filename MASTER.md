@@ -199,6 +199,18 @@ az deployment group create --resource-group rg-hyperxen-app-dev --template-file 
 
 ---
 
+## Post-Bicep Deploy Checklist
+
+After any fresh Bicep deploy, these 3 secrets must be set manually (they are redacted in main.bicep for security):
+
+```powershell
+az webapp config appsettings set --resource-group rg-hyperxen-app-dev --name hyperxen-pricing-bot-db5hmngq3woxa --settings ANTHROPIC_API_KEY="REPLACE_WITH_REAL_KEY" AZURE_CLIENT_SECRET="REPLACE_WITH_REAL_SECRET" AZURE_SEARCH_API_KEY="REPLACE_WITH_REAL_KEY"
+```
+
+> These values are not stored in the repo. Keep them in a secure password manager.
+
+---
+
 ## Roadmap
 
 | Step | Status | Description |
