@@ -134,8 +134,15 @@ def _format_pricing(params: dict, items: list[dict], temp_storage_gb: int | None
     reg = display_region(region)
     q_label = f"{qty}x " if qty > 1 else ""
 
+    vcpus_val  = params.get('vcpus')
+    ram_gb_val = params.get('ram_gb')
+
     out = "=== Azure VM Pricing Estimate ===\n"
     out += f"VM:       {q_label}{sku}\n"
+    if vcpus_val:
+        out += f"vCPUs:    {vcpus_val}\n"
+    if ram_gb_val:
+        out += f"RAM:      {ram_gb_val} GB\n"
     out += f"OS:       {os_type}"
     if wants_hb and os_type == 'Windows':
         out += " + Azure Hybrid Benefit"

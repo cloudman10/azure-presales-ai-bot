@@ -181,11 +181,15 @@ def parse_requirements(message: str) -> dict:
             break
 
     # ── OS ───────────────────────────────────────────────────────────────────
+    # Use word-level checks to avoid false positives from words like
+    # "handling" (contains "lin") or "within" (contains "win").
     os_type = None
-    raw = message.lower().strip().replace(" ", "")
-    if any(w in raw for w in ["window", "windwos", "windoes", "widnows", "win"]):
+    words_set = set(lower.split())
+    _win_kw = ("windows", "window", "windwos", "windoes", "widnows")
+    _lin_kw = ("linux", "linus", "linx", "ubuntu", "centos", "rhel", "debian", "redhat")
+    if any(kw in lower for kw in _win_kw) or "win" in words_set:
         os_type = "Windows"
-    elif any(w in raw for w in ["linux", "linus", "linx", "lin"]):
+    elif any(kw in lower for kw in _lin_kw) or "lin" in words_set:
         os_type = "Linux"
 
     # ── Storage ──────────────────────────────────────────────────────────────
@@ -298,18 +302,16 @@ def search_skus(requirements: dict) -> list[dict]:
 
     def generation_score(sku: dict) -> int:
         name = sku.get("sku_name", "")
-        if "_v5" in name or "_v6" in name or "_v7" in name:
-            return 3
-        if "_v4" in name or "_v3" in name:
-            return 2
-        if "_v2" in name:
-            return 1
-        return 0
+        m = re.search(r'_v(\d+)', name)
+        if m:
+            return int(m.group(1)) * 10   # v7→70, v6→60, v5→50, v4→40, v3→30, v2→20, v1→10
+        return 10                          # no version tag = v1-equivalent
 
     def clean_and_sort(raw: list[dict]) -> list[dict]:
         filtered = [s for s in raw
                     if "Promo" not in s.get("sku_name", "")
                     and "Basic" not in s.get("sku_name", "")]
+        # Sort by generation DESC first so newest gen is always picked per family
         filtered.sort(key=lambda x: (-generation_score(x), x.get("vcpus", 0)))
         return filtered
 
@@ -324,7 +326,7 @@ def search_skus(requirements: dict) -> list[dict]:
                 filter=series_filter,
                 search_fields=["use_cases", "description"],
                 order_by=["vcpus asc", "ram_gb asc"],
-                top=3,
+                top=15,
             )
             clean = clean_and_sort([dict(r) for r in results])
             per_family.append(clean[0] if clean else None)
@@ -462,17 +464,30 @@ def _parse_selection(msg: str) -> list[int] | None:
     return None
 
 
-async def _show_full_pricing(skus: list[str], region: str, os_type: str) -> str:
+async def _show_full_pricing(
+    skus: list[str],
+    region: str,
+    os_type: str,
+    sku_docs: list[dict] | None = None,
+) -> str:
     """Fetch live pricing and format full breakdown for each chosen SKU."""
     from app.agents.pricing_agent import _format_pricing
 
     parts = []
-    for sku_name in skus:
+    for idx, sku_name in enumerate(skus):
+        doc = sku_docs[idx] if sku_docs and idx < len(sku_docs) else {}
         try:
-            items    = await fetch_prices(region, sku_name)
-            temp_gb  = await fetch_temp_storage_gb(sku_name, region)
-            params   = {"sku": sku_name, "region": region, "os": os_type,
-                        "qty": 1, "wants_hb": False}
+            items   = await fetch_prices(region, sku_name)
+            temp_gb = await fetch_temp_storage_gb(sku_name, region)
+            params  = {
+                "sku":      sku_name,
+                "region":   region,
+                "os":       os_type,
+                "qty":      1,
+                "wants_hb": False,
+                "vcpus":    doc.get("vcpus"),
+                "ram_gb":   doc.get("ram_gb"),
+            }
             parts.append(_format_pricing(params, items, temp_gb))
         except Exception as e:
             parts.append(f"Could not fetch pricing for {sku_name}: {e}")
@@ -526,7 +541,9 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             # without being re-asked for region or OS by the pricing agent.
             # picks_key is only replaced when STATE 4 generates new recommendations.
             chosen_skus = [picks["skus"][i] for i in selection if i < len(picks["skus"])]
-            reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"])
+            chosen_docs = [picks["sku_docs"][i] for i in selection
+                           if i < len(picks.get("sku_docs") or [])]
+            reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"], chosen_docs)
             return {"reply": reply, "type": "pricing"}
         # No option digit found — if the user is starting a new scenario query
         # clear picks and fall through to the state machine; otherwise prompt.
@@ -647,11 +664,13 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
 
     reply = format_recommendations(top3, state, prices)
 
-    # Store picks so the user can select 1/2/3/all in the next turn
+    # Store picks so the user can select 1/2/3/all in the next turn.
+    # sku_docs carries vcpus/ram_gb so the full pricing block can show specs.
     sessions[picks_key] = {
-        "skus":   [s.get("sku_name") for s in top3],
-        "region": state["region"],
-        "os":     state["os"],
+        "skus":     [s.get("sku_name") for s in top3],
+        "sku_docs": top3,
+        "region":   state["region"],
+        "os":       state["os"],
     }
     sessions[state_key] = _EMPTY_STATE()   # reset advisor state
     return {"reply": reply, "type": "advisor"}
