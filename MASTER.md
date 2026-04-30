@@ -139,6 +139,10 @@ azure-presales-ai-bot/
 - SKU Advisor: direct option 1/2/3 selection without confirmation loops — "option 2", "2", "what about option 2 pricing", standalone "yes"/"ok" all trigger immediate pricing fetch
 - SKU Advisor: follow-up pricing requests after full output (different region, different OS, more cores) handled by pricing_agent with full history context — no fallback to generic response
 - Uncertainty routing: "dont know", "don't know", "not sure", "recommend", "which vm" and similar phrases route to SKU Advisor instead of failing in the pricing flow
+- SKU Advisor: generation scoring v7=70/v6=60/v5=50/v4=40/v3=30/v2=20 — always recommends newest generation first
+- SKU Advisor: vCPUs and RAM now shown in `=== Azure VM Pricing Estimate ===` output
+- SKU Advisor: OS detection false positives fixed (words like "handling" no longer trigger Linux match)
+- SKU Advisor: OS always asked if not already known, regardless of how advisor was triggered
 - Report Agent — Excel (.xlsx) and PDF download from any pricing result; HyperXen.ai branding; download buttons appear inline
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
 - Modern SKU preference — v4/v5/v6 ranked above v1/v2; Promo/Basic excluded
