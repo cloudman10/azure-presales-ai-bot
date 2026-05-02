@@ -188,7 +188,7 @@ def generate_pdf(pricing_text: str, session_id: str = "") -> bytes:
         Spacer(1, 10),
         HRFlowable(width="100%", thickness=0.5, color=GREY),
         Paragraph(
-            "All prices are Microsoft Retail RRP. CSP pricing will be lower.",
+            "All prices are Microsoft Retail RRP. CSP pricing would be lower.",
             footer_style,
         ),
     ]

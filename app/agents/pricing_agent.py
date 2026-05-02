@@ -242,7 +242,7 @@ def _format_pricing(params: dict, items: list[dict], temp_storage_gb: int | None
             h3_m = ri_monthly(hb_r3)
             out += f"3-Year RI + HB: {c(h3_m)}/month  (save {pct(price_m, h3_m)}% vs Windows PAYG RRP)\n"
 
-    out += f"\nAll prices are Microsoft Retail RRP. CSP pricing will be lower.\n"
+    out += f"\nAll prices are Microsoft Retail RRP. CSP pricing would be lower.\n"
     out += f"Monthly estimates based on {HOURS_PER_MONTH} hours."
     return out
 
