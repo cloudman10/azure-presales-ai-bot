@@ -83,6 +83,17 @@ Azure App Service (dev)     Azure App Service (prod)
 | Production | hyperxen-pricing-bot-db5hmngq3woxa | https://hyperxen.com | main |
 | Dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.com | dev |
 
+## Replit Frontend Environment Variables
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| BACKEND_URL | https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net | Production backend |
+| BACKEND_URL_DEV | https://dev.hyperxen.com | Dev backend |
+
+Backend URL is read from `process.env.BACKEND_URL` in `server/routes.ts` line 8.
+To switch to dev: change `BACKEND_URL` value to `https://dev.hyperxen.com` in Replit Secrets.
+To switch back to prod: change `BACKEND_URL` value back to `https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net`
+
 ---
 
 ## DNS (HostPapa)
