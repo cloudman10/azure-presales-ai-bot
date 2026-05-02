@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-04-27)
+## Current Status (2026-05-02)
 
 | Item | Status |
 |------|--------|
@@ -15,6 +15,8 @@
 | Azure AI Search | ✅ Indexed (894 active SKUs) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
+| Dev Environment | ✅ Live — https://dev.hyperxen.com |
+| CI/CD Pipeline | ✅ GitHub Actions — auto deploy on push |
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
@@ -30,10 +32,20 @@ Replit Frontend (HyperXen.ai)
         │  POST /api/chat
         │  GET  /api/welcome
         ▼
-Azure App Service (Australia East)
-  https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net
-  Python 3.11 · FastAPI · uvicorn · B1 Linux
-        │
+┌─────────────────────────────────────────────────────────┐
+│  GitHub Actions CI/CD                                   │
+│  push to dev  → hyperxen-pricing-bot-dev  (dev env)    │
+│  push to main → hyperxen-pricing-bot-prod (production) │
+└─────────────────────────────────────────────────────────┘
+        │                          │
+        ▼                          ▼
+Azure App Service (dev)     Azure App Service (prod)
+  https://dev.hyperxen.com    https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net
+  Python 3.11 · FastAPI        Python 3.11 · FastAPI
+  B1 Linux                     B1 Linux
+        │                          │
+        └──────────┬───────────────┘
+                   │
         ├──► GPT-4o via Azure AI Foundry
         │    https://hyperxen-foundry-presales1.services.ai.azure.com
         │    Deployment: gpt-4o
@@ -52,12 +64,35 @@ Azure App Service (Australia East)
 
 | Resource | Name | Resource Group | Region |
 |----------|------|---------------|--------|
-| App Service | hyperxen-pricing-bot-db5hmngq3woxa | rg-hyperxen-app-dev | Australia East |
-| App Service Plan | hyperxen-pricing-bot-plan (B1 Linux) | rg-hyperxen-app-dev | Australia East |
+| App Service (prod) | hyperxen-pricing-bot-db5hmngq3woxa | rg-hyperxen-app-dev | Australia East |
+| App Service Plan (prod) | hyperxen-pricing-bot-plan (B1 Linux) | rg-hyperxen-app-dev | Australia East |
+| App Service (dev) | hyperxen-pricing-bot-dev | rg-hyperxen-app-dev | Australia East |
+| App Service Plan (dev) | hyperxen-pricing-bot-plan-dev (B1 Linux) | rg-hyperxen-app-dev | Australia East |
 | Azure AI Foundry | hyperxen-foundry-presales1 | rg-hyperxen-dev1 | East US 2 |
 | Azure AI Search | hyperxen-search (Free tier) | rg-hyperxen-app-dev | Australia East |
 | Managed Identity | Enabled on App Service | — | Principal ID: 1781559f-16d2-4fbc-9140-87489df58699 |
 | Service Principal | hyperxen-app-sp | — | Reader role on subscription |
+| Service Principal | hyperxen-github-actions | — | Contributor on rg-hyperxen-app-dev |
+
+---
+
+## Environments
+
+| Environment | App Service | URL | Branch |
+|------------|-------------|-----|--------|
+| Production | hyperxen-pricing-bot-db5hmngq3woxa | https://hyperxen.com | main |
+| Dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.com | dev |
+
+---
+
+## DNS (HostPapa)
+
+| Record | Type | Value |
+|--------|------|-------|
+| dev | CNAME | hyperxen-pricing-bot-dev.azurewebsites.net |
+| asuid.dev | TXT | ED0F428CFF97A626A727B50EAF889D67CBF0603A47C6F2DA6F104CB5E278BC52 |
+
+---
 
 - **Subscription ID:** `dd5a4d29-50b0-4330-b83a-37094699272c`
 - **Tenant ID:** `ceba3126-eb69-4216-9b6f-623fdd3f19de`
@@ -212,6 +247,25 @@ az webapp config appsettings set --resource-group rg-hyperxen-app-dev --name hyp
 ```
 
 > These values are not stored in the repo. Keep them in a secure password manager.
+
+---
+
+## CI/CD Pipeline (GitHub Actions)
+
+| Branch | Deploys To | URL |
+|--------|-----------|-----|
+| dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.com |
+| main | hyperxen-pricing-bot-db5hmngq3woxa (production) | https://hyperxen.com |
+
+Workflow file: `.github/workflows/deploy.yml`
+GitHub Secret: `AZURE_CREDENTIALS` (service principal: `hyperxen-github-actions`, clientId: `51c2f18d-444d-4af8-8129-8ec4b317fb0f`)
+Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f18d-444d-4af8-8129-8ec4b317fb0f`
+
+### Developer Workflow
+1. Make changes locally on `dev` branch
+2. `git push origin dev` → auto deploys to https://dev.hyperxen.com
+3. Test at https://dev.hyperxen.com
+4. When happy → `git checkout main && git merge dev && git push origin main` → auto deploys to production
 
 ---
 
