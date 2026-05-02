@@ -83,6 +83,13 @@ Azure App Service (dev)     Azure App Service (prod)
 | Production | hyperxen-pricing-bot-db5hmngq3woxa | https://hyperxen.com | main |
 | Dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.com | dev |
 
+## Dev SSL Certificate
+- **Type:** Self-signed (Azure managed cert kept failing due to duplicate pending operations)
+- **Thumbprint:** `66CB417763C7318ABD21763171CC5ABE2D447C6B`
+- **Expires:** 2027-05-02
+- **To rotate:** regenerate `dev-hyperxen.pfx` with openssl, upload via `az webapp config ssl upload`, rebind with `az webapp config ssl bind`
+- **Password:** stored securely (do not commit to repo)
+
 ## Replit Frontend Environment Variables
 
 | Variable | Value | Purpose |
