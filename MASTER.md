@@ -296,6 +296,22 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 
 ---
 
+## Monitoring (Application Insights)
+
+| Resource | Name | Resource Group |
+|----------|------|----------------|
+| Application Insights | hyperxen-insights | rg-hyperxen-app-dev |
+
+- **SDK:** `azure-monitor-opentelemetry==1.6.4`
+- **Configured in:** `app/main.py` via `configure_azure_monitor()`
+- **Connection string:** stored as `APPLICATIONINSIGHTS_CONNECTION_STRING` app setting on both prod and dev
+- **Data visible at:** https://portal.azure.com → hyperxen-insights → Search / Failures / Performance
+- **Tracks:** all HTTP requests, response times, failures, dependencies (Azure AI Search, Prices API calls)
+- **Note:** Live Metrics not supported with OpenTelemetry SDK — use Search and Performance tabs instead
+- **Cold start warning:** B1 instance takes 75–211s on cold start due to OpenTelemetry outbound connections. Upgrade to S1 for Always On if needed.
+
+---
+
 ## Roadmap
 
 | Step | Status | Description |
