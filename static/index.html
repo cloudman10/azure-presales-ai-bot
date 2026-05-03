@@ -3,171 +3,398 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Azure VM Pricing Bot</title>
+<title>HyperXen.ai — Azure VM Pricing</title>
 <style>
+/* ── reset ─────────────────────────────────────────────────────────────── */
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#F4F6F8;height:100vh;display:flex;flex-direction:column;max-width:920px;margin:0 auto}
-.header{display:flex;align-items:center;gap:12px;padding:14px 24px;background:#fff;border-bottom:1px solid #E5E9ED;flex-shrink:0}
-.header h1{font-size:15px;font-weight:600;color:#1A1A2E}
-.header p{font-size:11px;color:#8B95A2;margin-top:2px}
-.dot{width:7px;height:7px;border-radius:50%;background:#22C55E;margin-left:auto;flex-shrink:0}
-.chat{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:100dvh;display:flex;flex-direction:column;max-width:920px;margin:0 auto}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+.header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid #E5E9ED;flex-shrink:0}
+.logo{width:32px;height:32px;border-radius:8px;background:#0078D4;color:#fff;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.header-text h1{font-size:15px;font-weight:600;color:#1A1A2E}
+.header-text p{font-size:11px;color:#8B95A2;margin-top:1px}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.dot{width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0}
+.new-btn{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid #E5E9ED;background:#fff;color:#666;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap;line-height:1}
+.new-btn:hover{border-color:#0078D4;color:#0078D4;background:#F0F7FF}
+
+/* ── chat area ──────────────────────────────────────────────────────────── */
+.chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;-webkit-overflow-scrolling:touch}
+.chat::-webkit-scrollbar{width:4px}.chat::-webkit-scrollbar-track{background:transparent}.chat::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px}
+
+/* ── message layout ─────────────────────────────────────────────────────── */
 .msg{display:flex;gap:10px;align-items:flex-start}
 .msg.user{flex-direction:row-reverse}
-.av{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
+.av{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
 .av.bot{background:#E8F4FD;color:#005A9E;border:1px solid #C3DDF5}
 .av.user{background:#0078D4;color:#fff}
-.bubble{border-radius:12px;padding:12px 16px;font-size:14px;line-height:1.65;max-width:82%}
+
+/* ── bubbles ────────────────────────────────────────────────────────────── */
+.bubble{border-radius:12px;padding:12px 16px;font-size:14px;line-height:1.65;max-width:84%}
 .bubble.user{background:#0078D4;color:#fff;border-radius:12px 12px 4px 12px}
 .bubble.bot{background:#fff;border:1px solid #E5E9ED;border-radius:12px 12px 12px 4px;color:#1A1A2E;white-space:pre-wrap}
-.bubble.bot.pricing{font-family:'Consolas','Courier New',monospace;font-size:12.5px;background:#F8FBFF;border-color:#C3DDF5}
+.bubble.card-wrap{padding:0;background:transparent;border:none;white-space:normal}
+
+/* ── pricing card ───────────────────────────────────────────────────────── */
+.price-card{background:#fff;border:1px solid #C3DDF5;border-radius:12px;overflow:hidden;white-space:normal;max-width:520px;font-size:14px}
+
+.pc-head{background:linear-gradient(135deg,#0078D4 0%,#005A9E 100%);color:#fff;padding:14px 18px}
+.pc-vm{font-size:16px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pc-badge{font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.5px}
+.pc-specs{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;opacity:.9}
+
+.pc-payg{background:#F0F7FF;border-bottom:1px solid #D0E8FF;padding:12px 18px;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px}
+.pc-payg-lbl{font-size:11px;font-weight:600;color:#005A9E;text-transform:uppercase;letter-spacing:.5px;width:100%;margin-bottom:4px}
+.pc-payg-hr{font-size:22px;font-weight:700;color:#0078D4}
+.pc-payg-unit{font-size:13px;font-weight:400;color:#5A7A9A}
+.pc-payg-mo{font-size:13px;color:#5A7A9A}
+
+.pc-sections{padding:2px 0}
+details.pcs{border-bottom:1px solid #EEF2F7}
+details.pcs:last-child{border-bottom:none}
+details.pcs summary{padding:10px 18px;font-size:13px;font-weight:500;color:#333;cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none;user-select:none}
+details.pcs summary::-webkit-details-marker{display:none}
+details.pcs summary .chev{color:#8B95A2;font-size:16px;transition:transform .2s;flex-shrink:0}
+details.pcs[open] summary .chev{transform:rotate(90deg)}
+details.pcs summary:hover{background:#F8FBFF}
+.pcs-badge{font-size:10px;padding:1px 7px;border-radius:10px;margin-left:6px;font-weight:600}
+.bg-green{background:#DCFCE7;color:#166534}
+.bg-blue{background:#DBEAFE;color:#1D4ED8}
+.bg-purple{background:#F3E8FF;color:#7E22CE}
+.pcs-body{padding:4px 18px 12px;font-size:13px;color:#444;display:flex;flex-direction:column;gap:3px}
+.pcs-row{display:flex;gap:6px}
+.pcs-lbl{min-width:72px;color:#8B95A2;flex-shrink:0}
+.pcs-val{font-weight:600;color:#1A1A2E}
+
+.pc-foot{padding:12px 18px;border-top:1px solid #EEF2F7}
+
+/* ── download buttons ───────────────────────────────────────────────────── */
+.dl-btns{display:flex;gap:8px;flex-wrap:wrap}
+.dl-btn{font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid #0078D4;background:#fff;color:#0078D4;cursor:pointer;transition:all .15s;white-space:nowrap}
+.dl-btn:hover{background:#0078D4;color:#fff}
+.dl-btn:disabled{border-color:#D1D5DB;color:#8B95A2;cursor:not-allowed}
+
+/* ── typing indicator ───────────────────────────────────────────────────── */
 .typing{display:flex;align-items:center;gap:4px;padding:4px 0}
 .typing span{width:5px;height:5px;border-radius:50%;background:#C3DDF5;animation:blink 1.2s ease-in-out infinite}
 .typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
 @keyframes blink{0%,80%,100%{transform:scale(.7);opacity:.5}40%{transform:scale(1);opacity:1}}
-.bar{padding:14px 24px;background:#fff;border-top:1px solid #E5E9ED;display:flex;gap:10px;flex-shrink:0}
+
+/* ── sample chips ───────────────────────────────────────────────────────── */
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.chip{font-size:11.5px;padding:5px 10px;border-radius:6px;background:#F4F6F8;border:1px solid #D1D5DB;color:#005A9E;cursor:pointer}
+.chip:hover{background:#E8F4FD;border-color:#0078D4}
+
+/* ── input bar ──────────────────────────────────────────────────────────── */
+.bar{padding:12px 20px;padding-bottom:max(12px,env(safe-area-inset-bottom,12px));background:#fff;border-top:1px solid #E5E9ED;display:flex;gap:10px;flex-shrink:0}
 textarea{flex:1;min-height:44px;max-height:140px;resize:none;border:1px solid #D1D5DB;border-radius:10px;padding:11px 14px;font-family:inherit;font-size:14px;outline:none;line-height:1.5;transition:border-color .15s}
 textarea:focus{border-color:#0078D4}
 .send{width:44px;height:44px;border-radius:10px;border:none;background:#0078D4;color:#fff;cursor:pointer;font-size:18px;flex-shrink:0;transition:background .15s}
 .send:hover{background:#005A9E}.send:disabled{background:#D1D5DB;cursor:not-allowed}
-.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
-.chip{font-size:11.5px;padding:5px 10px;border-radius:6px;background:#F4F6F8;border:1px solid #D1D5DB;color:#005A9E;cursor:pointer;line-height:1.4}
-.chip:hover{background:#E8F4FD;border-color:#0078D4}
-.dl-btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-.dl-btn{font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid #0078D4;background:#fff;color:#0078D4;cursor:pointer;transition:all .15s;white-space:nowrap}
-.dl-btn:hover{background:#0078D4;color:#fff}
-.dl-btn:disabled{border-color:#D1D5DB;color:#8B95A2;cursor:not-allowed}
-.chat::-webkit-scrollbar{width:4px}.chat::-webkit-scrollbar-track{background:transparent}.chat::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px}
+
+/* ── mobile ─────────────────────────────────────────────────────────────── */
+@media(max-width:600px){
+  .header{padding:10px 12px}
+  .header-text p{display:none}
+  .chat{padding:14px 12px}
+  .bubble{max-width:92%;font-size:13.5px}
+  .bubble.card-wrap{max-width:96%}
+  .price-card{max-width:100%}
+  .pc-payg-hr{font-size:20px}
+  .pc-specs{gap:10px}
+  .bar{padding:10px 12px;padding-bottom:max(10px,env(safe-area-inset-bottom,10px))}
+}
 </style>
 </head>
 <body>
+
 <div class="header">
-  <svg width="30" height="30" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#0078D4"/><path d="M8 22L14 10l4 8-2 1.5L8 22z" fill="white" opacity=".7"/><path d="M13 22h11l-5.5-9L13 22z" fill="white"/></svg>
-  <div><h1>Azure VM Pricing Bot</h1><p>Powered by Claude &middot; Azure Retail Prices API</p></div>
-  <div class="dot"></div>
+  <div class="logo">H</div>
+  <div class="header-text">
+    <h1>HyperXen.ai</h1>
+    <p>Azure VM Pricing Engine (Beta)</p>
+  </div>
+  <div class="header-right">
+    <div class="dot"></div>
+    <button class="new-btn" onclick="newConversation()" title="Start a new conversation">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 3 3 12 12 12"/></svg>
+      New
+    </button>
+  </div>
 </div>
+
 <div class="chat" id="chat"></div>
+
 <div class="bar">
-  <textarea id="inp" placeholder="Type your request - e.g. I need VM pricing" rows="1"></textarea>
+  <textarea id="inp" placeholder="e.g. D4s_v5 Windows Australia East" rows="1"></textarea>
   <button class="send" id="btn">&#9658;</button>
 </div>
+
 <script>
 const chat = document.getElementById('chat');
 const inp  = document.getElementById('inp');
 const btn  = document.getElementById('btn');
 
-const sessionId = 'session_' + Math.random().toString(36).substr(2, 9);
+let sessionId = mkSid();
+function mkSid(){ return 'sess_' + Math.random().toString(36).substr(2,9); }
 
-inp.addEventListener('input', () => { inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px'; });
-inp.addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} });
+inp.addEventListener('input', ()=>{ inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px'; });
+inp.addEventListener('keydown', e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} });
 btn.addEventListener('click', send);
 
-function addMsg(role, text, type) {
-  const w = document.createElement('div'); w.className='msg '+role;
-  const av = document.createElement('div'); av.className='av '+role; av.textContent=role==='bot'?'AZ':'You';
-  const b = document.createElement('div');
-  if (role==='user') { b.className='bubble user'; b.textContent=text; }
-  else {
-    b.className = 'bubble bot' + (type==='pricing' ? ' pricing' : '');
-    b.textContent = text;
+// ── new conversation ─────────────────────────────────────────────────────────
+function newConversation(){
+  sessionId = mkSid();
+  chat.innerHTML = '';
+  loadWelcome();
+}
 
-    // Download buttons appear only on pricing responses
-    if (type === 'pricing') {
-      const btns = document.createElement('div');
-      btns.className = 'dl-btns';
+// ── pricing parser ───────────────────────────────────────────────────────────
+function normKey(k){ return k.trim().toLowerCase().replace(/[\s\-_]+/g,''); }
 
-      const excelBtn = document.createElement('button');
-      excelBtn.className = 'dl-btn';
-      excelBtn.textContent = '📥 Download Excel';
-      excelBtn.onclick = () => downloadReport('excel', text, excelBtn);
+function parsePricing(text){
+  if(!text.includes('=== Azure VM Pricing Estimate ===')) return null;
 
-      const pdfBtn = document.createElement('button');
-      pdfBtn.className = 'dl-btn';
-      pdfBtn.textContent = '📥 Download PDF';
-      pdfBtn.onclick = () => downloadReport('pdf', text, pdfBtn);
+  const lines = text.split('\n');
+  const info  = {};
+  const sections = [];
+  let cur = null;
 
-      btns.appendChild(excelBtn);
-      btns.appendChild(pdfBtn);
-      b.appendChild(btns);
+  for(const raw of lines){
+    const l = raw.trim();
+    if(!l || l==='=== Azure VM Pricing Estimate ===' || /^[-=]{5,}$/.test(l)) continue;
+
+    // VM info fields
+    const im = l.match(/^(VM|OS|Region|vCPUs?|RAM|Temp\s*Storage)\s*:\s*(.+)/i);
+    if(im){ info[normKey(im[1])] = im[2].trim(); continue; }
+
+    // Section header detection
+    if(/^PAYG\b|^Pay.as.you.go/i.test(l)){
+      cur={key:'payg',label:'Pay-as-You-Go',rows:[]}; sections.push(cur); continue;
+    }
+    if(/^1.Year\s+Savings|^Savings\s+Plan.*1.Year/i.test(l)){
+      cur={key:'sp1',label:'1-Year Savings Plan',badge:'1 yr',bc:'bg-blue',rows:[]}; sections.push(cur); continue;
+    }
+    if(/^3.Year\s+Savings|^Savings\s+Plan.*3.Year/i.test(l)){
+      cur={key:'sp3',label:'3-Year Savings Plan',badge:'3 yr',bc:'bg-blue',rows:[]}; sections.push(cur); continue;
+    }
+    if(/^Savings\s+Plan/i.test(l)){
+      cur={key:'sp',label:l.replace(/:$/,''),badge:null,rows:[]}; sections.push(cur); continue;
+    }
+    if(/^1.Year\s+Reserved|^Reserved.*1.Year/i.test(l)){
+      cur={key:'ri1',label:'1-Year Reserved Instance',badge:'1 yr',bc:'bg-green',rows:[]}; sections.push(cur); continue;
+    }
+    if(/^3.Year\s+Reserved|^Reserved.*3.Year/i.test(l)){
+      cur={key:'ri3',label:'3-Year Reserved Instance',badge:'3 yr',bc:'bg-green',rows:[]}; sections.push(cur); continue;
+    }
+    if(/^Reserved\s+Instance/i.test(l)){
+      cur={key:'ri',label:l.replace(/:$/,''),badge:null,rows:[]}; sections.push(cur); continue;
+    }
+    if(/^Azure\s+Hybrid\s+Benefit|^AHB\b/i.test(l)){
+      cur={key:'ahb',label:'Azure Hybrid Benefit',badge:'Windows',bc:'bg-purple',rows:[]}; sections.push(cur); continue;
+    }
+
+    // Data rows inside a section
+    if(cur){
+      const rm = l.match(/^(Hourly|Daily|Monthly)\s*:\s*(.+)/i);
+      if(rm) cur.rows.push({lbl:rm[1],val:rm[2].trim()});
+      else if(/\$/.test(l)) cur.rows.push({lbl:'',val:l});
     }
   }
+
+  return sections.length ? {info,sections} : null;
+}
+
+// ── pricing card builder ─────────────────────────────────────────────────────
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function buildCard(text){
+  const p = parsePricing(text);
+  if(!p) return null;
+
+  const {info,sections} = p;
+  const payg   = sections.find(s=>s.key==='payg');
+  const others = sections.filter(s=>s.key!=='payg');
+
+  const card = document.createElement('div');
+  card.className = 'price-card';
+
+  // header: VM name, OS badge, specs row
+  const vm  = info['vm']||info['vmname']||'';
+  const os  = info['os']||'';
+  const reg = info['region']||'';
+  const cpu = info['vcpus']||info['vcpu']||info['cpu']||'';
+  const ram = info['ram']||'';
+
+  const head = document.createElement('div');
+  head.className = 'pc-head';
+  head.innerHTML = `
+    <div class="pc-vm">
+      ${vm?`<span>${esc(vm)}</span>`:''}
+      ${os?`<span class="pc-badge">${esc(os)}</span>`:''}
+    </div>
+    <div class="pc-specs">
+      ${reg?`<span>🌏 ${esc(reg)}</span>`:''}
+      ${cpu?`<span>⚡ ${esc(cpu)}</span>`:''}
+      ${ram?`<span>💾 ${esc(ram)}</span>`:''}
+    </div>`;
+  card.appendChild(head);
+
+  // PAYG highlighted box
+  if(payg && payg.rows.length){
+    const hr = payg.rows.find(r=>/hourly/i.test(r.lbl));
+    const mo = payg.rows.find(r=>/monthly/i.test(r.lbl));
+    const pg = document.createElement('div');
+    pg.className = 'pc-payg';
+    const hrVal = hr ? hr.val.replace(/\/hr\s*$/i,'').trim() : '';
+    pg.innerHTML = `<div class="pc-payg-lbl">Pay-as-You-Go</div>`
+      +(hr?`<div><span class="pc-payg-hr">${esc(hrVal)}</span><span class="pc-payg-unit">/hr</span></div>`:'')
+      +(mo?`<div class="pc-payg-mo">${esc(mo.val)}</div>`:'');
+    card.appendChild(pg);
+  }
+
+  // collapsible sections for savings options
+  if(others.length){
+    const wrap = document.createElement('div');
+    wrap.className = 'pc-sections';
+    for(const sec of others){
+      const det  = document.createElement('details');
+      det.className = 'pcs';
+      const summ = document.createElement('summary');
+      summ.innerHTML = `<span>${esc(sec.label)}${sec.badge?` <span class="pcs-badge ${sec.bc}">${esc(sec.badge)}</span>`:''}</span><span class="chev">›</span>`;
+      det.appendChild(summ);
+      const body = document.createElement('div');
+      body.className = 'pcs-body';
+      for(const row of sec.rows){
+        const r = document.createElement('div');
+        r.className = 'pcs-row';
+        r.innerHTML = `<span class="pcs-lbl">${esc(row.lbl)}</span><span class="pcs-val">${esc(row.val)}</span>`;
+        body.appendChild(r);
+      }
+      det.appendChild(body);
+      wrap.appendChild(det);
+    }
+    card.appendChild(wrap);
+  }
+
+  return card;
+}
+
+// ── addMsg ───────────────────────────────────────────────────────────────────
+function addMsg(role, text, type){
+  const w  = document.createElement('div'); w.className = 'msg ' + role;
+  const av = document.createElement('div'); av.className = 'av ' + role;
+  av.textContent = role === 'bot' ? 'H' : 'You';
+  const b = document.createElement('div');
+
+  if(role === 'user'){
+    b.className = 'bubble user';
+    b.textContent = text;
+  } else {
+    const isPricing = type === 'pricing' || text.includes('=== Azure VM Pricing Estimate ===');
+    const card = isPricing ? buildCard(text) : null;
+
+    if(card){
+      b.className = 'bubble bot card-wrap';
+      // download buttons in card footer
+      const foot = document.createElement('div'); foot.className = 'pc-foot';
+      const btns = document.createElement('div'); btns.className = 'dl-btns';
+      ['excel','pdf'].forEach(fmt => {
+        const dlBtn = document.createElement('button'); dlBtn.className = 'dl-btn';
+        dlBtn.textContent = fmt === 'excel' ? '📥 Excel' : '📥 PDF';
+        dlBtn.onclick = () => downloadReport(fmt, text, dlBtn);
+        btns.appendChild(dlBtn);
+      });
+      foot.appendChild(btns);
+      card.appendChild(foot);
+      b.appendChild(card);
+    } else {
+      b.className = 'bubble bot';
+      b.textContent = text;
+    }
+  }
+
   w.appendChild(av); w.appendChild(b);
-  chat.appendChild(w); chat.scrollTop=chat.scrollHeight;
+  chat.appendChild(w); chat.scrollTop = chat.scrollHeight;
   return b;
 }
 
-function addTyping() {
-  const w=document.createElement('div'); w.className='msg bot'; w.id='typing';
-  const av=document.createElement('div'); av.className='av bot'; av.textContent='AZ';
-  const b=document.createElement('div'); b.className='bubble bot';
-  b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
-  w.appendChild(av); w.appendChild(b); chat.appendChild(w); chat.scrollTop=chat.scrollHeight;
+// ── typing indicator ─────────────────────────────────────────────────────────
+function addTyping(){
+  const w  = document.createElement('div'); w.className = 'msg bot'; w.id = 'typing';
+  const av = document.createElement('div'); av.className = 'av bot'; av.textContent = 'H';
+  const b  = document.createElement('div'); b.className = 'bubble bot';
+  b.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+  w.appendChild(av); w.appendChild(b); chat.appendChild(w); chat.scrollTop = chat.scrollHeight;
 }
 
-async function downloadReport(format, pricingText, buttonEl) {
+// ── download report ──────────────────────────────────────────────────────────
+async function downloadReport(format, pricingText, buttonEl){
   const endpoint = format === 'excel' ? '/api/report/excel' : '/api/report/pdf';
   const filename  = format === 'excel' ? 'azure-vm-pricing.xlsx' : 'azure-vm-pricing.pdf';
-  const origText  = buttonEl.textContent;
-
-  buttonEl.disabled = true;
-  buttonEl.textContent = 'Generating…';
-
-  try {
+  const orig = buttonEl.textContent;
+  buttonEl.disabled = true; buttonEl.textContent = 'Generating…';
+  try{
     const r = await fetch(endpoint, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ session_id: sessionId, pricing_text: pricingText }),
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sessionId, pricing_text: pricingText}),
     });
-    if (!r.ok) throw new Error('Server error ' + r.status);
+    if(!r.ok) throw new Error('Server error ' + r.status);
     const blob = await r.blob();
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
+    const a    = document.createElement('a'); a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
-  } catch(e) {
-    alert('Download failed: ' + e.message);
-  } finally {
-    buttonEl.disabled = false;
-    buttonEl.textContent = origText;
-  }
+  } catch(e){ alert('Download failed: ' + e.message); }
+  finally{ buttonEl.disabled = false; buttonEl.textContent = orig; }
 }
 
-async function send() {
-  const text = inp.value.trim(); if (!text) return;
-  inp.value=''; inp.style.height='auto'; btn.disabled=true;
+// ── send ─────────────────────────────────────────────────────────────────────
+async function send(){
+  const text = inp.value.trim(); if(!text) return;
+  inp.value = ''; inp.style.height = 'auto'; btn.disabled = true;
   addMsg('user', text);
   addTyping();
-
-  try {
-    const r = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ session_id: sessionId, message: text }) });
+  try{
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sessionId, message: text}),
+    });
     const d = await r.json();
     document.getElementById('typing')?.remove();
     const reply = d.reply || d.error || 'Unexpected response.';
-    const type  = d.type || 'conversation';
+    const type  = d.type  || 'conversation';
     addMsg('bot', reply, type);
-  } catch(e) {
+  } catch(e){
     document.getElementById('typing')?.remove();
     addMsg('bot', 'Network error: ' + e.message);
-  } finally { btn.disabled=false; inp.focus(); }
+  } finally{ btn.disabled = false; inp.focus(); }
 }
 
+// ── welcome + sample chips ───────────────────────────────────────────────────
 const SAMPLES = [
-  'I need VM pricing',
   'D4s_v5 Windows Australia East',
   '5x E8s_v3 Linux Southeast Asia with 3-year RI',
-  'D2_v3 Windows Australia East',
+  'E8-4ads_v7 Windows Australia East',
+  'D2_v3 Windows Australia Southeast',
 ];
 
-fetch('/api/welcome').then(r=>r.json()).then(d=>{
-  const b = addMsg('bot', d.reply);
-  const chips = document.createElement('div'); chips.className='chips';
-  SAMPLES.forEach(s=>{
-    const c=document.createElement('button'); c.className='chip'; c.textContent=s;
-    c.onclick=()=>{ inp.value=s; inp.focus(); };
-    chips.appendChild(c);
-  });
-  b.appendChild(chips);
-}).catch(()=>addMsg('bot','Ready! Ask me about Azure VM pricing.'));
+function loadWelcome(){
+  fetch('/api/welcome').then(r=>r.json()).then(d=>{
+    const b = addMsg('bot', d.reply);
+    const chips = document.createElement('div'); chips.className = 'chips';
+    SAMPLES.forEach(s=>{
+      const c = document.createElement('button'); c.className = 'chip'; c.textContent = s;
+      c.onclick = () => { inp.value = s; inp.focus(); };
+      chips.appendChild(c);
+    });
+    b.appendChild(chips);
+  }).catch(() => addMsg('bot', 'Ready! Ask me about Azure VM pricing.'));
+}
+
+loadWelcome();
 </script>
 </body>
 </html>
