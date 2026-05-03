@@ -1,3 +1,6 @@
+import logging
+import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,6 +13,14 @@ from fastapi.staticfiles import StaticFiles
 from app.routers import chat
 
 app = FastAPI(title="Azure VM Pricing Bot", version="1.0.0")
+
+# Application Insights
+_ai_connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if _ai_connection_string:
+    from opencensus.ext.azure.log_exporter import AzureLogHandler
+    logger = logging.getLogger(__name__)
+    logger.addHandler(AzureLogHandler(connection_string=_ai_connection_string))
+    logger.setLevel(logging.INFO)
 
 app.add_middleware(
     CORSMiddleware,
