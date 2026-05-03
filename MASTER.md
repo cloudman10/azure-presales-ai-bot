@@ -90,6 +90,15 @@ Azure App Service (dev)     Azure App Service (prod)
 - **To rotate:** regenerate `dev-hyperxen.pfx` with openssl, upload via `az webapp config ssl upload`, rebind with `az webapp config ssl bind`
 - **Password:** stored securely (do not commit to repo)
 
+### Why self-signed instead of Azure managed cert
+Azure managed cert (Let's Encrypt via App Service) failed repeatedly due to:
+1. Excessive CLI polling created too many pending operations on the subscription
+2. Each failed attempt created a 2-hour lock that blocked the next attempt
+3. Azure throttled the subscription with 429 Too Many Requests after repeated retries
+
+Solution: Upload a self-signed PFX cert directly — bypasses Azure's provisioning entirely.
+For future dev environments, skip managed cert and go straight to self-signed.
+
 ## Replit Frontend Environment Variables
 
 | Variable | Value | Purpose |
