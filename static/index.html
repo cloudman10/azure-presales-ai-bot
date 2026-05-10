@@ -46,23 +46,23 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 
 .pc-payg{background:#F0F7FF;border-bottom:1px solid #D0E8FF;padding:12px 18px;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px}
 .pc-payg-lbl{font-size:11px;font-weight:600;color:#005A9E;text-transform:uppercase;letter-spacing:.5px;width:100%;margin-bottom:4px}
-.pc-payg-hr{font-size:22px;font-weight:700;color:#0078D4}
+.pc-payg-mo{font-size:22px;font-weight:700;color:#0078D4}
 .pc-payg-unit{font-size:13px;font-weight:400;color:#5A7A9A}
-.pc-payg-mo{font-size:13px;color:#5A7A9A}
+.pc-payg-hr{font-size:13px;color:#5A7A9A}
 
 .pc-sections{padding:2px 0}
-details.pcs{border-bottom:1px solid #EEF2F7}
-details.pcs:last-child{border-bottom:none}
-details.pcs summary{padding:10px 18px;font-size:13px;font-weight:500;color:#333;cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none;user-select:none}
-details.pcs summary::-webkit-details-marker{display:none}
-details.pcs summary .chev{color:#8B95A2;font-size:16px;transition:transform .2s;flex-shrink:0}
-details.pcs[open] summary .chev{transform:rotate(90deg)}
-details.pcs summary:hover{background:#F8FBFF}
+.pcs{border-bottom:1px solid #EEF2F7}
+.pcs:last-child{border-bottom:none}
+.pcs-header{padding:10px 18px;font-size:13px;font-weight:500;color:#333;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
+.pcs-header .chev{color:#8B95A2;font-size:16px;transition:transform .2s;flex-shrink:0}
+.pcs.open .pcs-header .chev{transform:rotate(90deg)}
+.pcs-header:hover{background:#F8FBFF}
 .pcs-badge{font-size:10px;padding:1px 7px;border-radius:10px;margin-left:6px;font-weight:600}
 .bg-green{background:#DCFCE7;color:#166534}
 .bg-blue{background:#DBEAFE;color:#1D4ED8}
 .bg-purple{background:#F3E8FF;color:#7E22CE}
-.pcs-body{padding:4px 18px 12px;font-size:13px;color:#444;display:flex;flex-direction:column;gap:3px}
+.pcs-body{padding:4px 18px 12px;font-size:13px;color:#444;flex-direction:column;gap:3px;display:none}
+.pcs.open .pcs-body{display:flex}
 .pcs-row{display:flex;gap:6px}
 .pcs-lbl{min-width:72px;color:#8B95A2;flex-shrink:0}
 .pcs-val{font-weight:600;color:#1A1A2E}
@@ -101,7 +101,7 @@ textarea:focus{border-color:#0078D4}
   .bubble{max-width:92%;font-size:13.5px}
   .bubble.card-wrap{max-width:96%}
   .price-card{max-width:100%}
-  .pc-payg-hr{font-size:20px}
+  .pc-payg-mo{font-size:20px}
   .pc-specs{gap:10px}
   .bar{padding:10px 12px;padding-bottom:max(10px,env(safe-area-inset-bottom,10px))}
 }
@@ -151,6 +151,10 @@ function newConversation(){
 }
 
 // ── pricing parser ───────────────────────────────────────────────────────────
+// Parses the exact output format from pricing_agent.py _format_pricing().
+// Section dividers are "--- Foo ---" lines. PAYG uses "Per VM: USD X/hr | USD Y/month".
+// SP/RI sub-sections are non-indented headers; their data rows are indented with spaces.
+// AHB rows ("PAYG + HB:", "1-Year RI + HB:", "3-Year RI + HB:") are not indented.
 function normKey(k){ return k.trim().toLowerCase().replace(/[\s\-_]+/g,''); }
 
 function parsePricing(text){
@@ -158,52 +162,108 @@ function parsePricing(text){
 
   const lines = text.split('\n');
   const info  = {};
-  const sections = [];
-  let cur = null;
+  // payg holds the always-visible PAYG box data
+  const payg  = { hourly:'', monthly:'' };
+  // secs holds collapsible sections: [{key,label,badge,bc,rows:[{lbl,val}]}]
+  const secs  = [];
+
+  // block tracks which top-level section we're currently inside
+  let block   = 'info'; // 'info'|'payg'|'sp'|'ri'|'ahb'
+  let curSec  = null;   // ref to the current collapsible section being filled
+
+  function newSec(key, label, badge, bc){
+    curSec = { key, label, badge:badge||null, bc:bc||'', rows:[] };
+    secs.push(curSec);
+  }
 
   for(const raw of lines){
     const l = raw.trim();
-    if(!l || l==='=== Azure VM Pricing Estimate ===' || /^[-=]{5,}$/.test(l)) continue;
+    if(!l || l==='=== Azure VM Pricing Estimate ===') continue;
 
-    // VM info fields
-    const im = l.match(/^(VM|OS|Region|vCPUs?|RAM|Temp\s*Storage)\s*:\s*(.+)/i);
-    if(im){ info[normKey(im[1])] = im[2].trim(); continue; }
-
-    // Section header detection
-    if(/^PAYG\b|^Pay.as.you.go/i.test(l)){
-      cur={key:'payg',label:'Pay-as-You-Go',rows:[]}; sections.push(cur); continue;
-    }
-    if(/^1.Year\s+Savings|^Savings\s+Plan.*1.Year/i.test(l)){
-      cur={key:'sp1',label:'1-Year Savings Plan',badge:'1 yr',bc:'bg-blue',rows:[]}; sections.push(cur); continue;
-    }
-    if(/^3.Year\s+Savings|^Savings\s+Plan.*3.Year/i.test(l)){
-      cur={key:'sp3',label:'3-Year Savings Plan',badge:'3 yr',bc:'bg-blue',rows:[]}; sections.push(cur); continue;
-    }
-    if(/^Savings\s+Plan/i.test(l)){
-      cur={key:'sp',label:l.replace(/:$/,''),badge:null,rows:[]}; sections.push(cur); continue;
-    }
-    if(/^1.Year\s+Reserved|^Reserved.*1.Year/i.test(l)){
-      cur={key:'ri1',label:'1-Year Reserved Instance',badge:'1 yr',bc:'bg-green',rows:[]}; sections.push(cur); continue;
-    }
-    if(/^3.Year\s+Reserved|^Reserved.*3.Year/i.test(l)){
-      cur={key:'ri3',label:'3-Year Reserved Instance',badge:'3 yr',bc:'bg-green',rows:[]}; sections.push(cur); continue;
-    }
-    if(/^Reserved\s+Instance/i.test(l)){
-      cur={key:'ri',label:l.replace(/:$/,''),badge:null,rows:[]}; sections.push(cur); continue;
-    }
-    if(/^Azure\s+Hybrid\s+Benefit|^AHB\b/i.test(l)){
-      cur={key:'ahb',label:'Azure Hybrid Benefit',badge:'Windows',bc:'bg-purple',rows:[]}; sections.push(cur); continue;
+    // "--- Section Header ---" dividers
+    const div = l.match(/^---+\s*(.+?)\s*---+$/);
+    if(div){
+      const h = div[1];
+      curSec = null;
+      if(/^PAYG/i.test(h)){
+        block = 'payg';
+      } else if(/Savings Plan/i.test(h)){
+        block = 'sp';
+      } else if(/Reserved/i.test(h)){
+        block = 'ri';
+      } else if(/Hybrid Benefit/i.test(h)){
+        block = 'ahb';
+        newSec('ahb','Azure Hybrid Benefit','Windows','bg-purple');
+      }
+      continue;
     }
 
-    // Data rows inside a section
-    if(cur){
-      const rm = l.match(/^(Hourly|Daily|Monthly)\s*:\s*(.+)/i);
-      if(rm) cur.rows.push({lbl:rm[1],val:rm[2].trim()});
-      else if(/\$/.test(l)) cur.rows.push({lbl:'',val:l});
+    // Skip parenthetical notes and footnotes
+    if(/^\(/.test(l) || /^All prices|^Monthly estimates/.test(l)) continue;
+
+    // ── info block ─────────────────────────────────────────────────────────
+    if(block === 'info'){
+      const im = l.match(/^(VM|OS|Region|vCPUs?|RAM|Temp\s*Storage|Quantity)\s*:\s*(.+)/i);
+      if(im) info[normKey(im[1])] = im[2].trim();
+      continue;
+    }
+
+    // ── PAYG block ─────────────────────────────────────────────────────────
+    // Format: "Per VM:  USD 0.2860/hr  |  USD 208.78/month"
+    if(block === 'payg'){
+      const m = l.match(/Per VM:\s*(.+?\/hr)\s*\|\s*(.+)/i);
+      if(m){ payg.hourly = m[1].trim(); payg.monthly = m[2].trim(); }
+      continue;
+    }
+
+    // ── Savings Plan block ─────────────────────────────────────────────────
+    // Non-indented lines are sub-section headers ("1-Year Savings Plan (~X%):")
+    // or top-level info ("License:") — the License line is skipped.
+    // Indented lines are data rows for the current sub-section.
+    if(block === 'sp'){
+      if(!raw.startsWith(' ') && !raw.startsWith('\t')){
+        if(/^1-?Year\s+Savings/i.test(l)){
+          newSec('sp1','1-Year Savings Plan','1 yr','bg-blue'); block='sp';
+        } else if(/^3-?Year\s+Savings/i.test(l)){
+          newSec('sp3','3-Year Savings Plan','3 yr','bg-blue'); block='sp';
+        }
+        // Top-level lines (like "License:", "Savings Plan: not available") are skipped
+      } else if(curSec){
+        const kv = l.match(/^([^:]+):\s*(.+)/);
+        if(kv) curSec.rows.push({lbl:kv[1].trim(), val:kv[2].trim()});
+      }
+      continue;
+    }
+
+    // ── Reserved Instances block ───────────────────────────────────────────
+    // Non-indented: "1-Year RI  (save X%):" or "3-Year RI  (save X%):"
+    // or "1-Year RI: not available..." (creates empty section, filtered later)
+    // Indented: "  Per VM:  USD X/month" etc.
+    if(block === 'ri'){
+      if(!raw.startsWith(' ') && !raw.startsWith('\t')){
+        if(/^1-?Year\s+RI/i.test(l)){
+          newSec('ri1','1-Year Reserved Instance','1 yr','bg-green'); block='ri';
+        } else if(/^3-?Year\s+RI/i.test(l)){
+          newSec('ri3','3-Year Reserved Instance','3 yr','bg-green'); block='ri';
+        }
+      } else if(curSec){
+        const kv = l.match(/^([^:]+):\s*(.+)/);
+        if(kv) curSec.rows.push({lbl:kv[1].trim(), val:kv[2].trim()});
+      }
+      continue;
+    }
+
+    // ── Azure Hybrid Benefit block ─────────────────────────────────────────
+    // Rows: "PAYG + HB:", "1-Year RI + HB:", "3-Year RI + HB:"
+    if(block === 'ahb' && curSec){
+      const kv = l.match(/^([^:]+):\s*(.+)/);
+      if(kv) curSec.rows.push({lbl:kv[1].trim(), val:kv[2].trim()});
     }
   }
 
-  return sections.length ? {info,sections} : null;
+  // Drop sections that ended up empty (e.g. "not available" RI lines)
+  const validSecs = secs.filter(s => s.rows.length > 0);
+  return (payg.hourly || validSecs.length) ? {info, payg, secs:validSecs} : null;
 }
 
 // ── pricing card builder ─────────────────────────────────────────────────────
@@ -213,18 +273,16 @@ function buildCard(text){
   const p = parsePricing(text);
   if(!p) return null;
 
-  const {info,sections} = p;
-  const payg   = sections.find(s=>s.key==='payg');
-  const others = sections.filter(s=>s.key!=='payg');
+  const {info, payg, secs} = p;
 
   const card = document.createElement('div');
   card.className = 'price-card';
 
   // header: VM name, OS badge, specs row
-  const vm  = info['vm']||info['vmname']||'';
+  const vm  = info['vm']||'';
   const os  = info['os']||'';
   const reg = info['region']||'';
-  const cpu = info['vcpus']||info['vcpu']||info['cpu']||'';
+  const cpu = info['vcpus']||info['vcpu']||'';
   const ram = info['ram']||'';
 
   const head = document.createElement('div');
@@ -241,29 +299,28 @@ function buildCard(text){
     </div>`;
   card.appendChild(head);
 
-  // PAYG highlighted box
-  if(payg && payg.rows.length){
-    const hr = payg.rows.find(r=>/hourly/i.test(r.lbl));
-    const mo = payg.rows.find(r=>/monthly/i.test(r.lbl));
+  // PAYG box — always visible, no click required
+  if(payg.hourly || payg.monthly){
     const pg = document.createElement('div');
     pg.className = 'pc-payg';
-    const hrVal = hr ? hr.val.replace(/\/hr\s*$/i,'').trim() : '';
     pg.innerHTML = `<div class="pc-payg-lbl">Pay-as-You-Go</div>`
-      +(hr?`<div><span class="pc-payg-hr">${esc(hrVal)}</span><span class="pc-payg-unit">/hr</span></div>`:'')
-      +(mo?`<div class="pc-payg-mo">${esc(mo.val)}</div>`:'');
+      +(payg.monthly?`<div class="pc-payg-mo">${esc(payg.monthly)}</div>`:'')
+      +(payg.hourly?`<div class="pc-payg-hr">${esc(payg.hourly)}</div>`:'');
     card.appendChild(pg);
   }
 
-  // collapsible sections for savings options
-  if(others.length){
+  // collapsible sections: Savings Plan tiers, RI tiers, AHB
+  if(secs.length){
     const wrap = document.createElement('div');
     wrap.className = 'pc-sections';
-    for(const sec of others){
-      const det  = document.createElement('details');
-      det.className = 'pcs';
-      const summ = document.createElement('summary');
-      summ.innerHTML = `<span>${esc(sec.label)}${sec.badge?` <span class="pcs-badge ${sec.bc}">${esc(sec.badge)}</span>`:''}</span><span class="chev">›</span>`;
-      det.appendChild(summ);
+    for(const sec of secs){
+      const pcs  = document.createElement('div');
+      pcs.className = 'pcs';
+      const hdr  = document.createElement('div');
+      hdr.className = 'pcs-header';
+      hdr.innerHTML = `<span>${esc(sec.label)}${sec.badge?` <span class="pcs-badge ${sec.bc}">${esc(sec.badge)}</span>`:''}</span><span class="chev">›</span>`;
+      hdr.addEventListener('click', () => pcs.classList.toggle('open'));
+      pcs.appendChild(hdr);
       const body = document.createElement('div');
       body.className = 'pcs-body';
       for(const row of sec.rows){
@@ -272,8 +329,8 @@ function buildCard(text){
         r.innerHTML = `<span class="pcs-lbl">${esc(row.lbl)}</span><span class="pcs-val">${esc(row.val)}</span>`;
         body.appendChild(r);
       }
-      det.appendChild(body);
-      wrap.appendChild(det);
+      pcs.appendChild(body);
+      wrap.appendChild(pcs);
     }
     card.appendChild(wrap);
   }
@@ -293,22 +350,33 @@ function addMsg(role, text, type){
     b.textContent = text;
   } else {
     const isPricing = type === 'pricing' || text.includes('=== Azure VM Pricing Estimate ===');
-    const card = isPricing ? buildCard(text) : null;
 
-    if(card){
-      b.className = 'bubble bot card-wrap';
-      // download buttons in card footer
-      const foot = document.createElement('div'); foot.className = 'pc-foot';
-      const btns = document.createElement('div'); btns.className = 'dl-btns';
-      ['excel','pdf'].forEach(fmt => {
-        const dlBtn = document.createElement('button'); dlBtn.className = 'dl-btn';
-        dlBtn.textContent = fmt === 'excel' ? '📥 Excel' : '📥 PDF';
-        dlBtn.onclick = () => downloadReport(fmt, text, dlBtn);
-        btns.appendChild(dlBtn);
-      });
-      foot.appendChild(btns);
-      card.appendChild(foot);
-      b.appendChild(card);
+    if(isPricing){
+      // Split on the inter-block separator produced by _show_full_pricing()
+      // so that "all" replies render as separate cards rather than one garbled block.
+      const blocks = text.split(/\n\n---\n\n/).filter(s => s.includes('=== Azure VM Pricing Estimate ==='));
+      const cards  = blocks.map(blk => buildCard(blk)).filter(c => c !== null);
+
+      if(cards.length){
+        b.className = 'bubble bot card-wrap';
+        cards.forEach((card, i) => {
+          if(i > 0) card.style.marginTop = '12px';
+          const foot = document.createElement('div'); foot.className = 'pc-foot';
+          const btns = document.createElement('div'); btns.className = 'dl-btns';
+          ['excel','pdf'].forEach(fmt => {
+            const dlBtn = document.createElement('button'); dlBtn.className = 'dl-btn';
+            dlBtn.textContent = fmt === 'excel' ? '📥 Excel' : '📥 PDF';
+            dlBtn.onclick = () => downloadReport(fmt, blocks[i], dlBtn);
+            btns.appendChild(dlBtn);
+          });
+          foot.appendChild(btns);
+          card.appendChild(foot);
+          b.appendChild(card);
+        });
+      } else {
+        b.className = 'bubble bot';
+        b.textContent = text;
+      }
     } else {
       b.className = 'bubble bot';
       b.textContent = text;
