@@ -1,0 +1,23 @@
+name: Deploy to Prod
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create deployment zip
+        run: zip -r deploy.zip app static requirements.txt startup.sh
+
+      - name: Deploy to Azure Web App (Prod)
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: hyperxen-pricing-bot-db5hmngq3woxa
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PROD }}
+          package: deploy.zip
