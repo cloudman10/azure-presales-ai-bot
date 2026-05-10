@@ -1,4 +1,3 @@
-# CI/CD pipeline test - dev deploy
 import logging
 import os
 import re
@@ -6,7 +5,7 @@ import re
 import anthropic
 
 from app.agents import pricing_agent
-from app.agents.sku_advisor_agent import detect_scenario_query
+from app.agents.sku_advisor_agent import detect_scenario_query, parse_requirements
 from app.utils.region_normalizer import extract_region
 
 logger = logging.getLogger(__name__)
@@ -40,24 +39,32 @@ def detect_sku_uncertainty(message: str) -> bool:
 
 
 def _extract_state_from_history(history: list[dict]) -> dict:
-    """Scan conversation history for region and OS already stated by the user."""
-    found: dict = {"region": None, "os": None}
+    """Scan conversation history for all advisor fields already stated by the user."""
+    found: dict = {
+        "vcpus": None, "ram_gb": None, "users": None,
+        "workload": None, "region": None, "os": None,
+    }
     for msg in history:
         if msg.get("role") != "user":
             continue
         text = msg["content"]
+        r = parse_requirements(text)
+        if r["vcpus"] and not found["vcpus"]:
+            found["vcpus"] = r["vcpus"]
+        if r["ram_gb"] and not found["ram_gb"]:
+            found["ram_gb"] = r["ram_gb"]
+        if r["users"] and not found["users"]:
+            found["users"] = r["users"]
+        if r["workload"] and r["workload"] != "general" and not found["workload"]:
+            found["workload"] = r["workload"]
+        if r["os"] and not found["os"]:
+            found["os"] = r["os"]
         if not found["region"]:
-            r = extract_region(text)
-            if r:
-                found["region"] = r["arm_name"]
-        if not found["os"]:
-            lower = text.lower()
-            if "windows" in lower:
-                found["os"] = "Windows"
-            elif any(w in lower for w in ("linux", "ubuntu", "centos", "rhel", "debian")):
-                found["os"] = "Linux"
-        if found["region"] and found["os"]:
-            break
+            rm = extract_region(text)
+            if rm:
+                found["region"] = rm["arm_name"]
+            elif r["region"]:
+                found["region"] = r["region"]
     return found
 
 
@@ -67,6 +74,37 @@ PRICING_KEYWORDS = [
     "vm", "virtual machine", "d4s", "e8s", "standard_",
     "windows", "linux", "per month", "per hour",
 ]
+
+_OS_KEYWORDS = re.compile(
+    r'\b(windows|linux|ubuntu|redhat|red\s+hat|centos|suse|debian)\b',
+    re.IGNORECASE,
+)
+
+_SKU_PAT = re.compile(
+    r'\b(?:Standard_)?[A-Za-z]\d+[A-Za-z-]*(?:_v\d+)?\b',
+    re.IGNORECASE,
+)
+
+_BARE_NUMBER_RE = re.compile(r'^\d+$')
+
+_PRICING_INTENT = re.compile(
+    r'\b(price|pricing|cost|estimate|vm|virtual\s+machine|need|want|looking\s+for|how\s+much)\b',
+    re.IGNORECASE,
+)
+
+
+def _has_os_intent_without_sku(message: str) -> bool:
+    """True when the message expresses OS + pricing intent but names no SKU.
+
+    "i need vm pricing for windows" → True  (route to advisor)
+    "windows"                       → False (answering a question, no intent)
+    "D4s_v5 windows sydney"         → False (SKU present, route to pricing_agent)
+    """
+    if not _OS_KEYWORDS.search(message):
+        return False
+    if _SKU_PAT.search(message):
+        return False
+    return bool(_PRICING_INTENT.search(message))
 
 
 def is_pricing_request(message: str) -> bool:
@@ -124,10 +162,11 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     state_key = f"{session_id}_advisor_state"
     picks_key = f"{session_id}_advisor_picks"
 
-    in_advisor_flow = bool(
-        sessions.get(state_key) and
-        any(v is not None for v in sessions[state_key].values())
-    )
+    # True whenever the advisor state dict exists for this session, even if all
+    # values are still None (i.e. STATE 1 was just triggered).  Without this,
+    # an all-None state causes in_advisor_flow=False and the next user message
+    # leaks to pricing_agent, which re-asks vCPUs/RAM via LLM.
+    in_advisor_flow = bool(sessions.get(state_key))
     has_advisor_picks = bool(sessions.get(picks_key))
 
     # Route to advisor when:
@@ -142,34 +181,60 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
         in_advisor_flow
         or detect_scenario_query(message)
         or detect_sku_uncertainty(message)
+        or _has_os_intent_without_sku(message)
         or (has_advisor_picks and _looks_like_option_pick(message))
     )
 
+    # Bare digits (e.g. "1") must never kick off a fresh pricing collection flow.
+    # They're option picks or conversation continuations — route to general Claude
+    # so the full history context is preserved.
+    _is_bare_number = bool(_BARE_NUMBER_RE.match(message.strip()))
+
     if wants_advisor:
-        # Pre-seed advisor state with region/OS from earlier in the conversation
+        # Pre-seed advisor state with everything the user has already mentioned
         if not in_advisor_flow and not has_advisor_picks:
             pre = _extract_state_from_history(history)
-            if pre["region"] or pre["os"]:
+            if any(v is not None for v in pre.values()):
                 seed = sessions.get(state_key) or {
                     "vcpus": None, "ram_gb": None, "users": None,
                     "workload": None, "region": None, "os": None,
                 }
-                if pre["region"] and not seed.get("region"):
-                    seed["region"] = pre["region"]
-                if pre["os"] and not seed.get("os"):
-                    seed["os"] = pre["os"]
+                for k, v in pre.items():
+                    if v is not None and not seed.get(k):
+                        seed[k] = v
                 sessions[state_key] = seed
-                logger.debug("session=%s advisor pre-seeded: region=%s os=%s",
-                             session_id, pre["region"], pre["os"])
+                logger.debug(
+                    "session=%s advisor pre-seeded: vcpus=%s ram_gb=%s region=%s os=%s",
+                    session_id, seed.get("vcpus"), seed.get("ram_gb"),
+                    seed.get("region"), seed.get("os"),
+                )
         logger.debug("session=%s routing to sku_advisor_agent (in_flow=%s, uncertainty=%s)",
                      session_id, in_advisor_flow, detect_sku_uncertainty(message))
         result = await sku_advisor_agent.run(history, session_id, sessions)
 
-    elif is_pricing_request(message) or _has_recent_pricing_output(history) or len(history) > 1:
+    elif is_pricing_request(message) or _has_recent_pricing_output(history) or (len(history) > 1 and not _is_bare_number):
         logger.debug("session=%s routing to pricing_agent", session_id)
         result = await pricing_agent.run(history)
         if result.get("handoff") == "sku_advisor":
             logger.debug("session=%s pricing_agent handoff → sku_advisor_agent", session_id)
+            # pricing_agent extracted known context at the moment of handoff —
+            # use those values first.  Fall back to a full history scan for any
+            # field that pricing_agent couldn't find (e.g. user mentioned it
+            # before the pricing flow started).
+            pre = _extract_state_from_history(history)
+            seed = {
+                "vcpus":    result.get("known_vcpus")  or pre.get("vcpus"),
+                "ram_gb":   result.get("known_ram_gb") or pre.get("ram_gb"),
+                "users":    pre.get("users"),
+                "workload": pre.get("workload"),
+                "region":   result.get("known_region") or pre.get("region"),
+                "os":       result.get("known_os")     or pre.get("os"),
+            }
+            sessions[state_key] = seed
+            logger.debug(
+                "session=%s handoff pre-seeded: region=%s os=%s vcpus=%s",
+                session_id, seed.get("region"), seed.get("os"), seed.get("vcpus"),
+            )
             result = await sku_advisor_agent.run(history, session_id, sessions)
 
     else:

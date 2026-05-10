@@ -27,9 +27,22 @@ logger = logging.getLogger(__name__)
 SEARCH_INDEX   = "vm-skus"
 DEFAULT_REGION = "australiaeast"
 
+# Regions with known limited VM availability → nearest alternative with broader coverage
+_REGION_ALTERNATIVES: dict[str, str] = {
+    "australiasoutheast": "australiaeast",
+}
+
 # ── SKU pattern: letter + digits (+ optional suffix/version) ──────────────────
 _SKU_RE = re.compile(
     r'\b(?:Standard_)?[A-Za-z]\d+[A-Za-z]*(?:_v\d+)?\b',
+    re.IGNORECASE,
+)
+
+# ── Spec pattern: catches "6 cores", "minimum 4 vcpus", "8gb", "16 GB RAM" ────
+# Complements _RESOURCE_WORDS for cases the word-set misses ("cpu", bare "8gb")
+_SPEC_RE = re.compile(
+    r'\b(?:minimum\s+|at\s+least\s+)?\d+\s*(?:v?cpu|vcore|core)s?\b'
+    r'|\b\d+\s*(?:gb|gib)\b',
     re.IGNORECASE,
 )
 
@@ -102,6 +115,10 @@ def detect_scenario_query(message: str) -> bool:
     if words & _RESOURCE_WORDS:
         return True
 
+    # Catch spec patterns the word-set misses: "6 cpu", "8gb", "minimum 4 cores"
+    if _SPEC_RE.search(message):
+        return True
+
     return False
 
 
@@ -125,12 +142,14 @@ def parse_requirements(message: str) -> dict:
     lower = message.lower()
 
     # ── vCPUs ────────────────────────────────────────────────────────────────
+    # Handles: "6 cores", "6 vcpus", "minimum 6 cores", "at least 6 cpu"
     vcpus = None
     m = re.search(r'(\d+)\s*(?:v?cpu|vcore|core)s?', lower)
     if m:
         vcpus = int(m.group(1))
 
     # ── RAM ─────────────────────────────────────────────────────────────────
+    # Handles: "16GB RAM", "16 GB memory", "16 ram", "minimum 8 ram", "8 GB"
     ram_gb = None
     m = re.search(r'(\d+)\s*(?:gb|gib)\s*(?:ram|memory)', lower)
     if not m:
@@ -167,6 +186,9 @@ def parse_requirements(message: str) -> dict:
         "sydney":         "australiaeast",
         "australia east": "australiaeast",
         "melbourne":      "australiasoutheast",
+        "melboure":       "australiasoutheast",   # typo
+        "melbourre":      "australiasoutheast",   # typo
+        "melborne":       "australiasoutheast",   # typo
         "singapore":      "southeastasia",
         "tokyo":          "japaneast",
         "east us":        "eastus",
@@ -262,13 +284,16 @@ def estimate_specs_from_users(users: int, workload: str | None) -> dict:
 # 4. search_skus
 # ─────────────────────────────────────────────────────────────────────────────
 
-def search_skus(requirements: dict) -> list[dict]:
+def search_skus(requirements: dict, limit: int = 10) -> list[dict]:
     """
     Query the Azure AI Search vm-skus index for matching active SKUs.
 
     Runs one search per series family (D/E/F/B) using name-prefix OData filters,
     takes the best result from each family, then fills remaining slots from the
     combined candidate pool. Always prefers newer generations (v5/v6/v7).
+
+    limit controls how many candidates are returned for pricing verification.
+    Pass a higher value (e.g. 15) to give the caller more options to verify.
     """
     endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
     api_key  = os.environ.get("AZURE_SEARCH_API_KEY", "")
@@ -315,6 +340,9 @@ def search_skus(requirements: dict) -> list[dict]:
         filtered.sort(key=lambda x: (-generation_score(x), x.get("vcpus", 0)))
         return filtered
 
+    # Fetch enough per family so the caller can verify pricing across a wide pool
+    per_family_top = max(20, limit * 3)
+
     per_family: list[dict | None] = []
     all_candidates: list[dict] = []
 
@@ -326,7 +354,7 @@ def search_skus(requirements: dict) -> list[dict]:
                 filter=series_filter,
                 search_fields=["use_cases", "description"],
                 order_by=["vcpus asc", "ram_gb asc"],
-                top=15,
+                top=per_family_top,
             )
             clean = clean_and_sort([dict(r) for r in results])
             per_family.append(clean[0] if clean else None)
@@ -347,14 +375,14 @@ def search_skus(requirements: dict) -> list[dict]:
 
     all_candidates.sort(key=lambda x: (-generation_score(x), x.get("vcpus", 0)))
     for sku in all_candidates:
-        if len(merged) >= 5:
+        if len(merged) >= limit:
             break
         name = sku.get("sku_name", "")
         if name not in seen:
             seen.add(name)
             merged.append(sku)
 
-    return merged[:5]
+    return merged[:limit]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -370,6 +398,7 @@ def format_recommendations(
     skus: list[dict],
     requirements: dict,
     prices: list[dict | None],   # one entry per SKU (None = no price found)
+    alt_region_disp: str | None = None,  # display name of alt region with more options
 ) -> str:
     """
     Format the top-3 SKU recommendations with live pricing.
@@ -423,10 +452,30 @@ def format_recommendations(
 
         lines.append("")   # blank line between options
 
+    n = len(top3)
+    if n == 1:
+        choices = "**1**"
+    elif n == 2:
+        choices = "**1** or **2**"
+    else:
+        choices = "**1**, **2**, or **3**"
     lines.append(
-        "Which option would you like full pricing details for? "
-        "Reply with **1**, **2**, or **3** — or type **all** to see full pricing for all three."
+        f"Which option would you like full pricing details for? "
+        f"Reply with {choices} — or type **all** to see full pricing for all."
     )
+
+    if n < 3:
+        lines.append("")
+        lines.append(
+            f"Note: Only {n} VM series with confirmed "
+            f"{os_type} pricing {'are' if n > 1 else 'is'} available in {region_disp}. "
+            f"Some VM series aren't available in all regions."
+        )
+    if alt_region_disp:
+        lines.append(
+            f"Tip: {alt_region_disp} has more VM options available — ask me to search there instead."
+        )
+
     return "\n".join(lines)
 
 
@@ -527,64 +576,15 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
 
     logger.info("sku_advisor: message='%s'", user_message[:80])
 
-    # ── STATE 5: user is selecting from previously shown recommendations ───────
-    picks_key = f"{session_id}_advisor_picks"
-    picks = sessions.get(picks_key)
-    if picks:
-        selection = _parse_selection(user_message)
-        # Treat standalone affirmatives ("yes", "ok", "sure", …) as option 1.
-        if selection is None and user_message.strip().lower() in _AFFIRMATIVES:
-            selection = [0]
-        if selection is not None:
-            # Intentionally do NOT pop picks_key here.  Keeping it alive means
-            # the user can immediately follow up with "what about option 3?"
-            # without being re-asked for region or OS by the pricing agent.
-            # picks_key is only replaced when STATE 4 generates new recommendations.
-            chosen_skus = [picks["skus"][i] for i in selection if i < len(picks["skus"])]
-            chosen_docs = [picks["sku_docs"][i] for i in selection
-                           if i < len(picks.get("sku_docs") or [])]
-            reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"], chosen_docs)
-            return {"reply": reply, "type": "pricing"}
-        # No option digit found — if the user is starting a new scenario query
-        # clear picks and fall through to the state machine; otherwise prompt.
-        if detect_scenario_query(user_message) or detect_sku_uncertainty(user_message):
-            sessions.pop(picks_key, None)
-            # fall through to state machine below
-        else:
-            return {
-                "reply": "Please reply with **1**, **2**, or **3** — or type **all** to see full pricing for all three.",
-                "type": "conversation",
-            }
-
     # ── Load or initialise per-session state ───────────────────────────────────
+    # Done here (before STATE 5) so region/OS are always available even when
+    # the user is selecting a pick option from a previous recommendation.
     state_key = f"{session_id}_advisor_state"
     state: dict = sessions.get(state_key) or _EMPTY_STATE()
 
-    # ── Phase 1: on fresh entry seed from the very first user message ─────────
-    # The opening message most often carries all context (specs, region, OS)
-    # even when the conversation was originally handled by another agent.
-    # Doing this explicitly before the full-history loop ensures nothing is
-    # missed when the advisor is entered mid-conversation.
-    if not any(v is not None for v in state.values()):
-        _first = next(
-            (m["content"] for m in messages if m.get("role") == "user"), ""
-        )
-        if _first:
-            _r0  = parse_requirements(_first)
-            _rm0 = extract_region(_first)
-            if _r0["vcpus"]:                                      state["vcpus"]    = _r0["vcpus"]
-            if _r0["ram_gb"]:                                     state["ram_gb"]   = _r0["ram_gb"]
-            if _r0["users"]:                                      state["users"]    = _r0["users"]
-            if _r0["workload"] and _r0["workload"] != "general":  state["workload"] = _r0["workload"]
-            if _r0["os"]:                                         state["os"]       = _r0["os"]
-            if _rm0:                                              state["region"]   = _rm0["arm_name"]
-            elif _r0["region"]:                                   state["region"]   = _r0["region"]
-            logger.debug(
-                "sku_advisor: seeded from first msg → vcpus=%s region=%s os=%s",
-                state["vcpus"], state["region"], state["os"],
-            )
-
-    # ── Phase 2: scan all user messages oldest-first to fill any gaps ─────────
+    # ── Scan ALL conversation history from index 0 to fill any state gaps ──────
+    # Reads every user message in order so fields mentioned in the very first
+    # message are never missed, regardless of how the advisor was entered.
     for _msg in messages:
         if _msg.get("role") != "user":
             continue
@@ -601,14 +601,99 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         if _r["os"] and not state["os"]:
             state["os"] = _r["os"]
         if not state["region"]:
+            # extract_region covers full CITY_MAP + REGION_MAP; _r["region"]
+            # covers the inline city shortcuts in parse_requirements
             _rm = extract_region(_text)
             if _rm:
                 state["region"] = _rm["arm_name"]
             elif _r["region"]:
                 state["region"] = _r["region"]
 
-    logger.info("sku_advisor: state=%s", state)
+    logger.info("sku_advisor: state after history scan=%s", state)
+
+    # ── Direct parse of the current user message (belt-and-suspenders) ────────
+    # Guards against edge cases where the history list was empty or the scan
+    # missed the current turn (e.g. first request on a fresh session).
+    _u = parse_requirements(user_message)
+    if _u["vcpus"] and not state["vcpus"]:
+        state["vcpus"] = _u["vcpus"]
+    if _u["ram_gb"] and not state["ram_gb"]:
+        state["ram_gb"] = _u["ram_gb"]
+    if _u["users"] and not state["users"]:
+        state["users"] = _u["users"]
+    if _u["os"] and not state["os"]:
+        state["os"] = _u["os"]
+    if not state["region"]:
+        _u_rm = extract_region(user_message)
+        if _u_rm:
+            state["region"] = _u_rm["arm_name"]
+        elif _u["region"]:
+            state["region"] = _u["region"]
+
+    logger.info(
+        "sku_advisor: final state vcpus=%s ram_gb=%s region=%s os=%s",
+        state["vcpus"], state["ram_gb"], state["region"], state["os"],
+    )
     sessions[state_key] = state   # persist after every turn
+
+    # ── STATE 5: user is selecting from previously shown recommendations ───────
+    picks_key = f"{session_id}_advisor_picks"
+    picks = sessions.get(picks_key)
+    if picks:
+        selection = _parse_selection(user_message)
+        # Treat standalone affirmatives ("yes", "ok", "sure", …) as option 1.
+        if selection is None and user_message.strip().lower() in _AFFIRMATIVES:
+            selection = [0]
+        if selection is not None:
+            num_picks = len(picks["skus"])
+            # Filter to indices that actually exist in the picks list
+            valid_indices = [i for i in selection if i < num_picks]
+
+            if not valid_indices:
+                # User requested an option that wasn't shown (e.g. "option 3" when we only have 2)
+                region_disp = display_region(picks["region"])
+                os_type     = picks["os"]
+                alt_os      = "Linux" if os_type == "Windows" else "Windows"
+                choices     = "**1** or **2**" if num_picks == 2 else "**1**"
+                return {
+                    "reply": (
+                        f"I was only able to find **{num_picks} option{'s' if num_picks != 1 else ''}** "
+                        f"with confirmed {os_type} pricing in {region_disp}. "
+                        "Some VM series don't have pricing available in every region.\n\n"
+                        f"You can:\n"
+                        f"- Reply with {choices} to get full pricing for the option{'s' if num_picks != 1 else ''} shown\n"
+                        f"- Ask me to search in a **different region** (e.g. East US, Southeast Asia)\n"
+                        f"- Try **{alt_os}** — more options may be available for that OS"
+                    ),
+                    "type": "conversation",
+                }
+
+            # Intentionally do NOT pop picks_key here.  Keeping it alive means
+            # the user can immediately follow up with "what about option 3?"
+            # without being re-asked for region or OS by the pricing agent.
+            # picks_key is only replaced when STATE 4 generates new recommendations.
+            chosen_skus = [picks["skus"][i] for i in valid_indices]
+            chosen_docs = [picks["sku_docs"][i] for i in valid_indices
+                           if i < len(picks.get("sku_docs") or [])]
+            reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"], chosen_docs)
+            return {"reply": reply, "type": "pricing"}
+        # No option digit found — if the user is starting a new scenario query
+        # clear picks and fall through to the state machine; otherwise prompt.
+        if detect_scenario_query(user_message):
+            sessions.pop(picks_key, None)
+            # fall through to state machine below
+        else:
+            num_picks = len(picks["skus"])
+            if num_picks == 1:
+                choices = "**1**"
+            elif num_picks == 2:
+                choices = "**1** or **2**"
+            else:
+                choices = "**1**, **2**, or **3**"
+            return {
+                "reply": f"Please reply with {choices} — or type **all** to see full pricing for all.",
+                "type": "conversation",
+            }
 
     # ── STATE 1: need sizing ───────────────────────────────────────────────────
     if not (state["vcpus"] or state["ram_gb"] or state["users"]):
@@ -639,10 +724,11 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         state["ram_gb"] = specs["ram_gb"]
         logger.info("sku_advisor: estimated from %d users → %s", state["users"], specs)
 
-    skus = search_skus(state)
+    # Fetch up to 15 candidates so the pricing check has plenty to work with
+    skus = search_skus(state, limit=15)
 
     if not skus:
-        sessions[state_key] = _EMPTY_STATE()   # reset so user can retry
+        sessions.pop(state_key, None)   # clear so in_advisor_flow resets
         return {
             "reply": (
                 "I couldn't find VMs matching those requirements. "
@@ -651,18 +737,65 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             "type": "conversation",
         }
 
-    top3 = skus[:3]
-    prices: list[list[dict] | None] = []
-    for sku_doc in top3:
+    # Verify each candidate has PAYG pricing in the requested region/OS.
+    # Stop once we have 3 confirmed options; try all 15 if needed.
+    verified_skus: list[dict] = []
+    verified_prices: list[list[dict]] = []
+    for sku_doc in skus:
+        if len(verified_skus) >= 3:
+            break
         sku_name = sku_doc.get("sku_name", "")
         try:
             items = await fetch_prices(state["region"], sku_name)
-            prices.append(items)
+            if items and find_price(items, state["os"], "Consumption"):
+                verified_skus.append(sku_doc)
+                verified_prices.append(items)
+            else:
+                logger.info(
+                    "sku_advisor: no %s pricing for %s in %s — excluded",
+                    state["os"], sku_name, state["region"],
+                )
         except Exception as e:
             logger.warning("sku_advisor: price fetch failed for %s: %s", sku_name, e)
-            prices.append(None)
 
-    reply = format_recommendations(top3, state, prices)
+    if not verified_skus:
+        sessions.pop(state_key, None)
+        return {
+            "reply": (
+                f"I found candidate VMs but none have pricing available in "
+                f"{display_region(state['region'])} for {state['os']}. "
+                "Try a different region or OS."
+            ),
+            "type": "conversation",
+        }
+
+    top3 = verified_skus[:3]
+    prices = verified_prices[:3]
+
+    # If fewer than 3 verified options, check if a known alternative region has more
+    alt_region_disp: str | None = None
+    if len(top3) < 3:
+        alt_region = _REGION_ALTERNATIVES.get(state["region"])
+        if alt_region:
+            alt_count = 0
+            for sku_doc in skus:
+                if alt_count >= 3:
+                    break
+                sku_name = sku_doc.get("sku_name", "")
+                try:
+                    alt_items = await fetch_prices(alt_region, sku_name)
+                    if alt_items and find_price(alt_items, state["os"], "Consumption"):
+                        alt_count += 1
+                except Exception:
+                    pass
+            if alt_count > len(top3):
+                alt_region_disp = display_region(alt_region)
+                logger.info(
+                    "sku_advisor: alt region %s has %d options vs %d in primary",
+                    alt_region, alt_count, len(top3),
+                )
+
+    reply = format_recommendations(top3, state, prices, alt_region_disp=alt_region_disp)
 
     # Store picks so the user can select 1/2/3/all in the next turn.
     # sku_docs carries vcpus/ram_gb so the full pricing block can show specs.
@@ -672,5 +805,5 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         "region":   state["region"],
         "os":       state["os"],
     }
-    sessions[state_key] = _EMPTY_STATE()   # reset advisor state
+    sessions.pop(state_key, None)   # clear state; picks_key keeps the context for STATE 5
     return {"reply": reply, "type": "advisor"}
