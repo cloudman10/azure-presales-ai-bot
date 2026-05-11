@@ -806,4 +806,10 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         "os":       state["os"],
     }
     sessions.pop(state_key, None)   # clear state; picks_key keeps the context for STATE 5
-    return {"reply": reply, "type": "advisor"}
+    _picks = {
+        "skus":           [s.get("sku_name") for s in top3],
+        "region":         state["region"],
+        "region_display": display_region(state["region"]),
+        "os":             state["os"],
+    }
+    return {"reply": reply, "type": "advisor", "picks": _picks}

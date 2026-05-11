@@ -29,6 +29,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         reply=result["reply"],
         type=result["type"],
         session_id=request.session_id,
+        picks=result.get("picks"),
     )
 
 

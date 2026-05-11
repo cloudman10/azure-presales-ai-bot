@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(az webapp deploy *)",
+      "Bash(az webapp *)",
+      "Bash(unzip -o app_logs_live.zip -d app_logs_live)",
+      "Bash(unzip -o app_logs_live2.zip -d app_logs_live2)",
+      "Bash(unzip -o app_logs_post_fix.zip -d app_logs_post_fix)",
+      "Bash(unzip -o app_logs_post_restart.zip -d app_logs_post_restart)",
+      "Bash(curl *)",
+      "Bash(unzip -o app_logs_cycle3.zip -d app_logs_cycle3)",
+      "Bash(awk '/06:15/,0')",
+      "Bash(Compress-Archive -Path app, requirements.txt, startup.sh -DestinationPath deploy_fresh.zip -Force)",
+      "Read(//mnt/c/Users/Admin/**)",
+      "Bash(zip -r deploy_fresh.zip app requirements.txt startup.sh)",
+      "Bash(unzip -o app_logs_sh.zip -d app_logs_sh)",
+      "PowerShell(az webapp config set *)",
+      "PowerShell(az webapp restart *)",
+      "PowerShell(Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\(\"C:\\\\Users\\\\Admin\\\\azure-presales-ai-bot\\\\deploy_fresh.zip\"\\); $zip.Entries | Select-Object FullName, Length | Sort-Object FullName; $zip.Dispose\\(\\))",
+      "PowerShell(az rest *)",
+      "PowerShell(az webapp deployment list-publishing-credentials *)",
+      "PowerShell(python -c \"import zipfile; z=zipfile.ZipFile\\('deploy_unix.zip'\\); [print\\(i.filename\\) for i in z.infolist\\(\\)[:10]]\")",
+      "PowerShell(az webapp deploy *)"
+    ]
+  }
+}

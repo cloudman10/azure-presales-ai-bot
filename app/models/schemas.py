@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -10,6 +12,7 @@ class ChatResponse(BaseModel):
     reply: str
     type: str  # "conversation" or "pricing"
     session_id: str
+    picks: Optional[dict] = None  # set when type=="advisor" so frontend can fetch full pricing
 
 
 class WelcomeResponse(BaseModel):

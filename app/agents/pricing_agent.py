@@ -5,7 +5,7 @@ import re
 
 from app.services.azure_pricing import fetch_prices, fetch_temp_storage_gb
 from app.utils.pricing_calculator import HOURS_PER_MONTH, detect_item_os, find_price, ri_monthly
-from app.utils.region_normalizer import display_region
+from app.utils.region_normalizer import display_region, extract_region
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +22,9 @@ RULES:
 - CRITICAL: NEVER tell the user a VM SKU does not exist. Accept any SKU including
   v6, v7, constrained vCPU variants like E8-4ads_v7. Never reject a SKU.
 - Accept quantity (e.g. 5x), storage (e.g. 1TB), RI preference (1-year/3-year)
-  but only ask about these AFTER the 3 required fields are confirmed
-- Once SKU, Region and OS are confirmed ask:
-  "Got it! Would you like to include quantity, storage, or Reserved Instance
-   options - or shall I fetch the pricing now?"
-- When user says fetch/yes/go/now/one/just 1 or similar, respond ONLY with
-  this exact JSON and nothing else:
+  if the user mentions them; otherwise use defaults (qty=1, no storage, no RI)
+- Once SKU, Region and OS are confirmed, respond ONLY with this exact JSON and nothing else
+  (do NOT ask any follow-up confirmation question):
   FETCH_PRICING:{"sku":"<normalized>","region":"<armRegionName>","os":"<Windows|Linux>","qty":<n>,"storage_gb":null,"wants_hb":false,"wants_ri":null}
 - Normalize SKU to Standard_ format: Standard_D4s_v5, Standard_E8-4ads_v7
 - CRITICAL: Constrained vCPU SKUs MUST keep the hyphen. The format is Standard_X{size}-{vcpu}{suffix}_vN
@@ -47,10 +44,54 @@ _UNCERTAINTY_PHRASES = [
     "which vm", "which one", "help me choose", "help me pick",
 ]
 
+# Matches resource specs like "6 cores", "minimum 4 vcpus", "8gb", "16 GB RAM"
+_SPEC_RE = re.compile(
+    r'\b(?:minimum\s+)?\d+\s*(?:v?cpu|vcore|core)s?\b'
+    r'|\b\d+\s*(?:gb|gib)\b',
+    re.IGNORECASE,
+)
+
+# Matches recognisable VM SKU names like D4s_v5, E8-4ads_v7, Standard_B2ms
+_SKU_PAT = re.compile(
+    r'\b(?:Standard_)?[A-Za-z]\d+[A-Za-z-]*(?:_v\d+)?\b',
+    re.IGNORECASE,
+)
+
 
 def _user_is_uncertain_about_sku(message: str) -> bool:
     lower = message.lower()
-    return any(phrase in lower for phrase in _UNCERTAINTY_PHRASES)
+    if any(phrase in lower for phrase in _UNCERTAINTY_PHRASES):
+        return True
+    # If the message describes resource requirements (cores/RAM) but contains
+    # no SKU name, the user is expressing what they *need* rather than what to
+    # price — treat as uncertainty and hand off to the advisor.
+    if _SPEC_RE.search(message) and not _SKU_PAT.search(message):
+        return True
+    return False
+
+
+def _extract_known_context(messages: list[dict]) -> dict:
+    """Scan conversation history for region, OS, and sizing already established."""
+    from app.agents.sku_advisor_agent import parse_requirements
+    found: dict = {"region": None, "os": None, "vcpus": None, "ram_gb": None}
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        text = msg["content"]
+        r = parse_requirements(text)
+        if r["vcpus"] and not found["vcpus"]:
+            found["vcpus"] = r["vcpus"]
+        if r["ram_gb"] and not found["ram_gb"]:
+            found["ram_gb"] = r["ram_gb"]
+        if r["os"] and not found["os"]:
+            found["os"] = r["os"]
+        if not found["region"]:
+            rm = extract_region(text)
+            if rm:
+                found["region"] = rm["arm_name"]
+            elif r["region"]:
+                found["region"] = r["region"]
+    return found
 
 
 def _parse_fetch_marker(text: str) -> dict | None:
@@ -255,12 +296,15 @@ async def run(messages: list[dict]) -> dict:
     user_message = next(
         (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
     )
-    history_text = " ".join(m["content"] for m in messages)
-    sku_already_known = bool(re.search(r'\bStandard_[A-Za-z]', history_text))
-    if _user_is_uncertain_about_sku(user_message) and not sku_already_known:
+    if _user_is_uncertain_about_sku(user_message):
+        ctx = _extract_known_context(messages)
         return {
-            "reply": "No problem! Let me switch to recommendation mode — I'll find the best VM for you based on your requirements.",
-            "handoff": "sku_advisor",
+            "reply":        "No problem! Let me switch to recommendation mode — I'll find the best VM for you based on your requirements.",
+            "handoff":      "sku_advisor",
+            "known_region": ctx["region"],
+            "known_os":     ctx["os"],
+            "known_vcpus":  ctx["vcpus"],
+            "known_ram_gb": ctx["ram_gb"],
         }
 
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]

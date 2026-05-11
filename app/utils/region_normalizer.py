@@ -29,6 +29,9 @@ CITY_MAP: dict[str, str] = {
     'perth':     'australiaeast',
     'adelaide':  'australiaeast',
     'melbourne': 'australiasoutheast',
+    'melboure':  'australiasoutheast',   # common typo
+    'melbourre': 'australiasoutheast',   # common typo
+    'melborne':  'australiasoutheast',   # common typo
 
     # Asia Pacific
     'singapore':   'southeastasia',

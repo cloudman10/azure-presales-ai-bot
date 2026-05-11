@@ -137,6 +137,7 @@ const inp  = document.getElementById('inp');
 const btn  = document.getElementById('btn');
 
 let sessionId = mkSid();
+let storedPicks = null;  // {skus, region, region_display, os} from last advisor response
 function mkSid(){ return 'sess_' + Math.random().toString(36).substr(2,9); }
 
 inp.addEventListener('input', ()=>{ inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px'; });
@@ -146,6 +147,7 @@ btn.addEventListener('click', send);
 // ── new conversation ─────────────────────────────────────────────────────────
 function newConversation(){
   sessionId = mkSid();
+  storedPicks = null;
   chat.innerHTML = '';
   loadWelcome();
 }
@@ -418,9 +420,70 @@ async function downloadReport(format, pricingText, buttonEl){
   finally{ buttonEl.disabled = false; buttonEl.textContent = orig; }
 }
 
+// ── pick selection (advisor → direct pricing) ─────────────────────────────────
+// Parse "1", "2", "3", "option 2", "all" → 0-based indices, or null.
+function parsePickSelection(text){
+  const lower = text.trim().toLowerCase();
+  if(/\ball\b/.test(lower)) return [0,1,2];
+  const m = lower.match(/\b([123])\b/);
+  if(m) return [parseInt(m[1],10) - 1];
+  return null;
+}
+
+// For each selected index, send a fresh direct pricing query to /api/chat
+// using a one-time session — bypasses advisor STATE 5 entirely.
+async function fetchPricingForPicks(indices){
+  const picks    = storedPicks;
+  const numPicks = picks.skus.length;
+  const valid    = indices.filter(i => i < numPicks);
+
+  if(!valid.length){
+    const opts = numPicks===1?'**1**':numPicks===2?'**1** or **2**':'**1**, **2**, or **3**';
+    addMsg('bot',`I only have ${numPicks} option${numPicks!==1?'s':''} — please choose ${opts}.`);
+    return;
+  }
+
+  addTyping();
+  const parts = [];
+  for(const idx of valid){
+    const sku = picks.skus[idx];
+    const q   = `${sku} ${picks.os} ${picks.region_display}`;
+    try{
+      const r = await fetch('/api/chat',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({session_id: mkSid(), message: q}),
+      });
+      const d = await r.json();
+      if(d.reply && d.reply.includes('=== Azure VM Pricing Estimate ===')){
+        parts.push(d.reply);
+      }
+    } catch(_){ /* skip individual fetch failure */ }
+  }
+  document.getElementById('typing')?.remove();
+  if(parts.length){
+    addMsg('bot', parts.join('\n\n---\n\n'), 'pricing');
+  } else {
+    addMsg('bot','Sorry, pricing fetch failed — please try again.');
+  }
+}
+
 // ── send ─────────────────────────────────────────────────────────────────────
 async function send(){
   const text = inp.value.trim(); if(!text) return;
+
+  // If the user is selecting from stored advisor picks, fetch full pricing directly.
+  if(storedPicks){
+    const sel = parsePickSelection(text);
+    if(sel !== null){
+      inp.value = ''; inp.style.height = 'auto'; btn.disabled = true;
+      addMsg('user', text);
+      await fetchPricingForPicks(sel);
+      btn.disabled = false; inp.focus();
+      return;
+    }
+  }
+
   inp.value = ''; inp.style.height = 'auto'; btn.disabled = true;
   addMsg('user', text);
   addTyping();
@@ -434,6 +497,7 @@ async function send(){
     document.getElementById('typing')?.remove();
     const reply = d.reply || d.error || 'Unexpected response.';
     const type  = d.type  || 'conversation';
+    if(d.picks) storedPicks = d.picks;  // store picks when advisor shows recommendations
     addMsg('bot', reply, type);
   } catch(e){
     document.getElementById('typing')?.remove();

@@ -1,0 +1,15 @@
+<step title="Incoming Request" date="2026-05-09T05:59:53.998" instance="279e26" url="/api/zipdeploy?isAsync=true" method="POST" type="request" pid="833,1,15" Accept="*/*" Host="hyperxen-pricing-bot-dev.scm.azurewebsites.net" User-Agent="AZURECLI/2.85.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." Cache-Control="no-cache" Content-Type="application/octet-stream" Content-Length="31502992" x-ms-client-request-id="3c4dcb72-4b6c-11f1-aaa3-001a7dda710b" x-ms-artifact-checksum="6212977053c0c1c00d44cf80f9bd817570103c962016a63abdf2463bc9521c7a" X-ARR-LOG-ID="3c4dcb72-4b6c-11f1-aaa3-001a7dda710b" CLIENT-IP="114.74.199.125:52623" X-SITE-DEPLOYMENT-ID="hyperxen-pricing-bot-dev" WAS-DEFAULT-HOSTNAME="hyperxen-pricing-bot-dev.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/zipdeploy?isAsync=true" X-Client-IP="114.74.199.125" X-Client-Port="52623" >
+  <step title="ZipPushDeploy" date="2026-05-09T05:59:54.081" >
+    <step title="ZipDeploy. Extract zip. Remote build." date="2026-05-09T05:59:54.092" /><!-- duration: 3ms -->
+    <step title="Starting PushDeployAsync" date="2026-05-09T05:59:54.101" /><!-- duration: 2ms -->
+    <step title="Writing artifact to /tmp/zipdeploy/d0a34afd-d318-4fa4-ac32-383baecf2b34.zip" date="2026-05-09T05:59:54.141" >
+      <step title="Writing multipart request body to /tmp/zipdeploy/d0a34afd-d318-4fa4-ac32-383baecf2b34.zip" date="2026-05-09T05:59:54.148" /><!-- duration: 10ms -->
+    </step><!-- duration: 3749ms -->
+    <step title="Removing previous build artifact&apos;s manifest file" date="2026-05-09T05:59:57.902" >
+      <step title="Start deployment in the background" date="2026-05-09T05:59:57.922" >
+        <step title="Acquiring Deployment Lock" date="2026-05-09T05:59:57.960" /><!-- duration: 6ms -->
+        <step title="Acquired Deployment Lock" date="2026-05-09T05:59:57.999" /><!-- duration: 2ms -->
+      </step><!-- duration: 141ms -->
+    </step><!-- duration: 172ms -->
+    <step title="Outgoing response" date="2026-05-09T05:59:58.086" type="response" statusCode="202" statusText="Accepted" /><!-- duration: 2ms -->
+  </step><!-- duration: 4008ms -->

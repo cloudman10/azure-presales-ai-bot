@@ -1,0 +1,52 @@
+2026-05-09T06:22:47  Fetching changes.
+2026-05-09T06:22:47    Starting  LocalZipHandler
+2026-05-09T06:22:47    Cleaning up temp folders from previous zip deployments and extracting pushed zip file /tmp/zipdeploy/6257f71d-7bfe-4394-8254-2f8ca1d57bfc.zip (0.08 MB) to /tmp/zipdeploy/extracted
+2026-05-09T06:22:53  Updating submodules.
+2026-05-09T06:22:53  Preparing deployment for commit id '1a414834-3'.
+2026-05-09T06:22:54  PreDeployment: context.CleanOutputPath False
+2026-05-09T06:22:54  PreDeployment: context.OutputPath /home/site/wwwroot
+2026-05-09T06:22:55  Repository path is /tmp/zipdeploy/extracted
+2026-05-09T06:22:55  Running oryx build...
+2026-05-09T06:22:55    Command: oryx build /tmp/zipdeploy/extracted -o /home/site/wwwroot --platform python --platform-version 3.11 -p virtualenv_name=antenv --log-file /tmp/build-debug.log  -i /tmp/8dead93676f7b5c --compress-destination-dir | tee /tmp/oryx-build.log
+2026-05-09T06:23:06    Operation performed by Microsoft Oryx, https://github.com/Microsoft/Oryx
+2026-05-09T06:23:06    You can report issues at https://github.com/Microsoft/Oryx/issues
+2026-05-09T06:23:06    
+2026-05-09T06:23:06    Oryx Version: 0.2.20260420.1+83c04e9ee1882dc90d279b63348824daedbd3c96, Commit: 83c04e9ee1882dc90d279b63348824daedbd3c96, ReleaseTagName: 20260420.1
+2026-05-09T06:23:06    
+2026-05-09T06:23:06    Build Operation ID: c6ebe209ca830480
+2026-05-09T06:23:07    Repository Commit : 1a414834-3e0e-459e-8532-636564d53f03
+2026-05-09T06:23:07    OS Type           : bullseye
+2026-05-09T06:23:07    Image Type        : githubactions
+2026-05-09T06:23:07    
+2026-05-09T06:23:07    Primary SDK Storage URL: https://oryx-cdn.microsoft.io
+2026-05-09T06:23:07    Backup SDK Storage URL: 
+2026-05-09T06:23:07    ACR SDK Registry URL: (not set)
+2026-05-09T06:23:07    SDK provider status:
+2026-05-09T06:23:07      External ACR SDK provider: Disabled
+2026-05-09T06:23:07      External SDK provider: Enabled
+2026-05-09T06:23:07      Direct ACR SDK provider: Disabled
+2026-05-09T06:23:07      Blob SDK provider: Enabled
+2026-05-09T06:23:07    Detecting platforms...
+2026-05-09T06:23:08    Requesting metadata for platform python from external SDK provider
+2026-05-09T06:23:12    Requesting metadata for platform python from external SDK provider
+2026-05-09T06:23:13    Version resolved using external SDK provider.
+2026-05-09T06:23:13    Detected following platforms:
+2026-05-09T06:23:13      python: 3.11.15
+2026-05-09T06:23:13    Requesting metadata for platform python from external SDK provider
+2026-05-09T06:23:18    SDK for 'python' version '3.11.15' fetched via external SDK provider.
+2026-05-09T06:23:18    Version '3.11.15' of platform 'python' is not installed. Generating script to install it...
+2026-05-09T06:23:19    
+2026-05-09T06:23:19    Using intermediate directory '/tmp/8dead93676f7b5c'.
+2026-05-09T06:23:19    
+2026-05-09T06:23:19    Copying files to the intermediate directory...
+2026-05-09T06:23:19    Copying files to intermediate directory done in 0 sec(s).
+2026-05-09T06:23:19    
+2026-05-09T06:23:19    Source directory     : /tmp/8dead93676f7b5c
+2026-05-09T06:23:19    Destination directory: /home/site/wwwroot
+2026-05-09T06:23:19    
+2026-05-09T06:23:20    Installing platform...
+2026-05-09T06:23:20    
+2026-05-09T06:23:20    Downloading and extracting 'python' version '3.11.15' to '/tmp/oryx/platforms/python/3.11.15'...
+2026-05-09T06:23:20    Detected image debian flavor: bullseye.
+2026-05-09T06:23:20    SDK binary download was skipped. Looking for cached tarball...
+2026-05-09T06:23:20    Found tarball at /var/OryxSdks/python/python-bullseye-3.11.15.tar.gz
