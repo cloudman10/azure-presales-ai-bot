@@ -1,8 +1,0 @@
-<step title="Incoming Request" date="2026-05-03T06:12:14.198" instance="e74ad8" url="/api/deployments/latest" method="GET" type="request" pid="833,1,15" Accept="*/*" Host="hyperxen-pricing-bot-dev.scm.azurewebsites.net" User-Agent="AZURECLI/2.85.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." x-ms-client-request-id="f5eb2110-46b6-11f1-8aac-001a7dda710b" X-ARR-LOG-ID="f5eb2110-46b6-11f1-8aac-001a7dda710b" CLIENT-IP="114.74.199.125:56003" X-SITE-DEPLOYMENT-ID="hyperxen-pricing-bot-dev" WAS-DEFAULT-HOSTNAME="hyperxen-pricing-bot-dev.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/deployments/latest" X-Client-IP="114.74.199.125" X-Client-Port="56003" >
-  <step title="DeploymentService.GetResult" date="2026-05-03T06:12:14.279" >
-    <step title="DeploymentService.GetLatestDeployment" date="2026-05-03T06:12:14.308" >
-      <step title="DeploymentManager.GetResults" date="2026-05-03T06:12:14.320" /><!-- duration: 2545ms -->
-    </step><!-- duration: 2687ms -->
-  </step><!-- duration: 2766ms -->
-  <step title="Outgoing response" date="2026-05-03T06:12:17.275" type="response" statusCode="202" statusText="Accepted" /><!-- duration: 83ms -->
-</step><!-- duration: 3210ms -->
