@@ -5,21 +5,32 @@
 
 ---
 
-## Current Status (2026-05-02)
+## Current Status (2026-05-11) — v1.1.0
 
 | Item | Status |
 |------|--------|
 | Frontend (Replit UI) | ✅ Live |
 | Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
+| Dev App | ✅ Live and healthy — https://hyperxen-pricing-bot-dev.azurewebsites.net |
 | LLM (GPT-4o via Azure AI Foundry) | ✅ Verified working |
 | Azure AI Search | ✅ Indexed (894 active SKUs) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
 | Dev Environment | ✅ Live — https://dev.hyperxen.com |
-| CI/CD Pipeline | ✅ GitHub Actions — auto deploy on push |
+| CI/CD Pipeline | ✅ GitHub Actions — auto deploy on push to dev and main |
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+### v1.1.0 Fixes (2026-05-11)
+- Accordion pricing now loads full data when selecting a SKU from advisor results
+- Bare numbers (e.g. "1") no longer reset conversation context
+- Spec-based queries (e.g. "6 cores 8GB RAM") now route to SKU advisor
+- Removed 10,457 stale log/zip files from git tracking
+- Added `.gitignore` entries for `app_logs*/`, `*.zip`, `dev_logs*/`, `debug.log`
+
+### Known Issues
+- Typing "Linux" after advisor picks a SKU incorrectly routes to `pricing_agent` instead of staying in advisor flow (logged for next fix)
 
 ---
 

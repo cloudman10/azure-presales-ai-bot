@@ -25,6 +25,8 @@
 - Always zip from: app, static, requirements.txt, startup.sh
 - Startup command: gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 app.main:app
 - Never use output.tar.zst — always deploy via zip
+- Always use `git archive --format=zip HEAD -o <name>.zip` for clean zips — never `git add .` then zip, never Compress-Archive
+- If Kudu returns 5xx (502/504), do not retry via az webapp deploy — push to dev branch and let GitHub Actions deploy instead
 
 ## Logging
 - Use Kudu REST API for logs (az webapp log tail fails due to dev.hyperxen.com SSL)
@@ -32,7 +34,7 @@
 - Download logs: az webapp log download --yes
 
 ## Cost Control
-- Never run background monitors or polling loops for more than 5 minutes
+- Never run polling loops longer than 5 minutes
 - Never use "until curl..." or "watch" loops — just run the check once and report
 - After deploying, just run a single health check — don't wait and monitor
 - If a deploy takes more than 3 minutes, stop and report the status instead of waiting
