@@ -210,3 +210,7 @@ deploy.zip
 logs.zip
 webapp_logs.zip
 *.log.zip
+app_logs*/
+*.zip
+dev_logs*/
+debug.log
