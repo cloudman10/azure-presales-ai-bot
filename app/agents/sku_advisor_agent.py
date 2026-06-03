@@ -10,6 +10,7 @@ Routing: orchestrator calls detect_scenario_query() first.  If True, the
 message is handled here instead of going to pricing_agent.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -423,8 +424,12 @@ def format_recommendations(
         temp_storage_gb = sku_doc.get("temp_storage_gb", 0)
         use_cases       = sku_doc.get("use_cases", "")
         label           = _label_for_sku(sku_name)
+        region_note     = sku_doc.get("_region_label")
+        sku_region_disp = display_region(sku_doc["_region"]) if sku_doc.get("_region") else region_disp
 
         heading = f"Option {i + 1} — {sku_name} ({label})"
+        if region_note:
+            heading += f"  [{region_note}]"
         lines.append(heading)
 
         # Specs line
@@ -444,9 +449,9 @@ def format_recommendations(
                 hr  = payg["retailPrice"]
                 mo  = hr * HOURS_PER_MONTH
                 cur = payg.get("currencyCode", "USD")
-                lines.append(f"  {cur} {hr:.4f}/hr  |  {cur} {mo:.2f}/month ({os_type}, {region_disp})")
+                lines.append(f"  {cur} {hr:.4f}/hr  |  {cur} {mo:.2f}/month ({os_type}, {sku_region_disp})")
             else:
-                lines.append(f"  Pricing unavailable for {os_type} in {region_disp}")
+                lines.append(f"  Pricing unavailable for {os_type} in {sku_region_disp}")
         else:
             lines.append(f"  Pricing unavailable — verify at azure.com/pricing")
 
@@ -513,11 +518,44 @@ def _parse_selection(msg: str) -> list[int] | None:
     return None
 
 
+async def _verify_pricing(
+    sku_docs: list[dict],
+    region: str,
+    os_type: str,
+    region_label: str | None = None,
+) -> list[tuple[dict, list[dict]]]:
+    """
+    Concurrently fetch and verify PAYG Consumption pricing for all sku_docs.
+    Returns (sku_doc, price_items) pairs in input order for SKUs with confirmed pricing.
+    When region_label is set, tags each returned sku_doc with _region and _region_label
+    so formatters and STATE 5 know which region to use for full pricing.
+    """
+    async def _check(doc: dict):
+        sku_name = doc.get("sku_name", "")
+        try:
+            items = await fetch_prices(region, sku_name)
+            if items and find_price(items, os_type, "Consumption"):
+                tagged = dict(doc)
+                if region_label:
+                    tagged["_region"] = region
+                    tagged["_region_label"] = region_label
+                logger.info("sku_advisor: %s in %s → PAYG confirmed", sku_name, region)
+                return (tagged, items)
+            logger.info("sku_advisor: %s in %s → no %s PAYG", sku_name, region, os_type)
+        except Exception as e:
+            logger.warning("sku_advisor: price fetch failed for %s in %s: %s", sku_name, region, e)
+        return None
+
+    results = await asyncio.gather(*[_check(doc) for doc in sku_docs])
+    return [r for r in results if r is not None]
+
+
 async def _show_full_pricing(
     skus: list[str],
     region: str,
     os_type: str,
     sku_docs: list[dict] | None = None,
+    sku_regions: list[str] | None = None,
 ) -> str:
     """Fetch live pricing and format full breakdown for each chosen SKU."""
     from app.agents.pricing_agent import _format_pricing
@@ -525,12 +563,13 @@ async def _show_full_pricing(
     parts = []
     for idx, sku_name in enumerate(skus):
         doc = sku_docs[idx] if sku_docs and idx < len(sku_docs) else {}
+        sku_region = (sku_regions[idx] if sku_regions and idx < len(sku_regions) else None) or region
         try:
-            items   = await fetch_prices(region, sku_name)
-            temp_gb = await fetch_temp_storage_gb(sku_name, region)
+            items   = await fetch_prices(sku_region, sku_name)
+            temp_gb = await fetch_temp_storage_gb(sku_name, sku_region)
             params  = {
                 "sku":      sku_name,
-                "region":   region,
+                "region":   sku_region,
                 "os":       os_type,
                 "qty":      1,
                 "wants_hb": False,
@@ -672,10 +711,14 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             # the user can immediately follow up with "what about option 3?"
             # without being re-asked for region or OS by the pricing agent.
             # picks_key is only replaced when STATE 4 generates new recommendations.
-            chosen_skus = [picks["skus"][i] for i in valid_indices]
-            chosen_docs = [picks["sku_docs"][i] for i in valid_indices
-                           if i < len(picks.get("sku_docs") or [])]
-            reply = await _show_full_pricing(chosen_skus, picks["region"], picks["os"], chosen_docs)
+            chosen_skus     = [picks["skus"][i] for i in valid_indices]
+            chosen_docs     = [picks["sku_docs"][i] for i in valid_indices
+                               if i < len(picks.get("sku_docs") or [])]
+            _sku_regions    = picks.get("sku_regions") or []
+            chosen_regions  = [_sku_regions[i] for i in valid_indices if i < len(_sku_regions)] or None
+            reply = await _show_full_pricing(
+                chosen_skus, picks["region"], picks["os"], chosen_docs, chosen_regions
+            )
             return {"reply": reply, "type": "pricing"}
         # No option digit found — if the user is starting a new scenario query
         # clear picks and fall through to the state machine; otherwise prompt.
@@ -737,94 +780,59 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             "type": "conversation",
         }
 
-    # Verify each candidate has PAYG pricing in the requested region/OS.
-    # Stop once we have 3 confirmed options; try all 15 if needed.
-    tried_skus: set[str] = set()
-    verified_skus: list[dict] = []
-    verified_prices: list[list[dict]] = []
+    # ── Concurrent pricing verification ───────────────────────────────────────
+    # Fire all 15 fetch_prices() calls at once instead of sequentially.
     logger.info(
         "sku_advisor: verifying %d candidates in %s for %s",
         len(skus), state["region"], state["os"],
     )
-    for sku_doc in skus:
-        if len(verified_skus) >= 3:
-            break
-        sku_name = sku_doc.get("sku_name", "")
-        tried_skus.add(sku_name)
-        try:
-            items = await fetch_prices(state["region"], sku_name)
-            payg = find_price(items, state["os"], "Consumption") if items else None
-            logger.info(
-                "sku_advisor: [main] %s → items=%d payg=%s",
-                sku_name, len(items) if items else 0, payg is not None,
-            )
-            if payg:
-                verified_skus.append(sku_doc)
-                verified_prices.append(items)
-            else:
-                logger.info(
-                    "sku_advisor: no %s pricing for %s in %s — excluded",
-                    state["os"], sku_name, state["region"],
-                )
-        except Exception as e:
-            logger.warning("sku_advisor: price fetch failed for %s: %s", sku_name, e)
+    verified = await _verify_pricing(skus, state["region"], state["os"])
+    logger.info("sku_advisor: main pass done — verified=%d", len(verified))
 
-    logger.info(
-        "sku_advisor: main pass done — verified=%d tried=%d",
-        len(verified_skus), len(tried_skus),
-    )
-
-    # Fallback: if fewer than 3 verified, expand to a broader candidate pool.
-    # Sort so series that already have confirmed pricing in this region come first
-    # (different size/gen of the same family), then fall through to any other series.
-    if len(verified_skus) < 3:
-        confirmed_series = {_sku_series(s.get("sku_name", "")) for s in verified_skus}
+    # Expand to a broader pool (40) if still < 3 — prefer series already confirmed.
+    if len(verified) < 3:
+        tried_names = {doc.get("sku_name") for doc in skus}
+        confirmed_series = {_sku_series(r[0].get("sku_name", "")) for r in verified}
         broader = search_skus(state, limit=40)
-        new_candidates = [d for d in broader if d.get("sku_name") not in tried_skus]
-        logger.info(
-            "sku_advisor: fallback triggered — confirmed_series=%s broader=%d new=%d",
-            confirmed_series, len(broader), len(new_candidates),
-        )
-        logger.info(
-            "sku_advisor: fallback new candidates: %s",
-            [d.get("sku_name") for d in new_candidates],
-        )
-        broader.sort(
+        new_docs = [d for d in broader if d.get("sku_name") not in tried_names]
+        new_docs.sort(
             key=lambda d: (0 if _sku_series(d.get("sku_name", "")) in confirmed_series else 1)
         )
-        for sku_doc in broader:
-            if len(verified_skus) >= 3:
-                break
-            sku_name = sku_doc.get("sku_name", "")
-            if sku_name in tried_skus:
-                continue
-            try:
-                items = await fetch_prices(state["region"], sku_name)
-                tried_skus.add(sku_name)
-                payg = find_price(items, state["os"], "Consumption") if items else None
-                logger.info(
-                    "sku_advisor: [fallback] %s → items=%d payg=%s",
-                    sku_name, len(items) if items else 0, payg is not None,
-                )
-                if payg:
-                    verified_skus.append(sku_doc)
-                    verified_prices.append(items)
-                else:
-                    logger.info(
-                        "sku_advisor: fallback — no %s pricing for %s in %s",
-                        state["os"], sku_name, state["region"],
-                    )
-            except Exception as e:
-                logger.warning(
-                    "sku_advisor: fallback price fetch failed for %s: %s", sku_name, e
-                )
+        logger.info(
+            "sku_advisor: same-region fallback — confirmed_series=%s new_candidates=%d",
+            confirmed_series, len(new_docs),
+        )
+        extra = await _verify_pricing(new_docs, state["region"], state["os"])
+        verified.extend(extra)
+        logger.info("sku_advisor: after same-region fallback — verified=%d", len(verified))
+
+    # Fill remaining slots from the known alternative region (e.g. Australia East).
+    # Options sourced from the alt region are tagged so the formatter can label them.
+    if len(verified) < 3:
+        alt_region = _REGION_ALTERNATIVES.get(state["region"])
+        if alt_region:
+            verified_names = {r[0].get("sku_name") for r in verified}
+            alt_candidates = [d for d in skus if d.get("sku_name") not in verified_names]
+            alt_label = f"Available in {display_region(alt_region)}"
+            logger.info(
+                "sku_advisor: trying %d candidates in alt region %s",
+                len(alt_candidates), alt_region,
+            )
+            alt_verified = await _verify_pricing(
+                alt_candidates, alt_region, state["os"], region_label=alt_label
+            )
+            needed = 3 - len(verified)
+            verified.extend(alt_verified[:needed])
+            logger.info(
+                "sku_advisor: filled %d slot(s) from %s", len(alt_verified[:needed]), alt_region
+            )
 
     logger.info(
         "sku_advisor: final verified=%d skus=%s",
-        len(verified_skus), [s.get("sku_name") for s in verified_skus],
+        len(verified), [r[0].get("sku_name") for r in verified],
     )
 
-    if not verified_skus:
+    if not verified:
         sessions.pop(state_key, None)
         return {
             "reply": (
@@ -835,41 +843,21 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             "type": "conversation",
         }
 
-    top3 = verified_skus[:3]
-    prices = verified_prices[:3]
+    top3   = [r[0] for r in verified[:3]]
+    prices = [r[1] for r in verified[:3]]
 
-    # If fewer than 3 verified options, check if a known alternative region has more
-    alt_region_disp: str | None = None
-    if len(top3) < 3:
-        alt_region = _REGION_ALTERNATIVES.get(state["region"])
-        if alt_region:
-            alt_count = 0
-            for sku_doc in skus:
-                if alt_count >= 3:
-                    break
-                sku_name = sku_doc.get("sku_name", "")
-                try:
-                    alt_items = await fetch_prices(alt_region, sku_name)
-                    if alt_items and find_price(alt_items, state["os"], "Consumption"):
-                        alt_count += 1
-                except Exception:
-                    pass
-            if alt_count > len(top3):
-                alt_region_disp = display_region(alt_region)
-                logger.info(
-                    "sku_advisor: alt region %s has %d options vs %d in primary",
-                    alt_region, alt_count, len(top3),
-                )
-
-    reply = format_recommendations(top3, state, prices, alt_region_disp=alt_region_disp)
+    reply = format_recommendations(top3, state, prices)
 
     # Store picks so the user can select 1/2/3/all in the next turn.
     # sku_docs carries vcpus/ram_gb so the full pricing block can show specs.
+    # sku_regions records the actual region each SKU was priced in (may differ
+    # from state["region"] when an alt-region fill was used).
     sessions[picks_key] = {
-        "skus":     [s.get("sku_name") for s in top3],
-        "sku_docs": top3,
-        "region":   state["region"],
-        "os":       state["os"],
+        "skus":        [s.get("sku_name") for s in top3],
+        "sku_docs":    top3,
+        "region":      state["region"],
+        "sku_regions": [s.get("_region", state["region"]) for s in top3],
+        "os":          state["os"],
     }
     sessions.pop(state_key, None)   # clear state; picks_key keeps the context for STATE 5
     _picks = {
