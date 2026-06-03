@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-05-11) — v1.1.0
+## Current Status (2026-06-03) — v1.2.0
 
 | Item | Status |
 |------|--------|
@@ -21,6 +21,14 @@
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+### v1.2.0 Changes (2026-06-03)
+- **SKU advisor fully dynamic:** queries Azure Retail Prices API directly — no hardcoded series names or SKU lists; works for any region, any VM family, any core count
+- **Full region coverage:** returns 3 options even for limited regions like Australia Southeast (was returning only 2 due to Azure AI Search index gaps)
+- **Speed:** concurrent metadata lookups via `asyncio.gather()`; response time under 20 seconds (was up to 2 minutes with sequential per-SKU API calls)
+- **Alt-region fill:** when fewer than 3 options exist in the requested region, fills remaining slots from Australia East clearly labelled `[Available in Australia East]`
+- INFO-level logging enabled globally (`logging.basicConfig(level=INFO)`) — SKU advisor debug output now visible in App Service logs
+- Pricing verification now uses `asyncio.gather()` throughout
 
 ### v1.1.0 Fixes (2026-05-11)
 - Accordion pricing now loads full data when selecting a SKU from advisor results
@@ -205,8 +213,10 @@ azure-presales-ai-bot/
 - SKU Normalizer Agent — handles constrained vCPU normalization (e.g. `e42adsv5` → `Standard_E4-2ads_v5`)
 - Python SKU normalization always overrides LLM output to prevent hallucinated SKU names
 - Temp storage display via Azure ARM API + Managed Identity
-- SKU Advisor Agent — scenario-based VM recommendations via Azure AI Search; top 3 matches; live pricing fetch
-- SKU Advisor: series diversity — 4 per-family searches (D/E/F/B) guarantee one result per series with correct labels (General Purpose, Memory Optimised, Compute Optimised, Burstable/Cost Optimised)
+- SKU Advisor Agent — scenario-based VM recommendations; queries Azure Retail Prices API directly (no hardcoded series); top 3 picks from general/memory/cost categories; works for any region
+- SKU Advisor: full region coverage — `fetch_vm_prices_for_region()` pages through all PAYG VMs in a region; Python filters by vCPU count; no Azure AI Search dependency for candidate discovery
+- SKU Advisor: alt-region fill — when fewer than 3 options exist, fills remaining slots from the nearest alternative region (e.g. Australia East) labelled `[Available in Australia East]`
+- SKU Advisor: concurrent lookups — `asyncio.gather()` for metadata enrichment and pricing verification; response under 20 seconds
 - SKU Advisor: region and OS carry-over from full conversation history — info stated before advisor started is captured without re-asking
 - SKU Advisor: typo-tolerant OS detection (`windwos`, `windoes`, `widnows`, `win` all map to Windows; `lin` prefix maps to Linux)
 - SKU Advisor: direct option 1/2/3 selection without confirmation loops — "option 2", "2", "what about option 2 pricing", standalone "yes"/"ok" all trigger immediate pricing fetch
