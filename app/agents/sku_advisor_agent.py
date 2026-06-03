@@ -742,6 +742,10 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     tried_skus: set[str] = set()
     verified_skus: list[dict] = []
     verified_prices: list[list[dict]] = []
+    logger.info(
+        "sku_advisor: verifying %d candidates in %s for %s",
+        len(skus), state["region"], state["os"],
+    )
     for sku_doc in skus:
         if len(verified_skus) >= 3:
             break
@@ -749,7 +753,12 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         tried_skus.add(sku_name)
         try:
             items = await fetch_prices(state["region"], sku_name)
-            if items and find_price(items, state["os"], "Consumption"):
+            payg = find_price(items, state["os"], "Consumption") if items else None
+            logger.info(
+                "sku_advisor: [main] %s → items=%d payg=%s",
+                sku_name, len(items) if items else 0, payg is not None,
+            )
+            if payg:
                 verified_skus.append(sku_doc)
                 verified_prices.append(items)
             else:
@@ -760,12 +769,26 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         except Exception as e:
             logger.warning("sku_advisor: price fetch failed for %s: %s", sku_name, e)
 
+    logger.info(
+        "sku_advisor: main pass done — verified=%d tried=%d",
+        len(verified_skus), len(tried_skus),
+    )
+
     # Fallback: if fewer than 3 verified, expand to a broader candidate pool.
     # Sort so series that already have confirmed pricing in this region come first
     # (different size/gen of the same family), then fall through to any other series.
     if len(verified_skus) < 3:
         confirmed_series = {_sku_series(s.get("sku_name", "")) for s in verified_skus}
         broader = search_skus(state, limit=40)
+        new_candidates = [d for d in broader if d.get("sku_name") not in tried_skus]
+        logger.info(
+            "sku_advisor: fallback triggered — confirmed_series=%s broader=%d new=%d",
+            confirmed_series, len(broader), len(new_candidates),
+        )
+        logger.info(
+            "sku_advisor: fallback new candidates: %s",
+            [d.get("sku_name") for d in new_candidates],
+        )
         broader.sort(
             key=lambda d: (0 if _sku_series(d.get("sku_name", "")) in confirmed_series else 1)
         )
@@ -778,7 +801,12 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             try:
                 items = await fetch_prices(state["region"], sku_name)
                 tried_skus.add(sku_name)
-                if items and find_price(items, state["os"], "Consumption"):
+                payg = find_price(items, state["os"], "Consumption") if items else None
+                logger.info(
+                    "sku_advisor: [fallback] %s → items=%d payg=%s",
+                    sku_name, len(items) if items else 0, payg is not None,
+                )
+                if payg:
                     verified_skus.append(sku_doc)
                     verified_prices.append(items)
                 else:
@@ -790,6 +818,11 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
                 logger.warning(
                     "sku_advisor: fallback price fetch failed for %s: %s", sku_name, e
                 )
+
+    logger.info(
+        "sku_advisor: final verified=%d skus=%s",
+        len(verified_skus), [s.get("sku_name") for s in verified_skus],
+    )
 
     if not verified_skus:
         sessions.pop(state_key, None)
