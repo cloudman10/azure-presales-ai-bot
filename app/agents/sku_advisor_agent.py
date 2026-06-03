@@ -739,12 +739,14 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
 
     # Verify each candidate has PAYG pricing in the requested region/OS.
     # Stop once we have 3 confirmed options; try all 15 if needed.
+    tried_skus: set[str] = set()
     verified_skus: list[dict] = []
     verified_prices: list[list[dict]] = []
     for sku_doc in skus:
         if len(verified_skus) >= 3:
             break
         sku_name = sku_doc.get("sku_name", "")
+        tried_skus.add(sku_name)
         try:
             items = await fetch_prices(state["region"], sku_name)
             if items and find_price(items, state["os"], "Consumption"):
@@ -757,6 +759,37 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
                 )
         except Exception as e:
             logger.warning("sku_advisor: price fetch failed for %s: %s", sku_name, e)
+
+    # Fallback: if fewer than 3 verified, expand to a broader candidate pool.
+    # Sort so series that already have confirmed pricing in this region come first
+    # (different size/gen of the same family), then fall through to any other series.
+    if len(verified_skus) < 3:
+        confirmed_series = {_sku_series(s.get("sku_name", "")) for s in verified_skus}
+        broader = search_skus(state, limit=40)
+        broader.sort(
+            key=lambda d: (0 if _sku_series(d.get("sku_name", "")) in confirmed_series else 1)
+        )
+        for sku_doc in broader:
+            if len(verified_skus) >= 3:
+                break
+            sku_name = sku_doc.get("sku_name", "")
+            if sku_name in tried_skus:
+                continue
+            try:
+                items = await fetch_prices(state["region"], sku_name)
+                tried_skus.add(sku_name)
+                if items and find_price(items, state["os"], "Consumption"):
+                    verified_skus.append(sku_doc)
+                    verified_prices.append(items)
+                else:
+                    logger.info(
+                        "sku_advisor: fallback — no %s pricing for %s in %s",
+                        state["os"], sku_name, state["region"],
+                    )
+            except Exception as e:
+                logger.warning(
+                    "sku_advisor: fallback price fetch failed for %s: %s", sku_name, e
+                )
 
     if not verified_skus:
         sessions.pop(state_key, None)
