@@ -81,6 +81,30 @@ _SERIES_LABELS = {
 
 _PREFERRED_SERIES_ORDER = ["D", "E", "F", "B"]
 
+# Regex to extract vCPU count and generation from an armSkuName.
+# e.g. Standard_D8s_v6 → vcpus=8, gen=6
+_VCPU_RE    = re.compile(r'^Standard_[A-Za-z]+(\d+)', re.IGNORECASE)
+_VERSION_RE = re.compile(r'_v(\d+)$',                 re.IGNORECASE)
+
+_SERIES_USE_CASES: dict[str, str] = {
+    "D": "General purpose — web servers, mid-tier apps, dev/test",
+    "E": "Memory optimised — databases, in-memory analytics, large caches",
+    "F": "Compute optimised — batch processing, gaming, web front-ends",
+    "B": "Burstable — low-traffic apps, dev/test, small workloads",
+}
+
+
+def _vcpus_from_sku(sku_name: str) -> int | None:
+    """Parse vCPU count from armSkuName, e.g. Standard_D8s_v6 → 8."""
+    m = _VCPU_RE.match(sku_name)
+    return int(m.group(1)) if m else None
+
+
+def _gen_from_sku(sku_name: str) -> int:
+    """Return the generation number from armSkuName, e.g. Standard_D8s_v6 → 6."""
+    m = _VERSION_RE.search(sku_name)
+    return int(m.group(1)) if m else 1
+
 
 def _sku_series(sku_name: str) -> str:
     """Return the VM series letter from a SKU name (e.g. Standard_D4s_v5 → 'D')."""
@@ -419,8 +443,8 @@ def format_recommendations(
 
     for i, sku_doc in enumerate(top3):
         sku_name        = sku_doc.get("sku_name", "Unknown")
-        vcpus           = sku_doc.get("vcpus", "?")
-        ram_gb          = sku_doc.get("ram_gb", "?")
+        vcpus           = sku_doc.get("vcpus") or "?"
+        ram_gb          = sku_doc.get("ram_gb") or "?"
         temp_storage_gb = sku_doc.get("temp_storage_gb", 0)
         use_cases       = sku_doc.get("use_cases", "")
         label           = _label_for_sku(sku_name)
@@ -516,6 +540,160 @@ def _parse_selection(msg: str) -> list[int] | None:
     if m:
         return [int(m.group(1)) - 1]
     return None
+
+
+async def _get_sku_metadata(sku_name: str) -> dict:
+    """
+    Look up vcpus / ram_gb / use_cases for a specific SKU in Azure AI Search.
+    Returns {} on any miss or error — callers fall back to parsed / inferred values.
+    """
+    endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
+    api_key  = os.environ.get("AZURE_SEARCH_API_KEY", "")
+    if not endpoint or not api_key:
+        return {}
+    try:
+        client = SearchClient(
+            endpoint=endpoint,
+            index_name=SEARCH_INDEX,
+            credential=AzureKeyCredential(api_key),
+        )
+        rows = await asyncio.to_thread(
+            lambda: list(client.search(
+                search_text="",
+                filter=f"sku_name eq '{sku_name}'",
+                top=1,
+            ))
+        )
+        return dict(rows[0]) if rows else {}
+    except Exception as e:
+        logger.warning("sku_advisor: metadata lookup failed for %s: %s", sku_name, e)
+        return {}
+
+
+async def _pick_vms_from_prices(
+    region: str,
+    os_type: str,
+    vcpus: int | None,
+    ram_gb: int | None,
+    region_label: str | None = None,
+) -> list[dict]:
+    """
+    Query the Azure Retail Prices API for ALL Consumption-tier VMs in region/OS,
+    filter by vCPU count in Python, then pick the best 3 from distinct categories:
+      general  — D or F series (latest gen first, then price)
+      memory   — E series
+      cost     — B series
+      other    — anything else (sorted by price)
+
+    Enriches the 3 picks with AI Search metadata (vcpus, ram_gb, use_cases)
+    concurrently.  Each returned dict contains a '_price_item' key with the
+    raw API price record; the caller pops it before passing to format_recommendations.
+    """
+    from app.services.azure_pricing import fetch_vm_prices_for_region
+
+    raw = await fetch_vm_prices_for_region(region, os_type)
+    logger.info(
+        "sku_advisor: _pick_vms_from_prices region=%s os=%s raw=%d vcpus_req=%s",
+        region, os_type, len(raw), vcpus,
+    )
+
+    def _is_standard(item: dict) -> bool:
+        sku = item.get("skuName", "")
+        arm = item.get("armSkuName", "")
+        return (
+            "Spot"         not in sku
+            and "Low Priority" not in sku
+            and "Promo"        not in arm
+            and "Basic"        not in arm
+            and item.get("retailPrice", 0) > 0
+        )
+
+    items = [i for i in raw if _is_standard(i)]
+
+    if vcpus:
+        items = [i for i in items
+                 if _vcpus_from_sku(i.get("armSkuName", "")) == vcpus]
+
+    logger.info("sku_advisor: after vCPU=%s filter → %d items", vcpus, len(items))
+
+    # Deduplicate: one entry per armSkuName, keeping the cheapest price
+    items.sort(key=lambda x: x.get("retailPrice", float("inf")))
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for item in items:
+        name = item.get("armSkuName", "")
+        if name and name not in seen:
+            seen.add(name)
+            unique.append(item)
+
+    # Bucket by series category
+    cats: dict[str, list[dict]] = {"general": [], "memory": [], "cost": [], "other": []}
+    for item in unique:
+        s = _sku_series(item.get("armSkuName", ""))
+        if s in ("D", "F"):
+            cats["general"].append(item)
+        elif s == "E":
+            cats["memory"].append(item)
+        elif s == "B":
+            cats["cost"].append(item)
+        else:
+            cats["other"].append(item)
+
+    # Within each category: prefer latest generation, then lowest price
+    def _cat_sort(item: dict) -> tuple[int, float]:
+        return (-_gen_from_sku(item.get("armSkuName", "")), item.get("retailPrice", float("inf")))
+
+    for cat in cats.values():
+        cat.sort(key=_cat_sort)
+
+    # One representative per category, then fill remaining slots by price
+    picks: list[dict] = []
+    pick_names: set[str] = set()
+    for cat_key in ("general", "memory", "cost", "other"):
+        if len(picks) >= 3:
+            break
+        for item in cats[cat_key]:
+            name = item.get("armSkuName", "")
+            if name not in pick_names:
+                picks.append(item)
+                pick_names.add(name)
+                break
+
+    for item in unique:
+        if len(picks) >= 3:
+            break
+        name = item.get("armSkuName", "")
+        if name not in pick_names:
+            picks.append(item)
+            pick_names.add(name)
+
+    logger.info(
+        "sku_advisor: picked from %s → %s",
+        region, [p.get("armSkuName") for p in picks],
+    )
+
+    # Enrich concurrently with AI Search metadata
+    sku_names = [p.get("armSkuName", "") for p in picks]
+    meta_list = await asyncio.gather(*[_get_sku_metadata(n) for n in sku_names])
+
+    results: list[dict] = []
+    for price_item, meta in zip(picks, meta_list):
+        sku_name = price_item.get("armSkuName", "")
+        series   = _sku_series(sku_name)
+        doc: dict = {
+            "sku_name":        sku_name,
+            "vcpus":           meta.get("vcpus") or _vcpus_from_sku(sku_name),
+            "ram_gb":          meta.get("ram_gb"),
+            "temp_storage_gb": meta.get("temp_storage_gb") or 0,
+            "use_cases":       meta.get("use_cases") or _SERIES_USE_CASES.get(series, ""),
+            "_price_item":     price_item,
+        }
+        if region_label:
+            doc["_region"]       = region
+            doc["_region_label"] = region_label
+        results.append(doc)
+
+    return results
 
 
 async def _verify_pricing(
@@ -767,84 +945,53 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         state["ram_gb"] = specs["ram_gb"]
         logger.info("sku_advisor: estimated from %d users → %s", state["users"], specs)
 
-    # Fetch up to 15 candidates so the pricing check has plenty to work with
-    skus = search_skus(state, limit=15)
-
-    if not skus:
-        sessions.pop(state_key, None)   # clear so in_advisor_flow resets
-        return {
-            "reply": (
-                "I couldn't find VMs matching those requirements. "
-                "Try adjusting the specs — e.g. '4 vCPUs 16GB RAM for a web app'."
-            ),
-            "type": "conversation",
-        }
-
-    # ── Concurrent pricing verification ───────────────────────────────────────
-    # Fire all 15 fetch_prices() calls at once instead of sequentially.
-    logger.info(
-        "sku_advisor: verifying %d candidates in %s for %s",
-        len(skus), state["region"], state["os"],
+    # ── Broad pricing query: all PAYG VMs in region → pick 3 in Python ─────────
+    # One paginated API call covers every VM series — no hardcoded SKU lists.
+    top3_docs = await _pick_vms_from_prices(
+        region  = state["region"],
+        os_type = state["os"],
+        vcpus   = state.get("vcpus"),
+        ram_gb  = state.get("ram_gb"),
     )
-    verified = await _verify_pricing(skus, state["region"], state["os"])
-    logger.info("sku_advisor: main pass done — verified=%d", len(verified))
 
-    # Expand to a broader pool (40) if still < 3 — prefer series already confirmed.
-    if len(verified) < 3:
-        tried_names = {doc.get("sku_name") for doc in skus}
-        confirmed_series = {_sku_series(r[0].get("sku_name", "")) for r in verified}
-        broader = search_skus(state, limit=40)
-        new_docs = [d for d in broader if d.get("sku_name") not in tried_names]
-        new_docs.sort(
-            key=lambda d: (0 if _sku_series(d.get("sku_name", "")) in confirmed_series else 1)
-        )
-        logger.info(
-            "sku_advisor: same-region fallback — confirmed_series=%s new_candidates=%d",
-            confirmed_series, len(new_docs),
-        )
-        extra = await _verify_pricing(new_docs, state["region"], state["os"])
-        verified.extend(extra)
-        logger.info("sku_advisor: after same-region fallback — verified=%d", len(verified))
-
-    # Fill remaining slots from the known alternative region (e.g. Australia East).
-    # Options sourced from the alt region are tagged so the formatter can label them.
-    if len(verified) < 3:
+    # Fill remaining slots from the known alternative region (e.g. Australia East)
+    # if the primary region returned fewer than 3 options.
+    if len(top3_docs) < 3:
         alt_region = _REGION_ALTERNATIVES.get(state["region"])
         if alt_region:
-            verified_names = {r[0].get("sku_name") for r in verified}
-            alt_candidates = [d for d in skus if d.get("sku_name") not in verified_names]
+            existing_names = {d["sku_name"] for d in top3_docs}
             alt_label = f"Available in {display_region(alt_region)}"
-            logger.info(
-                "sku_advisor: trying %d candidates in alt region %s",
-                len(alt_candidates), alt_region,
+            alt_docs  = await _pick_vms_from_prices(
+                region       = alt_region,
+                os_type      = state["os"],
+                vcpus        = state.get("vcpus"),
+                ram_gb       = state.get("ram_gb"),
+                region_label = alt_label,
             )
-            alt_verified = await _verify_pricing(
-                alt_candidates, alt_region, state["os"], region_label=alt_label
-            )
-            needed = 3 - len(verified)
-            verified.extend(alt_verified[:needed])
-            logger.info(
-                "sku_advisor: filled %d slot(s) from %s", len(alt_verified[:needed]), alt_region
-            )
+            for doc in alt_docs:
+                if len(top3_docs) >= 3:
+                    break
+                if doc["sku_name"] not in existing_names:
+                    top3_docs.append(doc)
 
     logger.info(
-        "sku_advisor: final verified=%d skus=%s",
-        len(verified), [r[0].get("sku_name") for r in verified],
+        "sku_advisor: final top3=%s",
+        [d.get("sku_name") for d in top3_docs],
     )
 
-    if not verified:
+    if not top3_docs:
         sessions.pop(state_key, None)
         return {
             "reply": (
-                f"I found candidate VMs but none have pricing available in "
-                f"{display_region(state['region'])} for {state['os']}. "
+                f"I couldn't find any VMs with {state['os']} pricing in "
+                f"{display_region(state['region'])}. "
                 "Try a different region or OS."
             ),
             "type": "conversation",
         }
 
-    top3   = [r[0] for r in verified[:3]]
-    prices = [r[1] for r in verified[:3]]
+    top3   = top3_docs[:3]
+    prices = [[d.pop("_price_item")] for d in top3]
 
     reply = format_recommendations(top3, state, prices)
 

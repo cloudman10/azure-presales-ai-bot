@@ -68,6 +68,58 @@ async def fetch_prices(region: str, sku: str) -> list[dict]:
         return items2
 
 
+async def fetch_vm_prices_for_region(
+    region: str,
+    os_type: str,
+    max_pages: int = 15,
+) -> list[dict]:
+    """
+    Page through the Azure Retail Prices API and return every Consumption-tier
+    VM price record for the given region and OS.  Callers filter by vCPU / RAM
+    in Python so no SKU names are hardcoded here.
+    """
+    os_filter = (
+        "contains(productName, 'Windows')"
+        if os_type == "Windows"
+        else "not contains(productName, 'Windows')"
+    )
+    odata_filter = (
+        f"serviceName eq 'Virtual Machines' "
+        f"and armRegionName eq '{region}' "
+        f"and priceType eq 'Consumption' "
+        f"and {os_filter}"
+    )
+
+    all_items: list[dict] = []
+    next_url: str | None = PRICING_API_BASE
+    params: dict | None = {"api-version": PRICING_API_VERSION, "$filter": odata_filter}
+    pages = 0
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while next_url and pages < max_pages:
+            resp = await client.get(
+                next_url,
+                params=params,
+                headers={"Accept": "application/json"},
+            )
+            if not resp.is_success:
+                logger.error(
+                    "fetch_vm_prices_for_region: HTTP %d region=%s", resp.status_code, region
+                )
+                break
+            data = resp.json()
+            all_items.extend(data.get("Items") or [])
+            next_url = data.get("NextPageLink")
+            params = None   # NextPageLink is a self-contained URL
+            pages += 1
+
+    logger.info(
+        "fetch_vm_prices_for_region: region=%s os=%s pages=%d items=%d",
+        region, os_type, pages, len(all_items),
+    )
+    return all_items
+
+
 async def fetch_temp_storage_gb(sku: str, region: str) -> int | None:
     import os
     subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
