@@ -1,7 +1,13 @@
+import logging
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 _BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -14,9 +20,7 @@ if _ai_connection_string:
         from azure.monitor.opentelemetry import configure_azure_monitor
         configure_azure_monitor(connection_string=_ai_connection_string)
     except Exception as _ai_exc:
-        import logging as _logging
-        _logging.basicConfig()
-        _logging.getLogger(__name__).warning("configure_azure_monitor failed, telemetry disabled: %s", _ai_exc)
+        logging.getLogger(__name__).warning("configure_azure_monitor failed, telemetry disabled: %s", _ai_exc)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
