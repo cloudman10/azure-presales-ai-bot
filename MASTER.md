@@ -46,6 +46,21 @@ Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/wel
 
 ---
 
+## DNS & Domain Status (2026-06-06)
+
+| Domain | Status |
+|--------|--------|
+| hyperxen.ai | A record → `20.211.64.31`, TXT `asuid` set, domain bound and verified in Azure prod app. SSL cert pending — DNS propagation in progress (old IP `66.102.132.192` still cached) |
+| www.hyperxen.ai | CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net` |
+| hyperxen.com | Unchanged, still pointing to prod app |
+| dev.hyperxen.com | SSL cert stuck — Azure pending operation bug, needs support ticket to clear |
+
+### Next Steps
+- Once `hyperxen.ai` DNS propagates (old IP `66.102.132.192` fully flushed), validate domain and add managed cert via Azure portal or CLI
+- Raise Azure support ticket to clear stuck cert pending operation for `dev.hyperxen.com`
+
+---
+
 ## Architecture
 
 ```
