@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-06-03) — v1.2.0
+## Current Status (2026-06-06) — v1.2.1
 
 | Item | Status |
 |------|--------|
@@ -21,6 +21,10 @@
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+### v1.2.1 Fixes (2026-06-06)
+- Linux/Windows OS reply after advisor picks now stays in advisor flow instead of routing to `pricing_agent` — re-runs STATE 4 with the new OS, same region and specs
+- Azure Retail Prices API Linux filter fixed: `not contains(productName, 'Windows')` is unsupported by the API; now fetches all and filters by OS in Python
 
 ### v1.2.0 Changes (2026-06-03)
 - **SKU advisor fully dynamic:** queries Azure Retail Prices API directly — no hardcoded series names or SKU lists; works for any region, any VM family, any core count
@@ -38,7 +42,7 @@ Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/wel
 - Added `.gitignore` entries for `app_logs*/`, `*.zip`, `dev_logs*/`, `debug.log`
 
 ### Known Issues
-- Typing "Linux" after advisor picks a SKU incorrectly routes to `pricing_agent` instead of staying in advisor flow (logged for next fix)
+- None
 
 ---
 
