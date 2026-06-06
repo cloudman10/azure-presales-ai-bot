@@ -610,8 +610,14 @@ async def _pick_vms_from_prices(
     )
 
     def _is_standard(item: dict) -> bool:
-        sku = item.get("skuName", "")
-        arm = item.get("armSkuName", "")
+        sku     = item.get("skuName", "")
+        arm     = item.get("armSkuName", "")
+        product = item.get("productName", "")
+        # Python-side OS filter — OData 'not contains()' is not reliably supported
+        if os_type == "Windows" and "Windows" not in product:
+            return False
+        if os_type != "Windows" and "Windows" in product:
+            return False
         return (
             "Spot"         not in sku
             and "Low Priority" not in sku

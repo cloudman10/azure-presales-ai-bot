@@ -78,16 +78,14 @@ async def fetch_vm_prices_for_region(
     VM price record for the given region and OS.  Callers filter by vCPU / RAM
     in Python so no SKU names are hardcoded here.
     """
-    os_filter = (
-        "contains(productName, 'Windows')"
-        if os_type == "Windows"
-        else "not contains(productName, 'Windows')"
-    )
+    # The Retail Prices API does not reliably support `not contains()` in OData.
+    # For Windows we CAN narrow the query; for Linux we fetch all and filter in Python.
+    os_clause = " and contains(productName, 'Windows')" if os_type == "Windows" else ""
     odata_filter = (
         f"serviceName eq 'Virtual Machines' "
         f"and armRegionName eq '{region}' "
-        f"and priceType eq 'Consumption' "
-        f"and {os_filter}"
+        f"and priceType eq 'Consumption'"
+        f"{os_clause}"
     )
 
     all_items: list[dict] = []
