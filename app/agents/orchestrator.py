@@ -121,8 +121,15 @@ def _has_recent_pricing_output(history: list[dict]) -> bool:
     return False
 
 
+_BARE_OS_RE = re.compile(
+    r'^(linux|windows|win|ubuntu|centos|rhel|redhat|debian|suse)$',
+    re.IGNORECASE,
+)
+
+
 def _looks_like_option_pick(message: str) -> bool:
-    """True if message is selecting option 1/2/3 from a recommendation list.
+    """True if message is selecting option 1/2/3 from a recommendation list,
+    OR is a bare OS keyword replying to the advisor's Windows/Linux prompt.
 
     Used to distinguish "option 2" (→ advisor STATE 5) from "same for linux?"
     or "what about Sydney?" (→ pricing_agent follow-up).
@@ -132,6 +139,9 @@ def _looks_like_option_pick(message: str) -> bool:
         "yes", "yeah", "yep", "yup", "sure", "ok", "okay",
         "go", "proceed", "fetch", "now", "please", "do it", "all",
     }:
+        return True
+    # Bare OS name — user answering the advisor's "Windows or Linux?" question
+    if _BARE_OS_RE.match(lower):
         return True
     # Matches standalone 1/2/3 but NOT numbers like 16 or 32
     return bool(re.search(r'\b[123]\b', lower))

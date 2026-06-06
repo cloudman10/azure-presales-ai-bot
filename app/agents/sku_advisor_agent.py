@@ -512,6 +512,18 @@ def format_recommendations(
 # Agent entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+_BARE_OS_MAP: dict[str, str] = {
+    "linux": "Linux", "ubuntu": "Linux", "centos": "Linux",
+    "rhel": "Linux", "redhat": "Linux", "debian": "Linux", "suse": "Linux",
+    "windows": "Windows", "win": "Windows",
+}
+
+
+def _parse_bare_os(message: str) -> str | None:
+    """Return 'Linux' or 'Windows' if the message is purely an OS name, else None."""
+    return _BARE_OS_MAP.get(message.strip().lower())
+
+
 def _parse_selection(msg: str) -> list[int] | None:
     """
     Returns a list of 0-based indices for the chosen option(s), or None.
@@ -903,6 +915,20 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         if detect_scenario_query(user_message):
             sessions.pop(picks_key, None)
             # fall through to state machine below
+
+        elif _parse_bare_os(user_message):
+            # User replied with just an OS name (e.g. "Linux") after seeing picks.
+            # Re-run STATE 4 with the same specs but the new OS.
+            # state["os"] was set to the *previous* OS by the history scan above,
+            # so we must explicitly override it here before falling through.
+            state["os"] = _parse_bare_os(user_message)
+            sessions[state_key] = state
+            sessions.pop(picks_key, None)
+            logger.info(
+                "sku_advisor: bare OS '%s' after picks — re-running STATE 4", state["os"]
+            )
+            # fall through to STATE 4
+
         else:
             num_picks = len(picks["skus"])
             if num_picks == 1:
