@@ -200,6 +200,22 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     # so the full history context is preserved.
     _is_bare_number = bool(_BARE_NUMBER_RE.match(message.strip()))
 
+    # If a bare option number arrives with no active advisor picks and no prior
+    # conversation history, the in-memory session was wiped by a worker restart.
+    # Return a clear prompt rather than passing the bare digit to Claude.
+    if _is_bare_number and not has_advisor_picks and not in_advisor_flow and len(history) == 1:
+        result = {
+            "reply": (
+                "It looks like my session memory was cleared — the previous VM recommendations "
+                "are no longer available.\n\n"
+                "Please repeat your requirements (e.g. '4 cores 16 GB RAM Windows Australia East') "
+                "and I'll search again straight away."
+            ),
+            "type": "conversation",
+        }
+        history.append({"role": "assistant", "content": result["reply"]})
+        return result
+
     if wants_advisor:
         # Pre-seed advisor state with everything the user has already mentioned
         if not in_advisor_flow and not has_advisor_picks:
