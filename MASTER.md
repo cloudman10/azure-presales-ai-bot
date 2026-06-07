@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-06-06) — v1.2.1
+## Current Status (2026-06-07) — v1.3.0
 
 | Item | Status |
 |------|--------|
@@ -21,6 +21,13 @@
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+### v1.3.0 Changes (2026-06-07)
+- **hyperxen.ai live:** Azure managed SSL cert bound (`AA7A318E...`, expires 2026-12-06); `https://hyperxen.ai` returns HTTP 200
+- **429 retry fix:** Azure Retail Prices API rate limit handling upgraded to 8 retries with exponential backoff (2s → 4s → 8s → 16s → 32s cap) and 0–1s random jitter to avoid thundering herd
+- **Session loss handling:** when a worker restart wipes in-memory session state and user selects an option number (e.g. "3") with no prior context, app returns a clear "session expired, please repeat your requirements" message instead of a generic error
+- **Dynamic SKU search:** always returns 3 options for any region by querying Azure Retail Prices API directly — no hardcoded series lists
+- **Alt-region label:** `[Available in Australia East]` label only appears on options sourced from the fallback region, not on options from the requested region
 
 ### v1.2.1 Fixes (2026-06-06)
 - Linux/Windows OS reply after advisor picks now stays in advisor flow instead of routing to `pricing_agent` — re-runs STATE 4 with the new OS, same region and specs
@@ -46,18 +53,17 @@ Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/wel
 
 ---
 
-## DNS & Domain Status (2026-06-06)
+## DNS & Domain Status (2026-06-07)
 
 | Domain | Status |
 |--------|--------|
-| hyperxen.ai | A record → `20.211.64.31`, TXT `asuid` set, domain bound and verified in Azure prod app. SSL cert pending — DNS propagation in progress (old IP `66.102.132.192` still cached) |
+| hyperxen.ai | ✅ Live — A record → `20.211.64.31`, Azure managed cert bound (thumbprint `AA7A318E`, expires 2026-12-06), `httpsOnly: true` |
 | www.hyperxen.ai | CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net` |
 | hyperxen.com | Unchanged, still pointing to prod app |
-| dev.hyperxen.com | SSL cert stuck — Azure pending operation bug, needs support ticket to clear |
+| dev.hyperxen.com | Managed cert provisioning in progress (HostPapa DNS, no proxy interference) |
 
 ### Next Steps
-- Once `hyperxen.ai` DNS propagates (old IP `66.102.132.192` fully flushed), validate domain and add managed cert via Azure portal or CLI
-- Raise Azure support ticket to clear stuck cert pending operation for `dev.hyperxen.com`
+- Confirm `dev.hyperxen.com` managed cert completes provisioning and bind it
 
 ---
 
