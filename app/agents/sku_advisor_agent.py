@@ -726,7 +726,9 @@ async def _verify_pricing(
     When region_label is set, tags each returned sku_doc with _region and _region_label
     so formatters and STATE 5 know which region to use for full pricing.
     """
-    async def _check(doc: dict):
+    async def _check(doc: dict, stagger: float = 0.0):
+        if stagger > 0:
+            await asyncio.sleep(stagger)
         sku_name = doc.get("sku_name", "")
         try:
             items = await fetch_prices(region, sku_name)
@@ -742,7 +744,9 @@ async def _verify_pricing(
             logger.warning("sku_advisor: price fetch failed for %s in %s: %s", sku_name, region, e)
         return None
 
-    results = await asyncio.gather(*[_check(doc) for doc in sku_docs])
+    results = await asyncio.gather(
+        *[_check(doc, i * 0.5) for i, doc in enumerate(sku_docs)]
+    )
     return [r for r in results if r is not None]
 
 

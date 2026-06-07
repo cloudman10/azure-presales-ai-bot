@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 
@@ -8,6 +9,20 @@ logger = logging.getLogger(__name__)
 PRICING_API_BASE = "https://prices.azure.com/api/retail/prices"
 PRICING_API_VERSION = "2023-01-01-preview"
 TIMEOUT_SECONDS = 12
+
+# Exponential backoff delays (seconds) on HTTP 429 from the Retail Prices API.
+_RETRY_DELAYS = (1, 2, 4)
+
+
+async def _get_with_retry(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+    """GET with exponential backoff on HTTP 429 (1 s → 2 s → 4 s), then final attempt."""
+    for delay in _RETRY_DELAYS:
+        resp = await client.get(url, **kwargs)
+        if resp.status_code != 429:
+            return resp
+        logger.warning("Azure Pricing API 429 — retrying in %ds", delay)
+        await asyncio.sleep(delay)
+    return await client.get(url, **kwargs)  # final attempt after last sleep
 
 
 def _sku_to_meter_name(sku: str) -> str:
@@ -32,8 +47,8 @@ async def fetch_prices(region: str, sku: str) -> list[dict]:
             f"and armRegionName eq '{region}' "
             f"and armSkuName eq '{sku}'"
         )
-        response1 = await client.get(
-            PRICING_API_BASE,
+        response1 = await _get_with_retry(
+            client, PRICING_API_BASE,
             params={"api-version": PRICING_API_VERSION, "$filter": filter1},
             headers={"Accept": "application/json"},
         )
@@ -52,8 +67,8 @@ async def fetch_prices(region: str, sku: str) -> list[dict]:
             f"and armRegionName eq '{region}' "
             f"and meterName eq '{meter_name}'"
         )
-        response2 = await client.get(
-            PRICING_API_BASE,
+        response2 = await _get_with_retry(
+            client, PRICING_API_BASE,
             params={"api-version": PRICING_API_VERSION, "$filter": filter2},
             headers={"Accept": "application/json"},
         )
@@ -95,8 +110,8 @@ async def fetch_vm_prices_for_region(
 
     async with httpx.AsyncClient(timeout=30) as client:
         while next_url and pages < max_pages:
-            resp = await client.get(
-                next_url,
+            resp = await _get_with_retry(
+                client, next_url,
                 params=params,
                 headers={"Accept": "application/json"},
             )
