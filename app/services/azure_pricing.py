@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import re
 
 import httpx
@@ -10,18 +11,27 @@ PRICING_API_BASE = "https://prices.azure.com/api/retail/prices"
 PRICING_API_VERSION = "2023-01-01-preview"
 TIMEOUT_SECONDS = 12
 
-# Exponential backoff delays (seconds) on HTTP 429 from the Retail Prices API.
-_RETRY_DELAYS = (1, 2, 4)
+# Retry delays (seconds) on HTTP 429. Caps at 32s after the initial ramp.
+# Jitter of 0-1s is added to each delay to avoid thundering herd.
+_RETRY_DELAYS = (2, 4, 8, 16, 32, 32, 32, 32)
 
 
 async def _get_with_retry(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
-    """GET with exponential backoff on HTTP 429 (1 s → 2 s → 4 s), then final attempt."""
-    for delay in _RETRY_DELAYS:
+    """
+    GET with exponential backoff + jitter on HTTP 429.
+    Retries up to 8 times: 2s, 4s, 8s, 16s, 32s, 32s, 32s, 32s (+ 0-1s jitter each).
+    """
+    for attempt, delay in enumerate(_RETRY_DELAYS):
         resp = await client.get(url, **kwargs)
         if resp.status_code != 429:
             return resp
-        logger.warning("Azure Pricing API 429 — retrying in %ds", delay)
-        await asyncio.sleep(delay)
+        jitter = random.random()  # 0.0–1.0 s
+        wait = delay + jitter
+        logger.warning(
+            "Azure Pricing API 429 — attempt %d/%d, retrying in %.1fs",
+            attempt + 1, len(_RETRY_DELAYS), wait,
+        )
+        await asyncio.sleep(wait)
     return await client.get(url, **kwargs)  # final attempt after last sleep
 
 
