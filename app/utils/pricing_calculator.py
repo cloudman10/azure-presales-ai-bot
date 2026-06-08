@@ -1,4 +1,21 @@
+from app.services.azure_pricing import DISK_TIER_SIZES_GIB, DISK_TYPES
+
 HOURS_PER_MONTH = 730
+
+
+def pick_tier(size_gb: int, disk_type: str) -> str:
+    """Round size UP to the smallest tier that fits. e.g. 100, 'premium_ssd' → 'P10'. Caps at top tier."""
+    cfg = DISK_TYPES[disk_type]
+    eligible = sorted(i for i in DISK_TIER_SIZES_GIB if i >= cfg["min_tier"])
+    for i in eligible:
+        if size_gb <= DISK_TIER_SIZES_GIB[i]:
+            return f"{cfg['prefix']}{i}"
+    return f"{cfg['prefix']}{eligible[-1]}"
+
+
+def v2_monthly_cost(size_gb: int, rate_per_gib_month: float) -> float:
+    """Premium SSD v2 capacity-only monthly cost at free IOPS/throughput baseline."""
+    return size_gb * rate_per_gib_month
 
 
 def _get_item_price_type(item: dict) -> str:
