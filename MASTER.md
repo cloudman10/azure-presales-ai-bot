@@ -60,10 +60,10 @@ Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/wel
 | hyperxen.ai | ✅ Live — A record → `20.211.64.31`, Azure managed cert bound (thumbprint `AA7A318E`, expires 2026-12-06), `httpsOnly: true` |
 | www.hyperxen.ai | CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net` |
 | hyperxen.com | Unchanged, still pointing to prod app |
-| dev.hyperxen.com | Managed cert provisioning in progress (HostPapa DNS, no proxy interference) |
+| dev.hyperxen.com | ✅ Live on self-signed cert by design (thumbprint `66CB417763C7…`, expires 2027-05-02). Azure managed cert abandoned — see note below. |
 
-### Next Steps
-- Confirm `dev.hyperxen.com` managed cert completes provisioning and bind it
+### Dev SSL — Resolved by Decision (2026-06-07)
+Dev stays on self-signed by design. Azure managed cert attempted 2026-06-07 — `az webapp config ssl create` returned exit 0 but the cert never materialised after 20+ min (silent provisioning failure, known intermittent Azure bug; `ssl list` and ARM both showed no cert). Abandoned to avoid the pending-operation lock and 429 throttling this caused previously. Existing self-signed cert (thumbprint `66CB417763C7…`, expires 2027-05-02) remains bound and working. If a real cert is ever needed for dev, use Cloudflare (DNS-only, no proxy) — not Azure managed cert.
 
 ---
 
