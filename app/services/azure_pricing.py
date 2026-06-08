@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import random
 import re
 
@@ -143,42 +144,50 @@ async def fetch_vm_prices_for_region(
     return all_items
 
 
-async def fetch_temp_storage_gb(sku: str, region: str) -> int | None:
-    import os
-    subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
-    if not subscription_id:
-        return None
+async def _get_arm_token() -> str | None:
+    """Return a Bearer token for management.azure.com via MSI or service principal."""
     try:
-        tenant_id = os.environ.get('AZURE_TENANT_ID', '')
-        client_id = os.environ.get('AZURE_CLIENT_ID', '')
+        tenant_id     = os.environ.get('AZURE_TENANT_ID', '')
+        client_id     = os.environ.get('AZURE_CLIENT_ID', '')
         client_secret = os.environ.get('AZURE_CLIENT_SECRET', '')
         if not all([tenant_id, client_id, client_secret]):
             async with httpx.AsyncClient(timeout=5) as client:
-                token_response = await client.get(
+                resp = await client.get(
                     'http://169.254.169.254/metadata/identity/oauth2/token',
                     params={'api-version': '2018-02-01', 'resource': 'https://management.azure.com/'},
-                    headers={'Metadata': 'true'}
+                    headers={'Metadata': 'true'},
                 )
-                if not token_response.is_success:
-                    return None
-                token = token_response.json().get('access_token')
+                return resp.json().get('access_token') if resp.is_success else None
         else:
             async with httpx.AsyncClient(timeout=5) as client:
-                token_response = await client.post(
+                resp = await client.post(
                     f'https://login.microsoftonline.com/{tenant_id}/oauth2/token',
-                    data={'grant_type': 'client_credentials', 'client_id': client_id, 'client_secret': client_secret, 'resource': 'https://management.azure.com/'}
+                    data={'grant_type': 'client_credentials', 'client_id': client_id,
+                          'client_secret': client_secret, 'resource': 'https://management.azure.com/'},
                 )
-                if not token_response.is_success:
-                    return None
-                token = token_response.json().get('access_token')
-        if not token:
-            return None
+                return resp.json().get('access_token') if resp.is_success else None
+    except Exception:
+        return None
+
+
+async def fetch_temp_storage_gb(sku: str, region: str) -> int | None:
+    subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
+    if not subscription_id:
+        return None
+    token = await _get_arm_token()
+    if not token:
+        return None
+    try:
         async with httpx.AsyncClient(timeout=10) as client:
             url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus"
-            response = await client.get(url, params={'api-version': '2021-07-01', '$filter': f"location eq '{region}'"}, headers={'Authorization': f'Bearer {token}'})
-            if not response.is_success:
+            resp = await client.get(
+                url,
+                params={'api-version': '2021-07-01', '$filter': f"location eq '{region}'"},
+                headers={'Authorization': f'Bearer {token}'},
+            )
+            if not resp.is_success:
                 return None
-            for s in response.json().get('value', []):
+            for s in resp.json().get('value', []):
                 if s.get('name') == sku and s.get('resourceType') == 'virtualMachines':
                     for cap in s.get('capabilities', []):
                         if cap.get('name') == 'MaxResourceVolumeMB':
@@ -187,3 +196,97 @@ async def fetch_temp_storage_gb(sku: str, region: str) -> int | None:
     except Exception:
         return None
     return None
+
+
+# ── Managed Disk pricing ──────────────────────────────────────────────────────
+
+HOURS_PER_MONTH = 730
+
+DISK_TIER_SIZES_GIB = {
+    1: 4, 2: 8, 3: 16, 4: 32, 6: 64, 10: 128, 15: 256,
+    20: 512, 30: 1024, 40: 2048, 50: 4096, 60: 8192, 70: 16384, 80: 32767,
+}
+
+DISK_TYPES = {
+    "standard_hdd":   {"product": "Standard HDD Managed Disks", "prefix": "S",  "min_tier": 4,    "flat": False},
+    "standard_ssd":   {"product": "Standard SSD Managed Disks", "prefix": "E",  "min_tier": 1,    "flat": False},
+    "premium_ssd":    {"product": "Premium SSD Managed Disks",  "prefix": "P",  "min_tier": 1,    "flat": True},
+    "premium_ssd_v2": {"product": "Azure Premium SSD v2",       "prefix": None, "min_tier": None, "flat": True},
+}
+
+
+async def fetch_disk_tier_prices(region: str, disk_type: str) -> dict[str, float]:
+    """{tier_name: monthly_usd} for a tiered disk type.
+    LRS, Consumption, base '… LRS Disk' meter only (excludes Disk Mount/Burst/Snapshots)."""
+    cfg = DISK_TYPES[disk_type]
+    odata_filter = (
+        f"serviceName eq 'Storage' and armRegionName eq '{region}' "
+        f"and productName eq '{cfg['product']}'"
+    )
+    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+        resp = await _get_with_retry(
+            client, PRICING_API_BASE,
+            params={"api-version": PRICING_API_VERSION, "$filter": odata_filter},
+            headers={"Accept": "application/json"},
+        )
+    if not resp.is_success:
+        raise Exception(f"Azure API HTTP {resp.status_code}")
+    pat = re.compile(rf"^({cfg['prefix']}\d+) LRS Disk$")
+    prices: dict[str, float] = {}
+    for it in resp.json().get("Items", []):
+        if it.get("type") != "Consumption" or "LRS" not in it.get("skuName", ""):
+            continue
+        m = pat.match(it.get("meterName", ""))
+        if m:
+            prices[m.group(1)] = it["retailPrice"]
+    return prices
+
+
+async def fetch_v2_capacity_rate(region: str) -> float | None:
+    """Premium SSD v2 provisioned-capacity rate as USD/GiB/month.
+    Capacity only — IOPS/throughput above free baseline (3000 IOPS, 125 MB/s) is Phase 2."""
+    odata_filter = (
+        f"serviceName eq 'Storage' and armRegionName eq '{region}' "
+        f"and productName eq 'Azure Premium SSD v2'"
+    )
+    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+        resp = await _get_with_retry(
+            client, PRICING_API_BASE,
+            params={"api-version": PRICING_API_VERSION, "$filter": odata_filter},
+            headers={"Accept": "application/json"},
+        )
+    if not resp.is_success:
+        raise Exception(f"Azure API HTTP {resp.status_code}")
+    for it in resp.json().get("Items", []):
+        if (it.get("type") == "Consumption"
+                and it.get("meterName") == "Premium LRS Provisioned Capacity"
+                and "Confidential" not in it.get("skuName", "")):
+            return it["retailPrice"] * HOURS_PER_MONTH
+    return None
+
+
+async def vm_supports_premium(sku: str, region: str) -> bool:
+    """True if VM SKU exposes PremiumIO=True in ARM Compute capabilities.
+    Returns False on any failure (safe default → Standard only)."""
+    token = await _get_arm_token()
+    sub   = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+    if not token or not sub:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            url  = f"https://management.azure.com/subscriptions/{sub}/providers/Microsoft.Compute/skus"
+            resp = await client.get(
+                url,
+                params={"api-version": "2021-07-01", "$filter": f"location eq '{region}'"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if not resp.is_success:
+                return False
+            for s in resp.json().get("value", []):
+                if s.get("name") == sku and s.get("resourceType") == "virtualMachines":
+                    for cap in s.get("capabilities", []):
+                        if cap.get("name") == "PremiumIO":
+                            return str(cap.get("value", "")).lower() == "true"
+    except Exception:
+        return False
+    return False
