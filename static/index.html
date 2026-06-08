@@ -294,7 +294,7 @@ function parsePricing(text){
       }
       const sm = l.match(/^Storage subtotal:\s*(.+)/i);
       if(sm){ storage.subtotal = sm[1].trim(); continue; }
-      if(/^\*/.test(l)){ storage.footnotes.push(l); continue; }
+      if(/^\*|^Default OS disk/.test(l)){ storage.footnotes.push(l); continue; }
     }
   }
 

@@ -41,18 +41,21 @@ RULES:
 - Normalize region to armRegionName: australiaeast, southeastasia, eastus
 - Never make up prices
 
-STORAGE PRICING (offer after VM fields are confirmed):
-Disk types available: standard_hdd, standard_ssd, premium_ssd, premium_ssd_v2.
-Rules:
-- premium_ssd and premium_ssd_v2 require the VM to support premium storage.
-  You may offer them freely — the server enforces the check and downgrades if needed.
-- Default OS disk: premium_ssd 128 GiB. (Server downgrades to standard_ssd automatically
-  if the VM doesn't support premium — you don't need to check.)
-- Data disks are opt-in: only add them when the user asks for data disk pricing.
-- Accept sizes in GiB or GB; accept any disk type the user specifies.
-When disks are included, add a "disks" array to the FETCH_PRICING marker:
-  FETCH_PRICING:{"sku":"...","region":"...","os":"...","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"disks":[{"role":"os","type":"premium_ssd","size_gb":128},{"role":"data","type":"standard_ssd","size_gb":512}]}
-If the user only asks about VM pricing, omit the disks field entirely — do not add it."""
+STORAGE PRICING (always included — server injects default if not specified):
+A default OS disk (128 GiB, premium_ssd on premium-capable VMs, else standard_ssd) is
+always shown in the pricing output. The server handles this — you do NOT need to add a
+disks array for a plain VM price query. Only add a disks array when the user explicitly
+asks to change the OS disk tier/size or add data disks.
+
+Disk types: standard_hdd, standard_ssd, premium_ssd, premium_ssd_v2.
+- premium_ssd / premium_ssd_v2 require premium storage support — server enforces this.
+- Accept sizes in GiB or GB; accept any disk type the user names.
+- Data disks are opt-in — only include when user asks.
+
+When the user specifies custom disks, include them in the FETCH_PRICING marker:
+  FETCH_PRICING:{"sku":"...","region":"...","os":"...","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"disks":[{"role":"os","type":"premium_ssd","size_gb":256},{"role":"data","type":"standard_ssd","size_gb":512}]}
+An explicit OS disk in the array replaces the server default. Omit the disks field entirely
+for plain VM queries — the server will inject the default OS disk automatically."""
 
 
 _UNCERTAINTY_PHRASES = [
@@ -363,6 +366,7 @@ def _format_pricing(
                 "** v2 capacity at free baseline (3,000 IOPS / 125 MB/s); "
                 "provisioned IOPS/throughput above baseline add cost.\n"
             )
+        out += "Default OS disk shown — ask to change the tier/size or add data disks.\n"
 
     out += f"\nAll prices are Microsoft Retail RRP. CSP pricing would be lower.\n"
     out += f"Monthly estimates based on {HOURS_PER_MONTH} hours."
@@ -433,49 +437,55 @@ async def run(messages: list[dict]) -> dict:
 
         temp_storage_gb = await fetch_temp_storage_gb(sku, region)
 
-        resolved_disks: list[dict] | None = None
-        if disks_spec:
-            premium_ok = await vm_supports_premium(sku, region)
-            tier_price_cache: dict[str, dict[str, float]] = {}
-            v2_rate: float | None = None
-            resolved_disks = []
+        # Always resolve disk pricing. premium_ok is fetched once regardless.
+        premium_ok = await vm_supports_premium(sku, region)
 
-            for disk in disks_spec:
-                dtype   = disk.get("type", "standard_ssd")
-                size_gb = int(disk.get("size_gb", 128))
-                role    = disk.get("role", "data")
+        # Inject a default 128 GiB OS disk when the marker didn't include one.
+        # This ensures storage always renders — even for bare "price D4s_v5 ..." queries.
+        if not any(d.get("role") == "os" for d in disks_spec):
+            default_type = "premium_ssd" if premium_ok else "standard_ssd"
+            disks_spec = [{"role": "os", "type": default_type, "size_gb": 128}] + list(disks_spec)
 
-                was_downgraded = False
-                if dtype in ("premium_ssd", "premium_ssd_v2") and not premium_ok:
-                    dtype          = "standard_ssd"
-                    was_downgraded = True
+        tier_price_cache: dict[str, dict[str, float]] = {}
+        v2_rate: float | None = None
+        resolved_disks: list[dict] = []
 
-                if dtype == "premium_ssd_v2":
-                    if v2_rate is None:
-                        v2_rate = await fetch_v2_capacity_rate(region)
-                    monthly_cost = v2_monthly_cost(size_gb, v2_rate) if v2_rate else 0.0
-                    resolved_disks.append({
-                        "role": role, "type": dtype, "tier": None,
-                        "size_gb": size_gb, "monthly_cost": monthly_cost,
-                        "is_standard_variable": False, "is_v2_baseline": True,
-                        "was_downgraded": was_downgraded,
-                    })
-                else:
-                    if dtype not in tier_price_cache:
-                        try:
-                            tier_price_cache[dtype] = await fetch_disk_tier_prices(region, dtype)
-                        except Exception as e:
-                            logger.warning("disk tier fetch failed for %s: %s", dtype, e)
-                            tier_price_cache[dtype] = {}
-                    tier         = pick_tier(size_gb, dtype)
-                    monthly_cost = tier_price_cache[dtype].get(tier, 0.0)
-                    resolved_disks.append({
-                        "role": role, "type": dtype, "tier": tier,
-                        "size_gb": size_gb, "monthly_cost": monthly_cost,
-                        "is_standard_variable": dtype in ("standard_hdd", "standard_ssd"),
-                        "is_v2_baseline": False,
-                        "was_downgraded": was_downgraded,
-                    })
+        for disk in disks_spec:
+            dtype   = disk.get("type", "standard_ssd")
+            size_gb = int(disk.get("size_gb", 128))
+            role    = disk.get("role", "data")
+
+            was_downgraded = False
+            if dtype in ("premium_ssd", "premium_ssd_v2") and not premium_ok:
+                dtype          = "standard_ssd"
+                was_downgraded = True
+
+            if dtype == "premium_ssd_v2":
+                if v2_rate is None:
+                    v2_rate = await fetch_v2_capacity_rate(region)
+                monthly_cost = v2_monthly_cost(size_gb, v2_rate) if v2_rate else 0.0
+                resolved_disks.append({
+                    "role": role, "type": dtype, "tier": None,
+                    "size_gb": size_gb, "monthly_cost": monthly_cost,
+                    "is_standard_variable": False, "is_v2_baseline": True,
+                    "was_downgraded": was_downgraded,
+                })
+            else:
+                if dtype not in tier_price_cache:
+                    try:
+                        tier_price_cache[dtype] = await fetch_disk_tier_prices(region, dtype)
+                    except Exception as e:
+                        logger.warning("disk tier fetch failed for %s: %s", dtype, e)
+                        tier_price_cache[dtype] = {}
+                tier         = pick_tier(size_gb, dtype)
+                monthly_cost = tier_price_cache[dtype].get(tier, 0.0)
+                resolved_disks.append({
+                    "role": role, "type": dtype, "tier": tier,
+                    "size_gb": size_gb, "monthly_cost": monthly_cost,
+                    "is_standard_variable": dtype in ("standard_hdd", "standard_ssd"),
+                    "is_v2_baseline": False,
+                    "was_downgraded": was_downgraded,
+                })
 
         pricing_text = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks)
         return {"reply": pricing_text, "type": "pricing"}
