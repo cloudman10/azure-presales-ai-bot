@@ -481,7 +481,9 @@ async def run(messages: list[dict]) -> dict:
         data = response.json()
 
     claude_text = data["choices"][0]["message"]["content"]
+    logger.info("pricing_agent: raw LLM reply (first 300 chars): %r", claude_text[:300])
     fetch_params = _parse_fetch_marker(claude_text)
+    logger.info("pricing_agent: parsed marker=%s", fetch_params)
 
     if fetch_params:
         from app.utils.sku_normalizer import normalize_sku_name
@@ -494,8 +496,8 @@ async def run(messages: list[dict]) -> dict:
         sku        = fetch_params["sku"]
         region     = fetch_params["region"]
         disks_spec = fetch_params.get("disks") or []
-        logger.debug("FETCH_PRICING triggered: sku=%s region=%s os=%s disks=%d",
-                     sku, region, fetch_params.get("os"), len(disks_spec))
+        logger.info("pricing_agent: FETCH_PRICING sku=%r region=%r os=%r disks=%d",
+                    sku, region, fetch_params.get("os"), len(disks_spec))
         try:
             items = await fetch_prices(region, sku)
         except Exception as e:
@@ -503,7 +505,14 @@ async def run(messages: list[dict]) -> dict:
 
         temp_storage_gb = await fetch_temp_storage_gb(sku, region)
         resolved_disks  = await resolve_disks(sku, region, disks_spec or None)
+        logger.info(
+            "pricing_agent: resolve_disks(%r, %r, ...) → %d disks: %s",
+            sku, region, len(resolved_disks),
+            [{"role": d.get("role"), "type": d.get("type"), "tier": d.get("tier"),
+              "cost": d.get("monthly_cost")} for d in resolved_disks],
+        )
         pricing_text    = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks)
+        logger.info("pricing_agent: storage in reply: %s", "=== Storage ===" in pricing_text)
         return {"reply": pricing_text, "type": "pricing"}
 
     return {"reply": claude_text, "type": "conversation"}
