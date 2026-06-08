@@ -1,1 +1,0 @@
-2026-06-03T11:03:50  Startup Request, url: /diagnostics/runtime, method: GET, type: request, pid: 841,1,29, SCM_DO_BUILD_DURING_DEPLOYMENT: true, ScmType: None

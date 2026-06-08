@@ -1,8 +1,0 @@
-<step title="Incoming Request" date="2026-06-03T11:42:16.884" instance="279e26" url="/api/deployments/latest?deployer=OneDeploy&amp;time=2026-06-03_11-41-35Z" method="GET" type="request" pid="841,1,37" Host="hyperxen-pricing-bot-dev.scm.azurewebsites.net" User-Agent="GITHUBACTIONS_DeployWebAppToAzure_2e94e8213a26ed6e97124102b3a17b12da8d54a947b38e07f6321244d6a9f6da_v3.0.8" Authorization="Bas..." Content-Type="application/json; charset=utf-8" Cookie="ARRAffinity=279e2686d6d985a92f0e5544b67f0addb363f77898a222be35d50034f8dfe4ba;Path=/;HttpOnly;Secure;Domain=hyperxen-pricing-bot-dev.scm.azurewebsites.net; ARRAffinitySameSite=279e2686d6d985a92f0e5544b67f0addb363f77898a222be35d50034f8dfe4ba;Path=/;HttpOnly;SameSite=None;Secure;Domain=hyperxen-pricing-bot-dev.scm.azurewebsites.net" Content-Length="0" X-ARR-LOG-ID="b4efafae-0c23-47f7-8bf3-afc99bd08536" CLIENT-IP="172.214.44.215:32837" X-SITE-DEPLOYMENT-ID="hyperxen-pricing-bot-dev" WAS-DEFAULT-HOSTNAME="hyperxen-pricing-bot-dev.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/deployments/latest?deployer=OneDeploy&amp;time=2026-06-03_11-41-35Z" X-Client-IP="172.214.44.215" X-Client-Port="32837" >
-  <step title="DeploymentService.GetResult" date="2026-06-03T11:42:17.042" >
-    <step title="DeploymentService.GetLatestDeployment" date="2026-06-03T11:42:17.072" >
-      <step title="DeploymentManager.GetResults" date="2026-06-03T11:42:17.091" /><!-- duration: 2129ms -->
-    </step><!-- duration: 2265ms -->
-  </step><!-- duration: 2382ms -->
-  <step title="Outgoing response" date="2026-06-03T11:42:19.493" type="response" statusCode="202" statusText="Accepted" /><!-- duration: 140ms -->
-</step><!-- duration: 2856ms -->
