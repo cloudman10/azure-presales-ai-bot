@@ -769,15 +769,10 @@ async def _show_full_pricing(
             sku_name, sku_region, region, sku_regions,
         )
         try:
-            items   = await fetch_prices(sku_region, sku_name)
-            temp_gb = await fetch_temp_storage_gb(sku_name, sku_region)
-            disks   = await resolve_disks(sku_name, sku_region, None)
-            logger.info(
-                "_show_full_pricing: resolve_disks returned %d disks: %s",
-                len(disks),
-                [{"role": d.get("role"), "type": d.get("type"), "tier": d.get("tier"),
-                  "cost": d.get("monthly_cost")} for d in disks],
-            )
+            items            = await fetch_prices(sku_region, sku_name)
+            temp_gb          = await fetch_temp_storage_gb(sku_name, sku_region)
+            disks, disk_data = await resolve_disks(sku_name, sku_region, None)
+            logger.info("_show_full_pricing: resolve_disks → %d disks", len(disks))
             params  = {
                 "sku":      sku_name,
                 "region":   sku_region,
@@ -787,7 +782,7 @@ async def _show_full_pricing(
                 "vcpus":    doc.get("vcpus"),
                 "ram_gb":   doc.get("ram_gb"),
             }
-            parts.append(_format_pricing(params, items, temp_gb, disks))
+            parts.append(_format_pricing(params, items, temp_gb, disks, disk_data))
         except Exception as e:
             logger.exception("_show_full_pricing: exception for sku=%s region=%s: %s", sku_name, sku_region, e)
             parts.append(f"Could not fetch pricing for {sku_name}: {e}")

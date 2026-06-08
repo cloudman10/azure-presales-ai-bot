@@ -4,6 +4,7 @@ import os
 import re
 
 from app.services.azure_pricing import (
+    DISK_TIER_SIZES_GIB, DISK_TYPES,
     fetch_disk_tier_prices, fetch_prices, fetch_temp_storage_gb,
     fetch_v2_capacity_rate, vm_supports_premium,
 )
@@ -79,21 +80,19 @@ _SKU_PAT = re.compile(
 )
 
 
-async def resolve_disks(sku: str, region: str, marker_disks: list | None) -> list[dict]:
+async def resolve_disks(
+    sku: str, region: str, marker_disks: list | None,
+) -> tuple[list[dict], dict]:
     """
     Single source of truth for disk resolution — used by both the direct pricing
     path (pricing_agent.run) and the advisor option-pick path (_show_full_pricing).
 
-    Steps:
-    1. Check whether the VM supports premium storage (once).
-    2. Start from marker_disks (caller-supplied overrides) or an empty list.
-    3. If no disk has role=="os", prepend the default 128 GiB OS disk
-       (premium_ssd when premium-capable, else standard_ssd).
-    4. Apply the premium gate — downgrade any premium type on non-premium VMs.
-    5. Resolve monthly cost per disk via pick_tier + fetch_disk_tier_prices
-       (cached per type) or fetch_v2_capacity_rate + v2_monthly_cost.
-    Returns the fully-resolved disk list ready for _format_pricing.
+    Returns (resolved_disks, storage_data) where storage_data contains the full
+    tier-price catalogue for every eligible disk type so the frontend can render
+    interactive dropdowns without a server round-trip.
     """
+    import asyncio as _asyncio
+
     premium_ok = await vm_supports_premium(sku, region)
 
     disks: list[dict] = list(marker_disks or [])
@@ -142,7 +141,47 @@ async def resolve_disks(sku: str, region: str, marker_disks: list | None) -> lis
                 "was_downgraded": was_downgraded,
             })
 
-    return resolved
+    # ── Build tier-price catalogue for the interactive frontend selector ──────
+    # Fetch any eligible types not yet in cache, concurrently.
+    eligible_tiered = (["premium_ssd"] if premium_ok else []) + ["standard_ssd", "standard_hdd"]
+
+    async def _ensure(dtype: str) -> None:
+        if dtype not in tier_price_cache:
+            try:
+                tier_price_cache[dtype] = await fetch_disk_tier_prices(region, dtype)
+            except Exception as e:
+                logger.warning("storage_data fetch failed for %s: %s", dtype, e)
+                tier_price_cache[dtype] = {}
+
+    await _asyncio.gather(*[_ensure(t) for t in eligible_tiered if t not in tier_price_cache])
+
+    type_catalogues: dict[str, list[dict]] = {}
+    for dtype in eligible_tiered:
+        cfg    = DISK_TYPES[dtype]
+        prefix = cfg["prefix"]
+        min_t  = cfg["min_tier"] or 1
+        tiers  = []
+        for tier_num, sz in sorted(DISK_TIER_SIZES_GIB.items()):
+            if tier_num < min_t:
+                continue
+            tname = f"{prefix}{tier_num}"
+            price = tier_price_cache.get(dtype, {}).get(tname)
+            if price is not None:
+                tiers.append({"tier": tname, "size_gb": sz, "price": round(price, 4)})
+        if tiers:
+            type_catalogues[dtype] = tiers
+
+    storage_data = {
+        "premium_ok": premium_ok,
+        "types": type_catalogues,
+        "defaults": [
+            {"role": d["role"], "type": d["type"], "tier": d.get("tier"),
+             "size_gb": d["size_gb"], "price": d["monthly_cost"]}
+            for d in resolved if d.get("type") != "premium_ssd_v2"
+        ],
+    }
+
+    return resolved, storage_data
 
 
 def _user_is_uncertain_about_sku(message: str) -> bool:
@@ -231,6 +270,7 @@ def _format_pricing(
     items: list[dict],
     temp_storage_gb: int | None = None,
     disks: list[dict] | None = None,
+    storage_data: dict | None = None,
 ) -> str:
     sku = params['sku']
     region = params['region']
@@ -433,6 +473,8 @@ def _format_pricing(
                 "provisioned IOPS/throughput above baseline add cost.\n"
             )
         out += "Default OS disk shown — ask to change the tier/size or add data disks.\n"
+        if storage_data:
+            out += f"STORAGE_DATA:{json.dumps(storage_data, separators=(',', ':'))}\n"
 
     out += f"\nAll prices are Microsoft Retail RRP. CSP pricing would be lower.\n"
     out += f"Monthly estimates based on {HOURS_PER_MONTH} hours."
@@ -503,15 +545,11 @@ async def run(messages: list[dict]) -> dict:
         except Exception as e:
             return {"reply": f"Error reaching Azure Pricing API: {e}", "type": "pricing"}
 
-        temp_storage_gb = await fetch_temp_storage_gb(sku, region)
-        resolved_disks  = await resolve_disks(sku, region, disks_spec or None)
-        logger.info(
-            "pricing_agent: resolve_disks(%r, %r, ...) → %d disks: %s",
-            sku, region, len(resolved_disks),
-            [{"role": d.get("role"), "type": d.get("type"), "tier": d.get("tier"),
-              "cost": d.get("monthly_cost")} for d in resolved_disks],
-        )
-        pricing_text    = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks)
+        temp_storage_gb                  = await fetch_temp_storage_gb(sku, region)
+        resolved_disks, storage_data     = await resolve_disks(sku, region, disks_spec or None)
+        logger.info("pricing_agent: resolve_disks → %d disks, types=%s",
+                    len(resolved_disks), list(storage_data.get("types", {}).keys()))
+        pricing_text = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks, storage_data)
         logger.info("pricing_agent: storage in reply: %s", "=== Storage ===" in pricing_text)
         return {"reply": pricing_text, "type": "pricing"}
 
