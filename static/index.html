@@ -69,6 +69,13 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 
 .pc-foot{padding:12px 18px;border-top:1px solid #EEF2F7}
 
+/* ── storage block ──────────────────────────────────────────────────────── */
+.pc-storage{padding:12px 18px;border-top:1px solid #EEF2F7;font-size:13px}
+.pc-storage-title{font-size:11px;font-weight:600;color:#005A9E;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.pc-storage-subtotal{display:flex;justify-content:space-between;font-weight:600;color:#1A1A2E;border-top:1px solid #EEF2F7;margin-top:6px;padding-top:6px}
+.pc-storage-note{font-size:12px;color:#B45309;padding:2px 0 2px 4px;font-style:italic}
+.pc-storage-fn{font-size:11px;color:#8B95A2;margin-top:5px;line-height:1.5}
+
 /* ── download buttons ───────────────────────────────────────────────────── */
 .dl-btns{display:flex;gap:8px;flex-wrap:wrap}
 .dl-btn{font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid #0078D4;background:#fff;color:#0078D4;cursor:pointer;transition:all .15s;white-space:nowrap}
@@ -168,9 +175,11 @@ function parsePricing(text){
   const payg  = { hourly:'', monthly:'' };
   // secs holds collapsible sections: [{key,label,badge,bc,rows:[{lbl,val}]}]
   const secs  = [];
+  // storage holds the non-collapsible disk pricing block
+  let storage = null;
 
   // block tracks which top-level section we're currently inside
-  let block   = 'info'; // 'info'|'payg'|'sp'|'ri'|'ahb'
+  let block   = 'info'; // 'info'|'payg'|'sp'|'ri'|'ahb'|'storage'
   let curSec  = null;   // ref to the current collapsible section being filled
 
   function newSec(key, label, badge, bc){
@@ -181,6 +190,13 @@ function parsePricing(text){
   for(const raw of lines){
     const l = raw.trim();
     if(!l || l==='=== Azure VM Pricing Estimate ===') continue;
+
+    // "=== Storage ===" section header (not a --- divider)
+    if(l === '=== Storage ==='){
+      block = 'storage'; curSec = null;
+      storage = storage || {disks:[], subtotal:'', footnotes:[]};
+      continue;
+    }
 
     // "--- Section Header ---" dividers
     const div = l.match(/^---+\s*(.+?)\s*---+$/);
@@ -261,11 +277,30 @@ function parsePricing(text){
       const kv = l.match(/^([^:]+):\s*(.+)/);
       if(kv) curSec.rows.push({lbl:kv[1].trim(), val:kv[2].trim()});
     }
+
+    // ── Storage block ──────────────────────────────────────────────────────
+    // Disk lines: "OS disk  : Premium SSD P10 (128 GiB)* — USD 19.71/month"
+    // Downgrade : "← downgraded: VM does not support premium storage"
+    // Subtotal  : "Storage subtotal: USD 71.93/month"
+    // Footnotes : "* Capacity only; ..." / "** v2 capacity at free baseline..."
+    if(block === 'storage' && storage){
+      const dm = l.match(/^(OS disk|Data disk)\s*:\s*(.+?)\s*—\s*(.+)/i);
+      if(dm){
+        storage.disks.push({role:dm[1].replace(/\s+$/,''), label:dm[2].trim(), cost:dm[3].trim(), note:null});
+        continue;
+      }
+      if(/^←/.test(l) && storage.disks.length){
+        storage.disks[storage.disks.length-1].note = l; continue;
+      }
+      const sm = l.match(/^Storage subtotal:\s*(.+)/i);
+      if(sm){ storage.subtotal = sm[1].trim(); continue; }
+      if(/^\*/.test(l)){ storage.footnotes.push(l); continue; }
+    }
   }
 
   // Drop sections that ended up empty (e.g. "not available" RI lines)
   const validSecs = secs.filter(s => s.rows.length > 0);
-  return (payg.hourly || validSecs.length) ? {info, payg, secs:validSecs} : null;
+  return (payg.hourly || validSecs.length) ? {info, payg, secs:validSecs, storage} : null;
 }
 
 // ── pricing card builder ─────────────────────────────────────────────────────
@@ -335,6 +370,41 @@ function buildCard(text){
       wrap.appendChild(pcs);
     }
     card.appendChild(wrap);
+  }
+
+  // Storage block — always visible, non-collapsible
+  if(p.storage && (p.storage.disks.length || p.storage.subtotal)){
+    const stg = document.createElement('div');
+    stg.className = 'pc-storage';
+    const st = document.createElement('div');
+    st.className = 'pc-storage-title';
+    st.textContent = 'Storage';
+    stg.appendChild(st);
+    for(const d of p.storage.disks){
+      const row = document.createElement('div');
+      row.className = 'pcs-row';
+      row.innerHTML = `<span class="pcs-lbl">${esc(d.role)}</span><span class="pcs-val">${esc(d.label)} — ${esc(d.cost)}</span>`;
+      stg.appendChild(row);
+      if(d.note){
+        const ne = document.createElement('div');
+        ne.className = 'pc-storage-note';
+        ne.textContent = d.note;
+        stg.appendChild(ne);
+      }
+    }
+    if(p.storage.subtotal){
+      const sub = document.createElement('div');
+      sub.className = 'pc-storage-subtotal';
+      sub.innerHTML = `<span>Storage subtotal</span><span>${esc(p.storage.subtotal)}</span>`;
+      stg.appendChild(sub);
+    }
+    for(const fn of p.storage.footnotes){
+      const fe = document.createElement('div');
+      fe.className = 'pc-storage-fn';
+      fe.textContent = fn;
+      stg.appendChild(fe);
+    }
+    card.appendChild(stg);
   }
 
   return card;
