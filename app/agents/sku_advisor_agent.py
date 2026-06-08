@@ -758,7 +758,7 @@ async def _show_full_pricing(
     sku_regions: list[str] | None = None,
 ) -> str:
     """Fetch live pricing and format full breakdown for each chosen SKU."""
-    from app.agents.pricing_agent import _format_pricing
+    from app.agents.pricing_agent import _format_pricing, resolve_disks
 
     parts = []
     for idx, sku_name in enumerate(skus):
@@ -767,6 +767,7 @@ async def _show_full_pricing(
         try:
             items   = await fetch_prices(sku_region, sku_name)
             temp_gb = await fetch_temp_storage_gb(sku_name, sku_region)
+            disks   = await resolve_disks(sku_name, sku_region, None)
             params  = {
                 "sku":      sku_name,
                 "region":   sku_region,
@@ -776,7 +777,7 @@ async def _show_full_pricing(
                 "vcpus":    doc.get("vcpus"),
                 "ram_gb":   doc.get("ram_gb"),
             }
-            parts.append(_format_pricing(params, items, temp_gb))
+            parts.append(_format_pricing(params, items, temp_gb, disks))
         except Exception as e:
             parts.append(f"Could not fetch pricing for {sku_name}: {e}")
 

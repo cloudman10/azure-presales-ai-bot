@@ -79,6 +79,72 @@ _SKU_PAT = re.compile(
 )
 
 
+async def resolve_disks(sku: str, region: str, marker_disks: list | None) -> list[dict]:
+    """
+    Single source of truth for disk resolution — used by both the direct pricing
+    path (pricing_agent.run) and the advisor option-pick path (_show_full_pricing).
+
+    Steps:
+    1. Check whether the VM supports premium storage (once).
+    2. Start from marker_disks (caller-supplied overrides) or an empty list.
+    3. If no disk has role=="os", prepend the default 128 GiB OS disk
+       (premium_ssd when premium-capable, else standard_ssd).
+    4. Apply the premium gate — downgrade any premium type on non-premium VMs.
+    5. Resolve monthly cost per disk via pick_tier + fetch_disk_tier_prices
+       (cached per type) or fetch_v2_capacity_rate + v2_monthly_cost.
+    Returns the fully-resolved disk list ready for _format_pricing.
+    """
+    premium_ok = await vm_supports_premium(sku, region)
+
+    disks: list[dict] = list(marker_disks or [])
+    if not any(d.get("role") == "os" for d in disks):
+        default_type = "premium_ssd" if premium_ok else "standard_ssd"
+        disks = [{"role": "os", "type": default_type, "size_gb": 128}] + disks
+
+    tier_price_cache: dict[str, dict[str, float]] = {}
+    v2_rate: float | None = None
+    resolved: list[dict] = []
+
+    for disk in disks:
+        dtype   = disk.get("type", "standard_ssd")
+        size_gb = int(disk.get("size_gb", 128))
+        role    = disk.get("role", "data")
+
+        was_downgraded = False
+        if dtype in ("premium_ssd", "premium_ssd_v2") and not premium_ok:
+            dtype          = "standard_ssd"
+            was_downgraded = True
+
+        if dtype == "premium_ssd_v2":
+            if v2_rate is None:
+                v2_rate = await fetch_v2_capacity_rate(region)
+            monthly_cost = v2_monthly_cost(size_gb, v2_rate) if v2_rate else 0.0
+            resolved.append({
+                "role": role, "type": dtype, "tier": None,
+                "size_gb": size_gb, "monthly_cost": monthly_cost,
+                "is_standard_variable": False, "is_v2_baseline": True,
+                "was_downgraded": was_downgraded,
+            })
+        else:
+            if dtype not in tier_price_cache:
+                try:
+                    tier_price_cache[dtype] = await fetch_disk_tier_prices(region, dtype)
+                except Exception as e:
+                    logger.warning("disk tier fetch failed for %s: %s", dtype, e)
+                    tier_price_cache[dtype] = {}
+            tier         = pick_tier(size_gb, dtype)
+            monthly_cost = tier_price_cache[dtype].get(tier, 0.0)
+            resolved.append({
+                "role": role, "type": dtype, "tier": tier,
+                "size_gb": size_gb, "monthly_cost": monthly_cost,
+                "is_standard_variable": dtype in ("standard_hdd", "standard_ssd"),
+                "is_v2_baseline": False,
+                "was_downgraded": was_downgraded,
+            })
+
+    return resolved
+
+
 def _user_is_uncertain_about_sku(message: str) -> bool:
     lower = message.lower()
     if any(phrase in lower for phrase in _UNCERTAINTY_PHRASES):
@@ -436,58 +502,8 @@ async def run(messages: list[dict]) -> dict:
             return {"reply": f"Error reaching Azure Pricing API: {e}", "type": "pricing"}
 
         temp_storage_gb = await fetch_temp_storage_gb(sku, region)
-
-        # Always resolve disk pricing. premium_ok is fetched once regardless.
-        premium_ok = await vm_supports_premium(sku, region)
-
-        # Inject a default 128 GiB OS disk when the marker didn't include one.
-        # This ensures storage always renders — even for bare "price D4s_v5 ..." queries.
-        if not any(d.get("role") == "os" for d in disks_spec):
-            default_type = "premium_ssd" if premium_ok else "standard_ssd"
-            disks_spec = [{"role": "os", "type": default_type, "size_gb": 128}] + list(disks_spec)
-
-        tier_price_cache: dict[str, dict[str, float]] = {}
-        v2_rate: float | None = None
-        resolved_disks: list[dict] = []
-
-        for disk in disks_spec:
-            dtype   = disk.get("type", "standard_ssd")
-            size_gb = int(disk.get("size_gb", 128))
-            role    = disk.get("role", "data")
-
-            was_downgraded = False
-            if dtype in ("premium_ssd", "premium_ssd_v2") and not premium_ok:
-                dtype          = "standard_ssd"
-                was_downgraded = True
-
-            if dtype == "premium_ssd_v2":
-                if v2_rate is None:
-                    v2_rate = await fetch_v2_capacity_rate(region)
-                monthly_cost = v2_monthly_cost(size_gb, v2_rate) if v2_rate else 0.0
-                resolved_disks.append({
-                    "role": role, "type": dtype, "tier": None,
-                    "size_gb": size_gb, "monthly_cost": monthly_cost,
-                    "is_standard_variable": False, "is_v2_baseline": True,
-                    "was_downgraded": was_downgraded,
-                })
-            else:
-                if dtype not in tier_price_cache:
-                    try:
-                        tier_price_cache[dtype] = await fetch_disk_tier_prices(region, dtype)
-                    except Exception as e:
-                        logger.warning("disk tier fetch failed for %s: %s", dtype, e)
-                        tier_price_cache[dtype] = {}
-                tier         = pick_tier(size_gb, dtype)
-                monthly_cost = tier_price_cache[dtype].get(tier, 0.0)
-                resolved_disks.append({
-                    "role": role, "type": dtype, "tier": tier,
-                    "size_gb": size_gb, "monthly_cost": monthly_cost,
-                    "is_standard_variable": dtype in ("standard_hdd", "standard_ssd"),
-                    "is_v2_baseline": False,
-                    "was_downgraded": was_downgraded,
-                })
-
-        pricing_text = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks)
+        resolved_disks  = await resolve_disks(sku, region, disks_spec or None)
+        pricing_text    = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks)
         return {"reply": pricing_text, "type": "pricing"}
 
     return {"reply": claude_text, "type": "conversation"}
