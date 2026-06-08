@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(Expand-Archive -Path debug_logs.zip -DestinationPath debug_logs_extracted -Force)",
+      "Bash(unzip -o debug_logs.zip -d debug_logs_extracted)",
+      "Bash(xargs tail -20)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('type'\\), '|', d['reply'][:120]\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('type'\\), '|', d['reply'][:200]\\)\")",
+      "Bash(ipconfig /flushdns)",
+      "Bash(gh run *)"
+    ]
+  }
+}

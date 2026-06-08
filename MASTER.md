@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-06-07) — v1.3.0
+## Current Status (2026-06-08) — v1.4.0
 
 | Item | Status |
 |------|--------|
@@ -21,6 +21,32 @@
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+### Storage Pricing — Phase 1 §2.2 (2026-06-08) — COMPLETE
+Managed disk pricing for VM workloads with interactive selector. Live Azure Retail Prices API, no hardcoded prices.
+
+**Model:** Disks bill by provisioned tier (fixed size → fixed monthly price), NOT per-GB.
+Standard HDD (S) / Standard SSD (E) / Premium SSD (P) tier-based via `pick_tier()`; Premium SSD v2 per-GiB linear, capacity-only at free baseline (3000 IOPS / 125 MB/s). Tier→size table static; prices always live-fetched.
+
+**Default OS disk:** Injected in code via shared `resolve_disks()` (used by both `pricing_agent.run()` and `sku_advisor_agent._show_full_pricing()` — unified so paths can't drift). Premium SSD P10 (128 GiB) when premium-capable, else Standard SSD E10.
+
+**Interactive selector (commit 7d6b537):** Card renders type + size dropdowns on each disk row + "Add data disk" button. Backend emits `STORAGE_DATA` JSON (all eligible tier prices for the VM/region, premium-gated). Dropdowns re-price client-side instantly, no server round-trip. Verified: P10→P20 live update on size change.
+
+**Premium gating:** `vm_supports_premium()` reads `PremiumIO` from ARM Compute SKU capabilities. Premium types excluded from `STORAGE_DATA` on non-premium VMs, so dropdown can't offer them; code also downgrades. Applies to defaults and user picks.
+
+**Output:** `=== Storage ===` block in card + Excel + PDF. Footnotes: `*` Standard SSD/HDD capacity-only (transactions excluded); `**` v2 baseline caveat; Premium SSD none.
+
+**Pricing verified correct:** Matched live API to the cent for E4-2as_v7 Windows AU East. Earlier calc discrepancy was a SKU mismatch (as_v7 vs ads_v7), not an error.
+
+**Caching fix (commit c7e1486):** `Cache-Control: no-cache, no-store, must-revalidate` on `/` route — inline JS in `index.html` was being served stale (cost significant debug time; diagnose cache early next time via InPrivate window).
+
+**Deferred to Phase 2:** Standard SSD/HDD transaction costs, full v2 IOPS/throughput, snapshots/backup, blob, Files premium.
+
+### Known bugs to fix (logged 2026-06-08, not yet addressed)
+- Advisor renders literal `**1**`/`**2**`/`**3**` (markdown asterisks not rendering in advisor replies)
+- Advisor spec lookup fails for older SKUs (Standard_A6 shows "? GB RAM", wrong vCPU count, no "Best for" line)
+- Advisor "session memory cleared" on some option-picks via API/refresh path
+- Minor formatter spacing nits ("Microsoft RetailRRP", "Capacity only;per-10K")
 
 ### v1.3.0 Changes (2026-06-07)
 - **hyperxen.ai live:** Azure managed SSL cert bound (`AA7A318E...`, expires 2026-12-06); `https://hyperxen.ai` returns HTTP 200
@@ -49,7 +75,7 @@ Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/wel
 - Added `.gitignore` entries for `app_logs*/`, `*.zip`, `dev_logs*/`, `debug.log`
 
 ### Known Issues
-- None
+- See "Known bugs to fix" under Storage Pricing §2.2 above
 
 ---
 

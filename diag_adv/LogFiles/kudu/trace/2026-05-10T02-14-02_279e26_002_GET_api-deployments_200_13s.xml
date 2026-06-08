@@ -1,0 +1,9 @@
+<step title="Incoming Request" date="2026-05-10T02:14:02.324" instance="279e26" url="/api/deployments?warmup=true" method="GET" type="request" pid="835,1,5" Accept="*/*" Host="hyperxen-pricing-bot-dev.scm.azurewebsites.net" User-Agent="AZURECLI/2.85.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bas..." Cookie="ARRAffinity=279e2686d6d985a92f0e5544b67f0addb363f77898a222be35d50034f8dfe4ba; ARRAffinitySameSite=279e2686d6d985a92f0e5544b67f0addb363f77898a222be35d50034f8dfe4ba" x-ms-client-request-id="dfa875f3-4c15-11f1-893e-001a7dda710b" X-ARR-LOG-ID="dfa875f3-4c15-11f1-893e-001a7dda710b" CLIENT-IP="114.74.199.125:56401" X-SITE-DEPLOYMENT-ID="hyperxen-pricing-bot-dev" WAS-DEFAULT-HOSTNAME="hyperxen-pricing-bot-dev.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/deployments?warmup=true" X-Client-IP="114.74.199.125" X-Client-Port="56401" >
+  <step title="DeploymentService.GetCurrentEtag" date="2026-05-10T02:14:09.981" >
+    <step title="Current Etag: &quot;f72151c7b23886f5&quot;, Cached Etag: " date="2026-05-10T02:14:11.317" /><!-- duration: 55ms -->
+  </step><!-- duration: 1400ms -->
+  <step title="DeploymentService.GetDeployResults" date="2026-05-10T02:14:11.391" >
+    <step title="DeploymentManager.GetResults" date="2026-05-10T02:14:11.409" /><!-- duration: 2949ms -->
+  </step><!-- duration: 2996ms -->
+  <step title="Outgoing response" date="2026-05-10T02:14:15.424" type="response" statusCode="200" statusText="OK" /><!-- duration: 68ms -->
+</step><!-- duration: 13187ms -->

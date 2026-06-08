@@ -1,0 +1,189 @@
+2026-05-09T10:39:43  Fetching changes.
+2026-05-09T10:39:43    Starting  LocalZipHandler
+2026-05-09T10:39:43    Cleaning up temp folders from previous zip deployments and extracting pushed zip file /tmp/zipdeploy/5f740a46-42c1-4782-9528-824e33b7a649.zip (0.09 MB) to /tmp/zipdeploy/extracted
+2026-05-09T10:39:47  Updating submodules.
+2026-05-09T10:39:47  Preparing deployment for commit id 'ba466afb-3'.
+2026-05-09T10:39:47  PreDeployment: context.CleanOutputPath False
+2026-05-09T10:39:47  PreDeployment: context.OutputPath /home/site/wwwroot
+2026-05-09T10:39:48  Repository path is /tmp/zipdeploy/extracted
+2026-05-09T10:39:48  Running oryx build...
+2026-05-09T10:39:48    Command: oryx build /tmp/zipdeploy/extracted -o /home/site/wwwroot --platform python --platform-version 3.11 -p virtualenv_name=antenv --log-file /tmp/build-debug.log  -i /tmp/8deadb74aa0b748 --compress-destination-dir | tee /tmp/oryx-build.log
+2026-05-09T10:39:51    Operation performed by Microsoft Oryx, https://github.com/Microsoft/Oryx
+2026-05-09T10:39:51    You can report issues at https://github.com/Microsoft/Oryx/issues
+2026-05-09T10:39:51    
+2026-05-09T10:39:51    Oryx Version: 0.2.20260420.1+83c04e9ee1882dc90d279b63348824daedbd3c96, Commit: 83c04e9ee1882dc90d279b63348824daedbd3c96, ReleaseTagName: 20260420.1
+2026-05-09T10:39:51    
+2026-05-09T10:39:51    Build Operation ID: dd5b4eedec282cb4
+2026-05-09T10:39:51    Repository Commit : ba466afb-30ff-46a1-81f2-ca92f9e2633c
+2026-05-09T10:39:51    OS Type           : bullseye
+2026-05-09T10:39:52    Image Type        : githubactions
+2026-05-09T10:39:52    
+2026-05-09T10:39:53    Primary SDK Storage URL: https://oryx-cdn.microsoft.io
+2026-05-09T10:39:53    Backup SDK Storage URL: 
+2026-05-09T10:39:53    ACR SDK Registry URL: (not set)
+2026-05-09T10:39:53    SDK provider status:
+2026-05-09T10:39:53      External ACR SDK provider: Disabled
+2026-05-09T10:39:54      External SDK provider: Enabled
+2026-05-09T10:39:54      Direct ACR SDK provider: Disabled
+2026-05-09T10:39:54      Blob SDK provider: Enabled
+2026-05-09T10:39:54    Detecting platforms...
+2026-05-09T10:39:54    Requesting metadata for platform python from external SDK provider
+2026-05-09T10:39:55    Requesting metadata for platform python from external SDK provider
+2026-05-09T10:39:56    Version resolved using external SDK provider.
+2026-05-09T10:39:56    Detected following platforms:
+2026-05-09T10:39:56      python: 3.11.15
+2026-05-09T10:39:56    Requesting metadata for platform python from external SDK provider
+2026-05-09T10:40:00    SDK for 'python' version '3.11.15' fetched via external SDK provider.
+2026-05-09T10:40:00    Version '3.11.15' of platform 'python' is not installed. Generating script to install it...
+2026-05-09T10:40:01    
+2026-05-09T10:40:02    Using intermediate directory '/tmp/8deadb74aa0b748'.
+2026-05-09T10:40:02    
+2026-05-09T10:40:02    Copying files to the intermediate directory...
+2026-05-09T10:40:02    Copying files to intermediate directory done in 1 sec(s).
+2026-05-09T10:40:02    
+2026-05-09T10:40:02    Source directory     : /tmp/8deadb74aa0b748
+2026-05-09T10:40:02    Destination directory: /home/site/wwwroot
+2026-05-09T10:40:02    
+2026-05-09T10:40:02    Installing platform...
+2026-05-09T10:40:02    
+2026-05-09T10:40:03    Downloading and extracting 'python' version '3.11.15' to '/tmp/oryx/platforms/python/3.11.15'...
+2026-05-09T10:40:03    Detected image debian flavor: bullseye.
+2026-05-09T10:40:03    SDK binary download was skipped. Looking for cached tarball...
+2026-05-09T10:40:03    Found tarball at /var/OryxSdks/python/python-bullseye-3.11.15.tar.gz
+2026-05-09T10:40:29    Successfully extracted python version 3.11.15 from cached tarball.
+2026-05-09T10:40:29    
+2026-05-09T10:40:29    image detector file exists, platform is python..
+2026-05-09T10:40:29    OS detector file exists, OS is bullseye..
+2026-05-09T10:40:29    Platform installation done in 27 sec(s).
+2026-05-09T10:40:30    Running build script snippets...
+2026-05-09T10:40:30    Python Version: /tmp/oryx/platforms/python/3.11.15/bin/python3.11
+2026-05-09T10:40:30    Creating directory for command manifest file if it does not exist
+2026-05-09T10:40:30    Removing existing manifest file
+2026-05-09T10:40:30    Python Virtual Environment: antenv
+2026-05-09T10:40:30    Creating virtual environment...
+2026-05-09T10:40:30    Executing: /tmp/oryx/platforms/python/3.11.15/bin/python3.11 -m venv antenv --copies --system-site-packages
+2026-05-09T10:41:05    Activating virtual environment...
+2026-05-09T10:41:05    Fast build is enabled
+2026-05-09T10:41:06    Installing uv...
+2026-05-09T10:41:12    Collecting uv
+2026-05-09T10:41:12      Using cached uv-0.11.12-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (11 kB)
+2026-05-09T10:41:12    Using cached uv-0.11.12-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (24.7 MB)
+2026-05-09T10:41:14    Installing collected packages: uv
+2026-05-09T10:41:18    Successfully installed uv-0.11.12
+2026-05-09T10:41:18    
+2026-05-09T10:41:18    [notice] A new release of pip is available: 24.0 -> 26.1.1
+2026-05-09T10:41:19    [notice] To update, run: pip install --upgrade pip
+2026-05-09T10:41:20    Running uv pip install...
+2026-05-09T10:42:18    Using Python 3.11.15 environment at: antenv
+2026-05-09T10:42:19    Resolved 69 packages in 3.88s
+2026-05-09T10:42:19    Downloading cryptography (4.5MiB)
+2026-05-09T10:42:19    Downloading pydantic-core (2.0MiB)
+2026-05-09T10:42:19    Downloading pillow (6.8MiB)
+2026-05-09T10:42:19    Downloading reportlab (1.9MiB)
+2026-05-09T10:42:19     Downloaded pydantic-core
+2026-05-09T10:42:19     Downloaded reportlab
+2026-05-09T10:42:19     Downloaded cryptography
+2026-05-09T10:42:19     Downloaded pillow
+2026-05-09T10:42:19    Prepared 69 packages in 5.38s
+2026-05-09T10:42:19    Installed 69 packages in 1.05s
+2026-05-09T10:42:20    Bytecode compiled 3665 files in 46.87s
+2026-05-09T10:42:20     + annotated-doc==0.0.4
+2026-05-09T10:42:20     + annotated-types==0.7.0
+2026-05-09T10:42:20     + anthropic==0.100.0
+2026-05-09T10:42:20     + anyio==4.13.0
+2026-05-09T10:42:20     + asgiref==3.11.1
+2026-05-09T10:42:20     + azure-core==1.41.0
+2026-05-09T10:42:20     + azure-core-tracing-opentelemetry==1.0.0b13
+2026-05-09T10:42:21     + azure-identity==1.25.3
+2026-05-09T10:42:21     + azure-monitor-opentelemetry==1.6.4
+2026-05-09T10:42:21     + azure-monitor-opentelemetry-exporter==1.0.0b51
+2026-05-09T10:42:21     + azure-search-documents==12.0.0
+2026-05-09T10:42:21     + certifi==2026.4.22
+2026-05-09T10:42:21     + cffi==2.0.0
+2026-05-09T10:42:21     + charset-normalizer==3.4.7
+2026-05-09T10:42:21     + click==8.3.3
+2026-05-09T10:42:21     + cryptography==48.0.0
+2026-05-09T10:42:21     + distro==1.9.0
+2026-05-09T10:42:21     + docstring-parser==0.18.0
+2026-05-09T10:42:21     + et-xmlfile==2.0.0
+2026-05-09T10:42:22     + fastapi==0.136.1
+2026-05-09T10:42:22     + gunicorn==26.0.0
+2026-05-09T10:42:22     + h11==0.16.0
+2026-05-09T10:42:22     + httpcore==1.0.9
+2026-05-09T10:42:22     + httpx==0.28.1
+2026-05-09T10:42:22     + idna==3.13
+2026-05-09T10:42:22     + importlib-metadata==8.7.1
+2026-05-09T10:42:23     + isodate==0.7.2
+2026-05-09T10:42:23     + jiter==0.14.0
+2026-05-09T10:42:23     + msal==1.36.0
+2026-05-09T10:42:24     + msal-extensions==1.3.1
+2026-05-09T10:42:24     + msrest==0.7.1
+2026-05-09T10:42:24     + oauthlib==3.3.1
+2026-05-09T10:42:24     + openpyxl==3.1.5
+2026-05-09T10:42:25     + opentelemetry-api==1.40.0
+2026-05-09T10:42:25     + opentelemetry-instrumentation==0.61b0
+2026-05-09T10:42:25     + opentelemetry-instrumentation-asgi==0.61b0
+2026-05-09T10:42:25     + opentelemetry-instrumentation-dbapi==0.61b0
+2026-05-09T10:42:25     + opentelemetry-instrumentation-django==0.61b0
+2026-05-09T10:42:25     + opentelemetry-instrumentation-fastapi==0.61b0
+2026-05-09T10:42:25     + opentelemetry-instrumentation-flask==0.61b0
+2026-05-09T10:42:25     + opentelemetry-instrumentation-psycopg2==0.61b0
+2026-05-09T10:42:26     + opentelemetry-instrumentation-requests==0.61b0
+2026-05-09T10:42:26     + opentelemetry-instrumentation-urllib==0.61b0
+2026-05-09T10:42:26     + opentelemetry-instrumentation-urllib3==0.61b0
+2026-05-09T10:42:26     + opentelemetry-instrumentation-wsgi==0.61b0
+2026-05-09T10:42:26     + opentelemetry-resource-detector-azure==0.1.5
+2026-05-09T10:42:26     + opentelemetry-sdk==1.40.0
+2026-05-09T10:42:26     + opentelemetry-semantic-conventions==0.61b0
+2026-05-09T10:42:26     + opentelemetry-util-http==0.61b0
+2026-05-09T10:42:26     + packaging==26.2
+2026-05-09T10:42:27     + pillow==12.2.0
+2026-05-09T10:42:27     + psutil==7.2.2
+2026-05-09T10:42:27     + pycparser==3.0
+2026-05-09T10:42:27     + pydantic==2.13.4
+2026-05-09T10:42:27     + pydantic-core==2.46.4
+2026-05-09T10:42:27     + pydantic-settings==2.14.1
+2026-05-09T10:42:28     + pyjwt==2.12.1
+2026-05-09T10:42:28     + python-dotenv==1.2.2
+2026-05-09T10:42:28     + reportlab==4.5.0
+2026-05-09T10:42:28     + requests==2.33.1
+2026-05-09T10:42:28     + requests-oauthlib==2.0.0
+2026-05-09T10:42:29     + sniffio==1.3.1
+2026-05-09T10:42:29     + starlette==1.0.0
+2026-05-09T10:42:29     + typing-extensions==4.15.0
+2026-05-09T10:42:29     + typing-inspection==0.4.2
+2026-05-09T10:42:29     + urllib3==2.7.0
+2026-05-09T10:42:29     + uvicorn==0.46.0
+2026-05-09T10:42:29     + wrapt==1.17.3
+2026-05-09T10:42:30     + zipp==3.23.1
+2026-05-09T10:42:30    uv pip install done in 73 sec(s).
+2026-05-09T10:42:30    Not a vso image, so not writing build commands
+2026-05-09T10:42:30    
+2026-05-09T10:42:30    Copying 'requirements.txt' to destination directory...
+2026-05-09T10:42:30    Done copying requirements.txt to destination directory.
+2026-05-09T10:42:30    Build script snippets done in 110 sec(s).
+2026-05-09T10:42:30    Preparing output...
+2026-05-09T10:42:30    Compressing source directory directly to destination (optimized path)...
+2026-05-09T10:42:30    Using zstd for compression
+2026-05-09T10:43:09    Copied the compressed output to '/home/site/wwwroot'
+2026-05-09T10:43:09    Direct compression with zstd done in 49 sec(s).
+2026-05-09T10:43:09    
+2026-05-09T10:43:09    Removing existing manifest file
+2026-05-09T10:43:09    Creating a manifest file...
+2026-05-09T10:43:09    Manifest file created.
+2026-05-09T10:43:09    Copying .ostype to manifest output directory.
+2026-05-09T10:43:10    
+2026-05-09T10:43:10    Total execution done in 188 sec(s).
+2026-05-09T10:43:11  Running post deployment command(s)...
+2026-05-09T10:43:11  
+2026-05-09T10:43:11  Generating summary of Oryx build
+2026-05-09T10:43:11  Parsing the build logs
+2026-05-09T10:43:11  Found 0 issue(s)
+2026-05-09T10:43:12  
+2026-05-09T10:43:12  Build Summary :
+2026-05-09T10:43:12  ===============
+2026-05-09T10:43:12  Errors (0)
+2026-05-09T10:43:12  Warnings (0)
+2026-05-09T10:43:12  
+2026-05-09T10:43:13  Triggering container recycle for OneDeploy by adding/updating restartTrigger.txt to the site root path
+2026-05-09T10:43:13  Deployment successful. deployer = OneDeploy deploymentPath = OneDeploy

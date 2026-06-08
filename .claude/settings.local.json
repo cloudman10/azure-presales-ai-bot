@@ -20,7 +20,10 @@
       "PowerShell(az rest *)",
       "PowerShell(az webapp deployment list-publishing-credentials *)",
       "PowerShell(python -c \"import zipfile; z=zipfile.ZipFile\\('deploy_unix.zip'\\); [print\\(i.filename\\) for i in z.infolist\\(\\)[:10]]\")",
-      "PowerShell(az webapp deploy *)"
+      "PowerShell(az webapp deploy *)",
+      "Bash(git tag *)",
+      "Bash(nslookup hyperxen.ai)",
+      "Bash(nslookup hyperxen.ai 8.8.8.8)"
     ]
   }
 }
