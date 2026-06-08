@@ -300,7 +300,13 @@ function parsePricing(text){
 
   // Drop sections that ended up empty (e.g. "not available" RI lines)
   const validSecs = secs.filter(s => s.rows.length > 0);
-  return (payg.hourly || validSecs.length) ? {info, payg, secs:validSecs, storage} : null;
+  const result = (payg.hourly || validSecs.length) ? {info, payg, secs:validSecs, storage} : null;
+  // ── DIAGNOSTIC: remove after confirming storage parsing ──────────────────
+  console.log('[parsePricing] raw has "=== Storage ===":', text.includes('=== Storage ==='));
+  console.log('[parsePricing] storage object:', JSON.stringify(storage));
+  console.log('[parsePricing] result:', result ? 'non-null' : 'null', '| storage in result:', result?.storage);
+  // ────────────────────────────────────────────────────────────────────────
+  return result;
 }
 
 // ── pricing card builder ─────────────────────────────────────────────────────
