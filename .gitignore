@@ -214,3 +214,14 @@ app_logs*/
 *.zip
 dev_logs*/
 debug.log
+debug_logs*/
+debug_pricing*/
+diag*/
+diag2*/
+*_extracted/
+*.json.bak
+api_resp.json
+adv*.json
+body*.json
+sdcheck*.json
+.claude/settings.json
