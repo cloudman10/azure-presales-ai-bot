@@ -3,8 +3,13 @@ import logging
 import os
 import re
 
-from app.services.azure_pricing import fetch_prices, fetch_temp_storage_gb
-from app.utils.pricing_calculator import HOURS_PER_MONTH, detect_item_os, find_price, ri_monthly
+from app.services.azure_pricing import (
+    fetch_disk_tier_prices, fetch_prices, fetch_temp_storage_gb,
+    fetch_v2_capacity_rate, vm_supports_premium,
+)
+from app.utils.pricing_calculator import (
+    HOURS_PER_MONTH, detect_item_os, find_price, pick_tier, ri_monthly, v2_monthly_cost,
+)
 from app.utils.region_normalizer import display_region, extract_region
 
 logger = logging.getLogger(__name__)
@@ -34,7 +39,20 @@ RULES:
   - e328adsv5 → Standard_E32-8ads_v5 (NOT Standard_E328ads_v5)
   - Rule: if digits run together without hyphen, split where second number is 2, 4, 8, or 16
 - Normalize region to armRegionName: australiaeast, southeastasia, eastus
-- Never make up prices"""
+- Never make up prices
+
+STORAGE PRICING (offer after VM fields are confirmed):
+Disk types available: standard_hdd, standard_ssd, premium_ssd, premium_ssd_v2.
+Rules:
+- premium_ssd and premium_ssd_v2 require the VM to support premium storage.
+  You may offer them freely — the server enforces the check and downgrades if needed.
+- Default OS disk: premium_ssd 128 GiB. (Server downgrades to standard_ssd automatically
+  if the VM doesn't support premium — you don't need to check.)
+- Data disks are opt-in: only add them when the user asks for data disk pricing.
+- Accept sizes in GiB or GB; accept any disk type the user specifies.
+When disks are included, add a "disks" array to the FETCH_PRICING marker:
+  FETCH_PRICING:{"sku":"...","region":"...","os":"...","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"disks":[{"role":"os","type":"premium_ssd","size_gb":128},{"role":"data","type":"standard_ssd","size_gb":512}]}
+If the user only asks about VM pricing, omit the disks field entirely — do not add it."""
 
 
 _UNCERTAINTY_PHRASES = [
@@ -95,13 +113,27 @@ def _extract_known_context(messages: list[dict]) -> dict:
 
 
 def _parse_fetch_marker(text: str) -> dict | None:
-    match = re.search(r'FETCH_PRICING:(\{[\s\S]+?\})', text)
-    if not match:
+    """Extract and parse the FETCH_PRICING JSON marker.
+    Uses balanced-brace counting so nested objects (e.g. disks array) parse correctly.
+    """
+    start = text.find("FETCH_PRICING:")
+    if start == -1:
         return None
-    try:
-        return json.loads(match.group(1))
-    except json.JSONDecodeError:
+    brace_start = text.find("{", start)
+    if brace_start == -1:
         return None
+    depth = 0
+    for i, ch in enumerate(text[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[brace_start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
 
 
 def _get_savings_plan(item: dict) -> dict:
@@ -117,7 +149,20 @@ def _get_savings_plan(item: dict) -> dict:
     return rates
 
 
-def _format_pricing(params: dict, items: list[dict], temp_storage_gb: int | None = None) -> str:
+_DISK_TYPE_LABELS = {
+    "standard_hdd":   "Standard HDD",
+    "standard_ssd":   "Standard SSD",
+    "premium_ssd":    "Premium SSD",
+    "premium_ssd_v2": "Premium SSD v2",
+}
+
+
+def _format_pricing(
+    params: dict,
+    items: list[dict],
+    temp_storage_gb: int | None = None,
+    disks: list[dict] | None = None,
+) -> str:
     sku = params['sku']
     region = params['region']
     os_type = params['os']
@@ -283,6 +328,42 @@ def _format_pricing(params: dict, items: list[dict], temp_storage_gb: int | None
             h3_m = ri_monthly(hb_r3)
             out += f"3-Year RI + HB: {c(h3_m)}/month  (save {pct(price_m, h3_m)}% vs Windows PAYG RRP)\n"
 
+    if disks:
+        out += "\n=== Storage ===\n"
+        has_std_var = False
+        has_v2      = False
+        subtotal    = 0.0
+        for d in disks:
+            label    = _DISK_TYPE_LABELS.get(d["type"], d["type"])
+            role_str = "OS disk  " if d["role"] == "os" else "Data disk"
+            tier_str = f" {d['tier']}" if d.get("tier") else ""
+            fn       = ""
+            if d.get("is_standard_variable"):
+                fn = "*";  has_std_var = True
+            elif d.get("is_v2_baseline"):
+                fn = "**"; has_v2 = True
+            dg_note = (
+                "  ← downgraded: VM does not support premium storage\n"
+                if d.get("was_downgraded") else ""
+            )
+            out += (
+                f"{role_str}: {label}{tier_str} ({d['size_gb']} GiB){fn}"
+                f" — {c(d['monthly_cost'])}/month\n"
+                f"{dg_note}"
+            )
+            subtotal += d["monthly_cost"]
+        out += f"Storage subtotal: {c(subtotal)}/month\n"
+        if has_std_var:
+            out += (
+                "* Capacity only; per-10K-operation transaction charges vary "
+                "with workload I/O and are not included.\n"
+            )
+        if has_v2:
+            out += (
+                "** v2 capacity at free baseline (3,000 IOPS / 125 MB/s); "
+                "provisioned IOPS/throughput above baseline add cost.\n"
+            )
+
     out += f"\nAll prices are Microsoft Retail RRP. CSP pricing would be lower.\n"
     out += f"Monthly estimates based on {HOURS_PER_MONTH} hours."
     return out
@@ -340,15 +421,63 @@ async def run(messages: list[dict]) -> dict:
             fetch_params['sku'] = normalized
 
     if fetch_params:
-        sku = fetch_params["sku"]
-        region = fetch_params["region"]
-        logger.debug("FETCH_PRICING triggered: sku=%s region=%s os=%s", sku, region, fetch_params.get("os"))
+        sku        = fetch_params["sku"]
+        region     = fetch_params["region"]
+        disks_spec = fetch_params.get("disks") or []
+        logger.debug("FETCH_PRICING triggered: sku=%s region=%s os=%s disks=%d",
+                     sku, region, fetch_params.get("os"), len(disks_spec))
         try:
             items = await fetch_prices(region, sku)
         except Exception as e:
             return {"reply": f"Error reaching Azure Pricing API: {e}", "type": "pricing"}
+
         temp_storage_gb = await fetch_temp_storage_gb(sku, region)
-        pricing_text = _format_pricing(fetch_params, items, temp_storage_gb)
+
+        resolved_disks: list[dict] | None = None
+        if disks_spec:
+            premium_ok = await vm_supports_premium(sku, region)
+            tier_price_cache: dict[str, dict[str, float]] = {}
+            v2_rate: float | None = None
+            resolved_disks = []
+
+            for disk in disks_spec:
+                dtype   = disk.get("type", "standard_ssd")
+                size_gb = int(disk.get("size_gb", 128))
+                role    = disk.get("role", "data")
+
+                was_downgraded = False
+                if dtype in ("premium_ssd", "premium_ssd_v2") and not premium_ok:
+                    dtype          = "standard_ssd"
+                    was_downgraded = True
+
+                if dtype == "premium_ssd_v2":
+                    if v2_rate is None:
+                        v2_rate = await fetch_v2_capacity_rate(region)
+                    monthly_cost = v2_monthly_cost(size_gb, v2_rate) if v2_rate else 0.0
+                    resolved_disks.append({
+                        "role": role, "type": dtype, "tier": None,
+                        "size_gb": size_gb, "monthly_cost": monthly_cost,
+                        "is_standard_variable": False, "is_v2_baseline": True,
+                        "was_downgraded": was_downgraded,
+                    })
+                else:
+                    if dtype not in tier_price_cache:
+                        try:
+                            tier_price_cache[dtype] = await fetch_disk_tier_prices(region, dtype)
+                        except Exception as e:
+                            logger.warning("disk tier fetch failed for %s: %s", dtype, e)
+                            tier_price_cache[dtype] = {}
+                    tier         = pick_tier(size_gb, dtype)
+                    monthly_cost = tier_price_cache[dtype].get(tier, 0.0)
+                    resolved_disks.append({
+                        "role": role, "type": dtype, "tier": tier,
+                        "size_gb": size_gb, "monthly_cost": monthly_cost,
+                        "is_standard_variable": dtype in ("standard_hdd", "standard_ssd"),
+                        "is_v2_baseline": False,
+                        "was_downgraded": was_downgraded,
+                    })
+
+        pricing_text = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks)
         return {"reply": pricing_text, "type": "pricing"}
 
     return {"reply": claude_text, "type": "conversation"}
