@@ -46,7 +46,10 @@ app.include_router(chat.router, prefix="/api")
 
 @app.get("/")
 async def root() -> FileResponse:
-    return FileResponse(str(_BASE_DIR / "static" / "index.html"))
+    return FileResponse(
+        str(_BASE_DIR / "static" / "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/health")
