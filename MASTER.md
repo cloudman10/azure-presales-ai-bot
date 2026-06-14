@@ -8,12 +8,12 @@
 ## Current Status (2026-06-14) — v1.5.0
 
 ### Last Known-Good State (2026-06-14)
-- Commit: TBD — update after `git push origin main` (run `git log -1 main --format="%H"`)
-- Status: dev healthy, v1.5.0 multi-VM basket + export verified on dev; awaiting main merge.
+- Commit: f22e1ef2c2c8b177596c0c43d1500f6b7b42a4ab (main)
+- Status: main + dev healthy, v1.5.0 multi-VM basket + export merged to main.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard <commit-hash-above>
+  git reset --hard f22e1ef2c2c8b177596c0c43d1500f6b7b42a4ab
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
