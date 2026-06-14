@@ -389,7 +389,7 @@ def generate_pdf_basket(items: list[dict], grand_total: float) -> bytes:
     hdr_tbl = Table(
         [
             ["HyperXen.ai — Azure VM Quote"],
-            [f"Generated: {date_str}  │  {count_label}"],
+            [f"Generated: {date_str}  |  {count_label}"],
         ],
         colWidths=[hdr_w],
     )
@@ -413,6 +413,7 @@ def generate_pdf_basket(items: list[dict], grand_total: float) -> bytes:
     for item in items:
         hdr_text = f"{item['count']}× {item['sku']}  |  {item['os']}  |  {item['region']}"
         story.append(Paragraph(hdr_text, item_hdr_style))
+        story.append(Spacer(1, 4))
 
         tdata = [["Description", "Unit $/mo", "×", "Extended $/mo"]]
 
