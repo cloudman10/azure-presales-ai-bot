@@ -899,8 +899,9 @@ async function fetchPricingForPicks(indices){
   addTyping();
   const parts = [];
   for(const idx of valid){
-    const sku = picks.skus[idx];
-    const q   = `${sku} ${picks.os} ${picks.region_display}`;
+    const sku        = picks.skus[idx];
+    const regionDisp = (picks.sku_region_displays && picks.sku_region_displays[idx]) || picks.region_display;
+    const q          = `${sku} ${picks.os} ${regionDisp}`;
     try{
       const r = await fetch('/api/chat',{
         method:'POST',

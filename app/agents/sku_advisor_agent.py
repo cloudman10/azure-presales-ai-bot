@@ -1051,9 +1051,12 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     }
     sessions.pop(state_key, None)   # clear state; picks_key keeps the context for STATE 5
     _picks = {
-        "skus":           [s.get("sku_name") for s in top3],
-        "region":         state["region"],
-        "region_display": display_region(state["region"]),
-        "os":             state["os"],
+        "skus":                [s.get("sku_name") for s in top3],
+        "region":              state["region"],
+        "region_display":      display_region(state["region"]),
+        # Per-SKU actual region display — differs from region_display for alt-region fills.
+        # fetchPricingForPicks must use this per-SKU value, not the global region_display.
+        "sku_region_displays": [display_region(s.get("_region") or state["region"]) for s in top3],
+        "os":                  state["os"],
     }
     return {"reply": reply, "type": "advisor", "picks": _picks}
