@@ -5,19 +5,18 @@
 
 ---
 
-## Current Status (2026-06-14) — v1.4.0
+## Current Status (2026-06-14) — v1.5.0
 
 ### Last Known-Good State (2026-06-14)
-- Commit: fcf35f647859b51b00eee063d453fbd6af347f3d (main)
-- Status: dev + prod healthy, §2.2 storage selector verified on both pricing paths.
+- Commit: TBD — update after `git push origin main` (run `git log -1 main --format="%H"`)
+- Status: dev healthy, v1.5.0 multi-VM basket + export verified on dev; awaiting main merge.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard fcf35f647859b51b00eee063d453fbd6af347f3d
+  git reset --hard <commit-hash-above>
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
-- Note: failed deploy fcf35f6 recovered; app currently serving correctly. Root cause was unpinned packages pulling a breaking version on cold-start — fixed by pinning all deps in requirements.txt (dev commit f992620).
 
 | Item | Status |
 |------|--------|
@@ -33,6 +32,43 @@
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+### Multi-VM Quote Basket (2026-06-14) — COMPLETE
+
+Users can build a multi-VM quote inside the chat UI and export it as Excel or PDF.
+
+**Basket model (numeric, server-side):**
+Each line item: `{id, sku, os, region, term, count, vm_unit_cost, disks[], line_total, pricing_text?}`.
+`line_total = round((vm_unit_cost + sum(disk.cost)) × count, 4)` — computed server-side on add.
+`grand_total = sum(line_total for item in basket)` — always from numeric fields, never text-parsed.
+
+**Backend (`app/routers/basket.py`, `app/state.py`):**
+- `POST /api/basket` — add item; returns updated basket list.
+- `GET /api/basket` — fetch basket for session.
+- `DELETE /api/basket/{item_id}` — remove one line.
+- `DELETE /api/basket` — clear basket.
+- `GET /api/basket/total` — `{grand_total, item_count}`.
+- `POST /api/basket/report/excel` and `/pdf` — structured export (no text-blob parsing).
+- Sessions stored in `sessions["{sid}_basket"]` via shared `app/state.py` dict.
+
+**Frontend (`static/index.html`):**
+- Header Quote button + live badge (item count).
+- Per-card Qty input (default 1) + "Add to Quote" button; captures live dropdown disk state.
+- Slide-in Quote Summary drawer: per-line label, VM+storage detail, Remove button, grand total.
+- Export Excel / Export PDF buttons in drawer footer (shown when basket non-empty).
+- Basket restores on page refresh via `loadBasket()` at init.
+- `card._getDiskState()` closure reads live dropdown state at click time — no stale captures.
+
+**Export (`app/agents/report_agent.py`):**
+`generate_excel_basket(items, grand_total)` and `generate_pdf_basket(items, grand_total)` — build structured multi-item reports. Per-item: section header `{count}× {sku} | {os} | {region}`, VM cost row, one disk row per disk, line total. GRAND TOTAL at bottom, footnotes. PDF header uses a 2-row Table (both rows `#0078D4`) so title and subtitle are guaranteed stacked with no overlap; subtitle in `#D4E8FF` for readable contrast on blue.
+
+**Alt-region pick fix:**
+`_picks` now carries `sku_region_displays[]` (one per option). `fetchPricingForPicks` uses `picks.sku_region_displays[idx]` instead of the global `picks.region_display`, so alt-region fills (e.g. `[Available in Australia East]` options returned for a Melbourne query) are priced in their actual source region — fixes "pricing fetch failed" on those picks.
+
+**Known ASCII-only rule for generated docs:**
+Azure/reportlab environment garbles non-ASCII (box-drawing `│` → tofu box; middle-dot `·` → `Â·`). All generated Excel/PDF text must use ASCII separators (`|` or `-`). See section below.
+
+---
 
 ### Storage Pricing — Phase 1 §2.2 (2026-06-08) — COMPLETE
 Managed disk pricing for VM workloads with interactive selector. Live Azure Retail Prices API, no hardcoded prices.
@@ -54,20 +90,35 @@ Standard HDD (S) / Standard SSD (E) / Premium SSD (P) tier-based via `pick_tier(
 
 **Deferred to Phase 2:** Standard SSD/HDD transaction costs, full v2 IOPS/throughput, snapshots/backup, blob, Files premium.
 
-### Session Storage — IMPORTANT prod constraint (logged 2026-06-14)
-All session state (conversation history, advisor picks, quote basket) is stored in a plain Python `dict` in `app/state.py` — **in-process, per-worker, no persistence**.
+### Document generation — ASCII only (2026-06-14)
+Azure App Service + reportlab environment garbles non-ASCII characters in generated Excel/PDF files:
+- Middle-dot `·` (U+00B7) → `Â·` (UTF-8 bytes misread as Latin-1)
+- Box-drawing `│` (U+2502) → tofu box (not in reportlab built-in font's Latin-1 glyph set)
+- Em-dash `—` (U+2014) → similar garbling risk
 
-**Dev:** `startup.sh` temporarily runs `-w 1` (single gunicorn worker) so the basket and session are always consistent during development.
+**Rule: use only ASCII in all text written to Excel cells or PDF paragraphs/tables.** Use `|` or ` - ` as separators, not `│`, `·`, or `—`. This applies to `report_agent.py` and any future document-generation code. Recurring issue — bake into every code review of doc generation.
 
-**⚠ BEFORE promoting basket to prod (4 workers):** migrate session storage to a shared store — Redis is the standard choice for Azure App Service (Azure Cache for Redis). With 4 workers, every request may land on a different process, each with its own empty dict. This is already the root cause of the "session memory cleared" bug on the advisor. The basket will silently appear empty on ~75% of requests if promoted as-is.
+### Known limitations / before-prod (logged 2026-06-14)
 
-**Migration path:** replace `app/state.py` with a Redis-backed adapter (e.g. `aioredis`); key schema stays the same (`{sid}`, `{sid}_advisor_state`, `{sid}_basket`, etc.).
+**Single-worker dev constraint:**
+`startup.sh` runs `-w 1` (single gunicorn worker) so the in-memory basket and session dict are always consistent during development. This is a dev-only workaround.
+
+**⚠ Redis required before basket goes to prod (4 workers):**
+All session state (conversation history, advisor picks, quote basket) lives in a plain Python `dict` in `app/state.py` — in-process, per-worker, no persistence. With 4 workers, each request may land on a different process with its own empty dict. The basket silently appears empty on ~75% of prod requests if promoted as-is. This is also the root cause of the "session memory cleared" advisor bug.
+
+**Migration path:** replace `app/state.py` with a Redis-backed adapter (e.g. `aioredis`); key schema stays the same (`{sid}`, `{sid}_advisor_state`, `{sid}_basket`, etc.). Azure Cache for Redis is the standard choice for App Service.
 
 ### Known bugs to fix (logged 2026-06-08, not yet addressed)
 - Advisor renders literal `**1**`/`**2**`/`**3**` (markdown asterisks not rendering in advisor replies)
 - Advisor spec lookup fails for older SKUs (Standard_A6 shows "? GB RAM", wrong vCPU count, no "Best for" line)
-- Advisor "session memory cleared" on some option-picks via API/refresh path
+- Advisor "session memory cleared" on some option-picks via API/refresh path (root cause: multi-worker — fixed by Redis migration)
+- Standard HDD size dropdown can render empty → `$0.00` disk cost shown on card
 - Minor formatter spacing nits ("Microsoft RetailRRP", "Capacity only;per-10K")
+
+### Next / deferred
+- **Quote history / save** — deferred. Options: (a) new-conversation confirm guard; (b) client-side save/restore to JSON file; (c) named server-side saved quotes (requires Redis + auth). Redis migration gates all server-side persistence options.
+- **Session/basket persistence migration** — Redis (Azure Cache for Redis) required before prod basket + saved quotes. Unblocks basket on prod and fixes the multi-worker advisor "session cleared" bug.
+- **Phase 2 storage features** — Standard SSD/HDD transaction costs, full v2 IOPS/throughput, snapshots/backup, blob storage, Azure Files premium.
 
 ### v1.3.0 Changes (2026-06-07)
 - **hyperxen.ai live:** Azure managed SSL cert bound (`AA7A318E...`, expires 2026-12-06); `https://hyperxen.ai` returns HTTP 200
@@ -252,8 +303,10 @@ azure-presales-ai-bot/
 │   │   ├── sku_agent.py          ← SKU Normalizer Agent (rule-based, no LLM)
 │   │   ├── sku_advisor_agent.py  ← SKU Advisor (scenario-based, Azure AI Search)
 │   │   └── report_agent.py       ← Report Agent (Excel/PDF generation)
+│   ├── state.py                  ← shared in-memory session dict (basket, history, advisor)
 │   ├── routers/
-│   │   └── chat.py               ← /api/chat, /api/welcome, /api/report/*
+│   │   ├── chat.py               ← /api/chat, /api/welcome, /api/report/*
+│   │   └── basket.py             ← /api/basket CRUD + /api/basket/report/excel|pdf
 │   ├── services/
 │   │   └── azure_pricing.py      ← Azure Retail Prices API + ARM SKU capabilities
 │   ├── utils/
@@ -299,6 +352,9 @@ azure-presales-ai-bot/
 - SKU Advisor: OS detection false positives fixed (words like "handling" no longer trigger Linux match)
 - SKU Advisor: OS always asked if not already known, regardless of how advisor was triggered
 - Report Agent — Excel (.xlsx) and PDF download from any pricing result; HyperXen.ai branding; download buttons appear inline
+- Multi-VM Quote Basket — add any VM+storage combo to a running quote; per-card Qty + "Add to Quote"; slide-in drawer with per-line remove, grand total, Export Excel/PDF buttons; basket restores on refresh
+- Basket export — `generate_excel_basket` / `generate_pdf_basket` build from structured numeric model; per-item VM + disk breakdown, line totals, GRAND TOTAL; no text-blob parsing
+- Alt-region advisor pick fix — `_picks.sku_region_displays[]` per option; frontend prices each option in its own source region (fixes "pricing fetch failed" on `[Available in Australia East]` alt-region fills)
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
 - Modern SKU preference — v4/v5/v6 ranked above v1/v2; Promo/Basic excluded
 - CORS middleware (`allow_origins=["*"]`) for Replit frontend access

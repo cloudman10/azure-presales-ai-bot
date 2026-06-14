@@ -23,7 +23,8 @@
       "PowerShell(az webapp deploy *)",
       "Bash(git tag *)",
       "Bash(nslookup hyperxen.ai)",
-      "Bash(nslookup hyperxen.ai 8.8.8.8)"
+      "Bash(nslookup hyperxen.ai 8.8.8.8)",
+      "PowerShell(az webapp log download --name hyperxen-pricing-bot-dev --resource-group rg-hyperxen-app-dev --log-file dev_logs.zip)"
     ]
   }
 }
