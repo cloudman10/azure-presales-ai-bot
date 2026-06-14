@@ -5,11 +5,9 @@ from fastapi.responses import StreamingResponse
 
 from app.agents import orchestrator, report_agent
 from app.models.schemas import ChatRequest, ChatResponse, ReportRequest, WelcomeResponse
+from app.state import sessions
 
 router = APIRouter()
-
-# Shared in-memory session store — cleared on restart
-sessions: dict = {}
 
 WELCOME_TEXT = (
     "Hello! I can look up Azure VM pricing for you.\n\n"
