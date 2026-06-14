@@ -234,9 +234,10 @@ def generate_excel_basket(items: list[dict], grand_total: float) -> bytes:
     ws.merge_cells("A2:D2")
     count_label = f"{len(items)} item{'s' if len(items) != 1 else ''}"
     ws["A2"] = f"Generated: {datetime.now().strftime('%d %b %Y %H:%M')}  |  {count_label}"
-    ws["A2"].font      = Font(italic=True, size=10, color="8B95A2")
+    ws["A2"].font      = Font(italic=True, size=10, color="D4E8FF")
+    ws["A2"].fill      = PatternFill("solid", fgColor="0078D4")
     ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[2].height = 20
 
     # Column headers
     row = 4
@@ -333,7 +334,7 @@ def generate_pdf_basket(items: list[dict], grand_total: float) -> bytes:
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle,
     )
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER
 
     AZURE_BLUE = colors.HexColor("#0078D4")
     DARK_BLUE  = colors.HexColor("#1A5494")
@@ -343,18 +344,6 @@ def generate_pdf_basket(items: list[dict], grand_total: float) -> bytes:
 
     styles = getSampleStyleSheet()
 
-    title_style = ParagraphStyle(
-        "BQTitle", parent=styles["Normal"],
-        fontSize=16, fontName="Helvetica-Bold",
-        textColor=colors.white, backColor=AZURE_BLUE,
-        alignment=TA_CENTER, spaceAfter=0,
-        borderPadding=(10, 14, 10, 14),
-    )
-    sub_style = ParagraphStyle(
-        "BQSub", parent=styles["Normal"],
-        fontSize=9, fontName="Helvetica-Oblique",
-        textColor=GREY, alignment=TA_CENTER, spaceAfter=14,
-    )
     item_hdr_style = ParagraphStyle(
         "BQItemHdr", parent=styles["Normal"],
         fontSize=10, fontName="Helvetica-Bold",
@@ -393,13 +382,33 @@ def generate_pdf_basket(items: list[dict], grand_total: float) -> bytes:
     )
 
     count_label = f"{len(items)} item{'s' if len(items) != 1 else ''}"
-    story = [
-        Paragraph("HyperXen.ai — Azure VM Quote", title_style),
-        Paragraph(
-            f"Generated: {datetime.now().strftime('%d %b %Y %H:%M')}  |  {count_label}",
-            sub_style,
-        ),
-    ]
+    date_str    = datetime.now().strftime('%d %b %Y %H:%M')
+    # Two-row header table — both rows share the blue band so title and subtitle
+    # are guaranteed to be stacked with no overlap and with readable contrast.
+    hdr_w = A4[0] - 40*mm   # full text-area width (page width - L+R margins)
+    hdr_tbl = Table(
+        [
+            ["HyperXen.ai — Azure VM Quote"],
+            [f"Generated: {date_str}  │  {count_label}"],
+        ],
+        colWidths=[hdr_w],
+    )
+    hdr_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), AZURE_BLUE),
+        ("TEXTCOLOR",     (0, 0), (0, 0), colors.white),
+        ("FONTNAME",      (0, 0), (0, 0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (0, 0), 16),
+        ("TEXTCOLOR",     (0, 1), (0, 1), colors.HexColor("#D4E8FF")),
+        ("FONTNAME",      (0, 1), (0, 1), "Helvetica-Oblique"),
+        ("FONTSIZE",      (0, 1), (0, 1), 10),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (0, 0), 14),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 6),
+        ("TOPPADDING",    (0, 1), (0, 1), 6),
+        ("BOTTOMPADDING", (0, 1), (0, 1), 14),
+    ]))
+    story = [hdr_tbl, Spacer(1, 14)]
 
     for item in items:
         hdr_text = f"{item['count']}× {item['sku']}  |  {item['os']}  |  {item['region']}"
