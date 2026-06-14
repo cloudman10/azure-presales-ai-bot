@@ -54,6 +54,15 @@ Standard HDD (S) / Standard SSD (E) / Premium SSD (P) tier-based via `pick_tier(
 
 **Deferred to Phase 2:** Standard SSD/HDD transaction costs, full v2 IOPS/throughput, snapshots/backup, blob, Files premium.
 
+### Session Storage — IMPORTANT prod constraint (logged 2026-06-14)
+All session state (conversation history, advisor picks, quote basket) is stored in a plain Python `dict` in `app/state.py` — **in-process, per-worker, no persistence**.
+
+**Dev:** `startup.sh` temporarily runs `-w 1` (single gunicorn worker) so the basket and session are always consistent during development.
+
+**⚠ BEFORE promoting basket to prod (4 workers):** migrate session storage to a shared store — Redis is the standard choice for Azure App Service (Azure Cache for Redis). With 4 workers, every request may land on a different process, each with its own empty dict. This is already the root cause of the "session memory cleared" bug on the advisor. The basket will silently appear empty on ~75% of requests if promoted as-is.
+
+**Migration path:** replace `app/state.py` with a Redis-backed adapter (e.g. `aioredis`); key schema stays the same (`{sid}`, `{sid}_advisor_state`, `{sid}_basket`, etc.).
+
 ### Known bugs to fix (logged 2026-06-08, not yet addressed)
 - Advisor renders literal `**1**`/`**2**`/`**3**` (markdown asterisks not rendering in advisor replies)
 - Advisor spec lookup fails for older SKUs (Standard_A6 shows "? GB RAM", wrong vCPU count, no "Best for" line)
