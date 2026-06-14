@@ -31,7 +31,7 @@ def _line_total(vm_unit_cost: float, disks: list, count: int) -> float:
 
 @router.post("", response_model=list[BasketItem])
 async def basket_add(request: BasketAddRequest) -> list[BasketItem]:
-    label = request.label or f"{request.sku} · {request.os} · {request.region}"
+    label = request.label or f"{request.sku} - {request.os} - {request.region}"
     item = {
         "id": str(uuid.uuid4()),
         "added_at": datetime.now(timezone.utc).isoformat(),
