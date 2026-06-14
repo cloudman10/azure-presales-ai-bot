@@ -5,7 +5,19 @@
 
 ---
 
-## Current Status (2026-06-08) — v1.4.0
+## Current Status (2026-06-14) — v1.4.0
+
+### Last Known-Good State (2026-06-14)
+- Commit: fcf35f647859b51b00eee063d453fbd6af347f3d (main)
+- Status: dev + prod healthy, §2.2 storage selector verified on both pricing paths.
+- Rollback if a future deploy breaks the app:
+  ```bash
+  git checkout main
+  git reset --hard fcf35f647859b51b00eee063d453fbd6af347f3d
+  git push origin main --force
+  ```
+  (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
+- Note: failed deploy fcf35f6 recovered; app currently serving correctly. Root cause was unpinned packages pulling a breaking version on cold-start — fixed by pinning all deps in requirements.txt (dev commit f992620).
 
 | Item | Status |
 |------|--------|
