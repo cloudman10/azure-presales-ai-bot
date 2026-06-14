@@ -86,15 +86,12 @@ async def basket_report_excel(request: BasketReportRequest) -> StreamingResponse
     b = _basket(request.session_id)
     if not b:
         raise HTTPException(status_code=400, detail="Basket is empty")
-    texts = [i["pricing_text"] for i in b if i.get("pricing_text")]
-    if not texts:
-        raise HTTPException(status_code=400, detail="No pricing_text available for report generation")
-    combined = "\n\n---\n\n".join(texts)
-    data = report_agent.generate_excel(combined, request.session_id)
+    grand_total = round(sum(i["line_total"] for i in b), 4)
+    data = report_agent.generate_excel_basket(b, grand_total)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="azure-vm-quote-basket.xlsx"'},
+        headers={"Content-Disposition": 'attachment; filename="azure-vm-quote.xlsx"'},
     )
 
 
@@ -103,13 +100,10 @@ async def basket_report_pdf(request: BasketReportRequest) -> StreamingResponse:
     b = _basket(request.session_id)
     if not b:
         raise HTTPException(status_code=400, detail="Basket is empty")
-    texts = [i["pricing_text"] for i in b if i.get("pricing_text")]
-    if not texts:
-        raise HTTPException(status_code=400, detail="No pricing_text available for report generation")
-    combined = "\n\n---\n\n".join(texts)
-    data = report_agent.generate_pdf(combined, request.session_id)
+    grand_total = round(sum(i["line_total"] for i in b), 4)
+    data = report_agent.generate_pdf_basket(b, grand_total)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="azure-vm-quote-basket.pdf"'},
+        headers={"Content-Disposition": 'attachment; filename="azure-vm-quote.pdf"'},
     )

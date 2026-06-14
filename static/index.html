@@ -115,6 +115,8 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .qp-grand{display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:#1A1A2E;margin-bottom:10px}
 .qp-clear{width:100%;padding:8px;border-radius:8px;border:1px solid #E5E9ED;background:#fff;color:#8B95A2;cursor:pointer;font-size:12px}
 .qp-clear:hover{border-color:#DC2626;color:#DC2626;background:#FFF5F5}
+.qp-export{display:none;gap:6px;margin-bottom:8px}
+.qp-export .dl-btn{flex:1;font-size:12px;padding:7px 0;text-align:center}
 .qp-empty{color:#8B95A2;font-size:13px;text-align:center;padding:30px 0}
 
 /* ── count + basket button on each pricing card ─────────────────────────── */
@@ -197,6 +199,10 @@ textarea:focus{border-color:#0078D4}
   </div>
   <div class="qp-foot">
     <div class="qp-grand"><span>Grand Total</span><span id="qpGrand">USD 0.00/month</span></div>
+    <div class="qp-export" id="qpExport">
+      <button class="dl-btn" id="qpExcelBtn" onclick="exportBasket('excel',this)">&#8659; Excel</button>
+      <button class="dl-btn" id="qpPdfBtn"   onclick="exportBasket('pdf',this)">&#8659; PDF</button>
+    </div>
     <button class="qp-clear" onclick="clearQuote()">Clear quote</button>
   </div>
 </div>
@@ -798,6 +804,7 @@ function renderBasket(items){
     empty.textContent = 'No VMs in quote yet.';
     qpItems.appendChild(empty);
     qpGrand.textContent = 'USD 0.00/month';
+    document.getElementById('qpExport').style.display = 'none';
     return;
   }
 
@@ -841,6 +848,29 @@ function renderBasket(items){
   }
 
   qpGrand.textContent = 'USD '+grand.toFixed(2)+'/month';
+  document.getElementById('qpExport').style.display = 'flex';
+}
+
+async function exportBasket(format, btnEl){
+  const endpoint = format === 'excel' ? '/api/basket/report/excel' : '/api/basket/report/pdf';
+  const filename  = format === 'excel' ? 'azure-vm-quote.xlsx' : 'azure-vm-quote.pdf';
+  const origText  = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = '...';
+  try{
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sessionId}),
+    });
+    if(!r.ok) throw new Error('Server error ' + r.status);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  } catch(e){ alert('Export failed: ' + e.message); }
+  finally{ btnEl.disabled = false; btnEl.textContent = origText; }
 }
 
 // ── pick selection (advisor → direct pricing) ─────────────────────────────────
