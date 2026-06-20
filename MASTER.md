@@ -8,12 +8,12 @@
 ## Current Status (2026-06-20) — v1.5.0
 
 ### Last Known-Good State (2026-06-20)
-- Commit: pending merge (see below)
+- Commit: 7ff34027daed503b3ac08d03973b097bfacde3c1 (main)
 - Status: main + dev healthy. ARM deployability gate live; AI Search re-indexed (1185 SKUs); per-VM pricing term selection (PAYG/SP/RI/+HB radios) live.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard <commit-hash>
+  git reset --hard 7ff34027daed503b3ac08d03973b097bfacde3c1
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
