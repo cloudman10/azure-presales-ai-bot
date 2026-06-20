@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-06-14) — v1.5.0
+## Current Status (2026-06-20) — v1.5.0
 
 ### Last Known-Good State (2026-06-14)
 - Commit: f22e1ef2c2c8b177596c0c43d1500f6b7b42a4ab (main)
@@ -24,7 +24,7 @@
 | Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
 | Dev App | ✅ Live and healthy — https://hyperxen-pricing-bot-dev.azurewebsites.net |
 | LLM (GPT-4o via Azure AI Foundry) | ✅ Verified working |
-| Azure AI Search | ✅ Indexed (894 active SKUs) |
+| Azure AI Search | ✅ Indexed (1185 active SKUs, re-indexed 2026-06-20) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
 | Dev Environment | ✅ Live — https://dev.hyperxen.com |
@@ -67,6 +67,33 @@ Each line item: `{id, sku, os, region, term, count, vm_unit_cost, disks[], line_
 
 **Known ASCII-only rule for generated docs:**
 Azure/reportlab environment garbles non-ASCII (box-drawing `│` → tofu box; middle-dot `·` → `Â·`). All generated Excel/PDF text must use ASCII separators (`|` or `-`). See section below.
+
+### Advisor deployability gate (2026-06-20) — COMPLETE
+
+Gates advisor recommendations on ARM Compute SKU deployability — prevents recommending or pricing SKUs that exist in the Azure Retail Prices API catalogue but are not actually deployable in the requested region.
+
+**Implementation (`app/services/azure_pricing.py`, `app/agents/sku_advisor_agent.py`):**
+- `_get_arm_skus_for_region(region)` — paginated ARM Compute SKUs fetch with 1-hour TTL module-level cache (`_arm_sku_cache`). Shared by `fetch_deployable_skus`, `fetch_temp_storage_gb`, and `vm_supports_premium` — net cost is 1 ARM call per region per hour regardless of how many advisor queries or disk/premium lookups follow.
+- `fetch_deployable_skus(region)` — returns `set[str]` of VM SKU names deployable in that region per ARM (`resourceType == 'virtualMachines'`). Returns empty set on failure; callers skip the filter on empty (fail-open, not fail-closed).
+- Advisor fires `fetch_deployable_skus` and `fetch_vm_prices_for_region` concurrently via `asyncio.gather` — ARM call overlaps the Prices API pagination, no serialised wait.
+- After `_is_standard` filter, advisor filters out any candidate whose `armSkuName` is absent from the deployable set. Logs `excluded=N remaining=M` for observability.
+
+**Root cause fixed:** Azure Retail Prices API publishes "projected" prices for catalogue SKUs with `isPrimaryMeterRegion=false` — these are not deployable in that region, just priced at a projected rate. ARM Compute SKUs is authoritative. Example: `Standard_E4-2as_v6` appeared with a valid `$360.62/mo` price in australiasoutheast but was absent from ARM — the gate now excludes it before scoring.
+
+**Verified (2026-06-20):**
+- Melbourne/australiasoutheast, 4 vCPU, 6 GB, Windows → 3 options: D4als_v6, E4as_v6, B4als_v2. All in ARM. No E4-2as_v6. No "?" RAM.
+- Australia East, 4 vCPU, 16 GB, Windows → 3 options: D4als_v7, E4-2as_v7, B4pls_v2. All in ARM. No "?" RAM.
+- australiasoutheast: 865 deployable SKUs (vs 1185 in australiaeast); ~320 SKUs filtered without over-filtering.
+
+### AI Search index (2026-06-20) — COMPLETE
+
+**Re-indexed:** 1,185 SKUs including Easv6 variants (`Standard_E2as_v6` through `Standard_E96as_v6` and EC variants). Previously missing from index because indexer was only run against australiaeast ARM at initial setup.
+
+**Auth fix (`scripts/index_vm_skus.py`):** Switched from `ClientSecretCredential` (`.env` client secret had expired → `AADSTS90013: Invalid input received from the user`) to `DefaultAzureCredential` — uses `az` CLI credentials locally, Managed Identity in production. No service principal secret needed.
+
+**Important query note:** AI Search full-text search tokenises on underscores — `E4as_v6` tokenises as `E4as` + `v6` and may return 0 hits. Always use a filter query for exact SKU lookups: `$filter=sku_name eq 'Standard_E4as_v6'`. The advisor's search path uses `search.ismatch` / scored text search which is unaffected (token-level match works for recommendation ranking).
+
+**Index staleness:** The index is a point-in-time snapshot of australiaeast ARM SKUs. It drifts as Azure adds/retires SKUs. The ARM deployability gate (`fetch_deployable_skus`) is the correctness gate — a stale index causes "?" in specs but never causes a bad SKU recommendation. Consider scheduling the indexer. [deferred]
 
 ---
 
@@ -119,6 +146,7 @@ All session state (conversation history, advisor picks, quote basket) lives in a
 - **Quote history / save** — deferred. Options: (a) new-conversation confirm guard; (b) client-side save/restore to JSON file; (c) named server-side saved quotes (requires Redis + auth). Redis migration gates all server-side persistence options.
 - **Session/basket persistence migration** — Redis (Azure Cache for Redis) required before prod basket + saved quotes. Unblocks basket on prod and fixes the multi-worker advisor "session cleared" bug.
 - **Phase 2 storage features** — Standard SSD/HDD transaction costs, full v2 IOPS/throughput, snapshots/backup, blob storage, Azure Files premium.
+- **AI Search index scheduled re-run** — index is a manual snapshot; drifts as Azure adds SKUs. ARM gate prevents wrong recommendations from stale index (worst case = "?" specs). Schedule weekly/monthly re-index via Azure Function or GitHub Actions cron. [deferred]
 
 ### v1.3.0 Changes (2026-06-07)
 - **hyperxen.ai live:** Azure managed SSL cert bound (`AA7A318E...`, expires 2026-12-06); `https://hyperxen.ai` returns HTTP 200
@@ -355,6 +383,8 @@ azure-presales-ai-bot/
 - Multi-VM Quote Basket — add any VM+storage combo to a running quote; per-card Qty + "Add to Quote"; slide-in drawer with per-line remove, grand total, Export Excel/PDF buttons; basket restores on refresh
 - Basket export — `generate_excel_basket` / `generate_pdf_basket` build from structured numeric model; per-item VM + disk breakdown, line totals, GRAND TOTAL; no text-blob parsing
 - Alt-region advisor pick fix — `_picks.sku_region_displays[]` per option; frontend prices each option in its own source region (fixes "pricing fetch failed" on `[Available in Australia East]` alt-region fills)
+- Advisor deployability gate — `fetch_deployable_skus()` cross-checks ARM Compute SKUs; candidates absent from ARM filtered before scoring; ARM data cached 1 hour and shared with `fetch_temp_storage_gb` / `vm_supports_premium`; ARM + Prices API fetched concurrently via `asyncio.gather`
+- AI Search index refreshed (2026-06-20) — 1,185 SKUs incl. Easv6 variants; indexer switched to `DefaultAzureCredential` (CLI locally, Managed Identity in prod)
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
 - Modern SKU preference — v4/v5/v6 ranked above v1/v2; Promo/Basic excluded
 - CORS middleware (`allow_origins=["*"]`) for Replit frontend access
