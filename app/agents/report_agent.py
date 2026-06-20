@@ -262,7 +262,7 @@ def generate_excel_basket(items: list[dict], grand_total: float) -> bytes:
         row += 1
 
         # VM row
-        ws.cell(row=row, column=1, value=f"VM ({item['term']}/month)").font = Font(size=10)
+        ws.cell(row=row, column=1, value=f"VM - {item['term']}").font = Font(size=10)
         c = ws.cell(row=row, column=2, value=item["vm_unit_cost"])
         c.number_format = '"$"#,##0.00'
         ws.cell(row=row, column=3, value=f"x{item['count']}").font = Font(size=10, color="5A7A9A")
@@ -310,11 +310,15 @@ def generate_excel_basket(items: list[dict], grand_total: float) -> bytes:
     row += 2
 
     # Footnotes
-    for note in [
+    has_hb = any('+ HB' in item.get('term', '') for item in items)
+    footnotes = [
         "* Standard SSD/HDD: capacity cost only; transaction costs excluded.",
         "All prices are Microsoft Retail RRP. Monthly estimate = 730 hrs.",
         "Prices fetched from Azure Retail Prices API at time of query.",
-    ]:
+    ]
+    if has_hb:
+        footnotes.append("+ HB lines assume customer owns eligible Azure Hybrid Benefit (Windows Server) licenses.")
+    for note in footnotes:
         ws.merge_cells(f"A{row}:D{row}")
         ws.cell(row=row, column=1, value=note).font = Font(size=8, color="8B95A2", italic=True)
         row += 1
@@ -419,7 +423,7 @@ def generate_pdf_basket(items: list[dict], grand_total: float) -> bytes:
 
         vm_ext = round(item["vm_unit_cost"] * item["count"], 2)
         tdata.append([
-            f"VM ({item['term']}/month)",
+            f"VM - {item['term']}",
             f"${item['vm_unit_cost']:.2f}",
             f"×{item['count']}",
             f"${vm_ext:.2f}",
@@ -468,11 +472,15 @@ def generate_pdf_basket(items: list[dict], grand_total: float) -> bytes:
     story.append(Table(gt_data, colWidths=col_w, style=gt_ts))
     story.append(Spacer(1, 10))
     story.append(HRFlowable(width="100%", thickness=0.5, color=GREY))
-    story += [
-        Paragraph("* Standard SSD/HDD: capacity cost only; transaction costs excluded.", footer_style),
-        Paragraph("All prices are Microsoft Retail RRP. Monthly estimate = 730 hrs.", footer_style),
-        Paragraph("Prices fetched from Azure Retail Prices API at time of query.", footer_style),
+    has_hb = any('+ HB' in item.get('term', '') for item in items)
+    footnote_texts = [
+        "* Standard SSD/HDD: capacity cost only; transaction costs excluded.",
+        "All prices are Microsoft Retail RRP. Monthly estimate = 730 hrs.",
+        "Prices fetched from Azure Retail Prices API at time of query.",
     ]
+    if has_hb:
+        footnote_texts.append("+ HB lines assume customer owns eligible Azure Hybrid Benefit (Windows Server) licenses.")
+    story += [Paragraph(t, footer_style) for t in footnote_texts]
 
     doc.build(story)
     return buf.getvalue()

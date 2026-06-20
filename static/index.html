@@ -128,6 +128,16 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .pc-atq:hover{background:#DCFCE7}
 .pc-atq:disabled{border-color:#D1D5DB;color:#8B95A2;background:#fff;cursor:not-allowed}
 
+/* ── pricing term selector ──────────────────────────────────────────────── */
+.pc-terms{padding:10px 18px;background:#F8FBFF;border-bottom:1px solid #EEF2F7}
+.pc-terms-lbl{font-size:11px;font-weight:600;color:#005A9E;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.pc-term-row{display:flex;align-items:center;gap:9px;padding:2px 0;cursor:pointer;border-radius:4px}
+.pc-term-radio{accent-color:#0078D4;cursor:pointer;flex-shrink:0}
+.pc-term-name{font-size:12px;color:#444;flex:1}
+.pc-term-price{font-size:12px;font-weight:600;color:#1A1A2E;white-space:nowrap}
+.pc-term-row.selected .pc-term-name{color:#0078D4;font-weight:500}
+.pc-term-row.selected .pc-term-price{color:#0078D4}
+
 /* ── typing indicator ───────────────────────────────────────────────────── */
 .typing{display:flex;align-items:center;gap:4px;padding:4px 0}
 .typing span{width:5px;height:5px;border-radius:50%;background:#C3DDF5;animation:blink 1.2s ease-in-out infinite}
@@ -214,6 +224,7 @@ const btn  = document.getElementById('btn');
 
 let sessionId = mkSid();
 let storedPicks = null;  // {skus, region, region_display, os} from last advisor response
+let _cardSeq = 0;
 function mkSid(){ return 'sess_' + Math.random().toString(36).substr(2,9); }
 
 inp.addEventListener('input', ()=>{ inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px'; });
@@ -390,6 +401,29 @@ function parsePricing(text){
   return result;
 }
 
+// ── term extractor: build [{label, monthly}] from parsed pricing ──────────────
+function _extractTerms(payg, secs){
+  const terms = [];
+  const paygM = parseUSDMonth(payg.monthly);
+  if(paygM > 0) terms.push({label:'PAYG', monthly:paygM});
+  for(const sec of secs){
+    if(sec.key === 'sp1' || sec.key === 'sp3'){
+      const totalRow = sec.rows.find(r => r.lbl.toLowerCase() === 'total');
+      const perVmRow = sec.rows.find(r => /^per vm/i.test(r.lbl));
+      const row = totalRow || perVmRow;
+      if(row){ const m = parseUSDMonth(row.val); if(m > 0) terms.push({label:sec.label, monthly:m}); }
+    } else if(sec.key === 'ri1' || sec.key === 'ri3'){
+      const row = sec.rows.find(r => /^per vm/i.test(r.lbl));
+      if(row){ const m = parseUSDMonth(row.val); if(m > 0) terms.push({label:sec.label, monthly:m}); }
+    } else if(sec.key === 'ahb'){
+      for(const row of sec.rows){
+        if(/\bHB\b/i.test(row.lbl)){ const m = parseUSDMonth(row.val); if(m > 0) terms.push({label:row.lbl, monthly:m}); }
+      }
+    }
+  }
+  return terms;
+}
+
 // ── pricing card builder ─────────────────────────────────────────────────────
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -431,6 +465,34 @@ function buildCard(text){
       +(payg.monthly?`<div class="pc-payg-mo">${esc(payg.monthly)}</div>`:'')
       +(payg.hourly?`<div class="pc-payg-hr">${esc(payg.hourly)}</div>`:'');
     card.appendChild(pg);
+  }
+
+  // ── Term selector ──────────────────────────────────────────────────────────
+  const _terms = _extractTerms(payg, secs);
+  const _rgroup = 'tc' + (++_cardSeq);
+  if(_terms.length > 1){
+    const tblk = document.createElement('div');
+    tblk.className = 'pc-terms';
+    const tlbl = document.createElement('div');
+    tlbl.className = 'pc-terms-lbl';
+    tlbl.textContent = 'Select Pricing Term';
+    tblk.appendChild(tlbl);
+    _terms.forEach((t, i) => {
+      const row = document.createElement('label');
+      row.className = 'pc-term-row' + (i === 0 ? ' selected' : '');
+      const rb = document.createElement('input');
+      rb.type = 'radio'; rb.name = _rgroup; rb.className = 'pc-term-radio';
+      rb.value = t.monthly; rb.dataset.label = t.label; rb.checked = (i === 0);
+      rb.addEventListener('change', () => {
+        tblk.querySelectorAll('.pc-term-row').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+      });
+      const nm = document.createElement('span'); nm.className = 'pc-term-name'; nm.textContent = t.label;
+      const pr = document.createElement('span'); pr.className = 'pc-term-price'; pr.textContent = 'USD '+t.monthly.toFixed(2)+'/mo';
+      row.appendChild(rb); row.appendChild(nm); row.appendChild(pr);
+      tblk.appendChild(row);
+    });
+    card.appendChild(tblk);
   }
 
   // collapsible sections: Savings Plan tiers, RI tiers, AHB
@@ -621,6 +683,11 @@ function buildCard(text){
 
   // Metadata used by "Add to Quote" button in the card footer
   card._pricingMeta = {sku:vm, os, region:reg, paygMonthly:parseUSDMonth(payg.monthly), rawText:text};
+  card._getSelectedTerm = () => {
+    if(_terms.length <= 1) return _terms[0] || {label:'PAYG', monthly:parseUSDMonth(payg.monthly)};
+    const checked = card.querySelector('input[name="'+_rgroup+'"]:checked');
+    return checked ? {label:checked.dataset.label, monthly:parseFloat(checked.value)} : (_terms[0]||{label:'PAYG',monthly:parseUSDMonth(payg.monthly)});
+  };
   if(!card._getDiskState) card._getDiskState = () => [];
 
   return card;
@@ -726,9 +793,9 @@ function toggleQuotePanel(){
 
 async function addToQuote(card, qtyInp, btnEl){
   const meta = card._pricingMeta;
-  if(!meta || !meta.paygMonthly){
-    alert('No PAYG price found on this card — cannot add to quote.'); return;
-  }
+  if(!meta){ alert('No pricing data on this card.'); return; }
+  const sel = card._getSelectedTerm ? card._getSelectedTerm() : {label:'PAYG', monthly:meta.paygMonthly};
+  if(!sel || !sel.monthly){ alert('No price found for the selected term.'); return; }
   const count = Math.max(1, parseInt(qtyInp.value)||1);
   const disks = card._getDiskState();
 
@@ -742,9 +809,9 @@ async function addToQuote(card, qtyInp, btnEl){
         sku: meta.sku,
         os: meta.os,
         region: meta.region,
-        term: 'PAYG',
+        term: sel.label,
         count,
-        vm_unit_cost: meta.paygMonthly,
+        vm_unit_cost: sel.monthly,
         disks,
         pricing_text: meta.rawText || null,
       }),
@@ -816,17 +883,20 @@ function renderBasket(items){
     const qi = document.createElement('div');
     qi.className = 'qi';
 
+    // "3× Standard_D4s_v5 (3-Year RI + HB)"
+    const countPfx = item.count > 1 ? item.count+'x ' : '';
     const lbl = document.createElement('div');
     lbl.className = 'qi-label';
-    lbl.textContent = item.label;
+    lbl.textContent = countPfx + item.sku + ' (' + item.term + ')';
     qi.appendChild(lbl);
 
+    // "VM: USD X/mo + Storage: USD Y/mo  |  OS • Region"
     const det = document.createElement('div');
     det.className = 'qi-detail';
-    det.innerHTML =
-      esc(item.count)+'&times; &bull; '+esc(item.term)+' &bull; '+esc(item.os)+' &bull; '+esc(item.region)+'<br>'
-      +'VM: USD '+item.vm_unit_cost.toFixed(2)+'/mo'
-      +(diskSum > 0 ? ' &nbsp;+&nbsp; Storage: USD '+diskSum.toFixed(2)+'/mo' : '');
+    let detHtml = 'VM: USD '+item.vm_unit_cost.toFixed(2)+'/mo';
+    if(diskSum > 0) detHtml += ' + Storage: USD '+diskSum.toFixed(2)+'/mo';
+    detHtml += '<br>'+esc(item.os)+' &bull; '+esc(item.region);
+    det.innerHTML = detHtml;
     qi.appendChild(det);
 
     const foot = document.createElement('div');
@@ -834,7 +904,7 @@ function renderBasket(items){
 
     const tot = document.createElement('span');
     tot.className = 'qi-total';
-    tot.textContent = (item.count > 1 ? item.count+'× ' : '')+'USD '+item.line_total.toFixed(2)+'/month';
+    tot.textContent = 'USD '+item.line_total.toFixed(2)+'/month';
     foot.appendChild(tot);
 
     const rm = document.createElement('button');
