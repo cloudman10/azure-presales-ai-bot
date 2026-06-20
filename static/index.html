@@ -133,12 +133,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .pc-payg-hdr{width:100%;display:flex;align-items:center;gap:7px;margin-bottom:4px}
 .pcs-hdr-left{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
 .pcs-hdr-price{margin-left:auto;font-size:11px;font-weight:600;color:#005A9E;white-space:nowrap;padding-right:6px}
-.pcs-ahb-row{padding:10px 18px;font-size:13px;font-weight:500;color:#333;display:flex;align-items:center;border-bottom:1px solid #EEF2F7;user-select:none}
-.pcs-ahb-row:hover{background:#F8FBFF}
-.pcs-ahb-row:last-child{border-bottom:none}
-.pcs-ahb-lbl{flex:1}
 .pcs-header:has(.pcs-term-radio:checked){background:#EBF5FF}
-.pcs-ahb-row:has(.pcs-term-radio:checked){background:#EBF5FF}
 
 /* ── typing indicator ───────────────────────────────────────────────────── */
 .typing{display:flex;align-items:center;gap:4px;padding:4px 0}
@@ -502,16 +497,30 @@ function buildCard(text){
     const wrap = document.createElement('div'); wrap.className = 'pc-sections';
     for(const sec of secs){
       if(sec.key === 'ahb'){
-        // Each AHB pricing row becomes a standalone flat selectable row — no collapse
+        // Each AHB pricing row: collapsible .pcs with radio+price in header + breakdown body
         for(const row of sec.rows){
           if(!/\bHB\b/i.test(row.lbl)) continue;
           const m = parseUSDMonth(row.val); if(!m) continue;
-          const ar = document.createElement('div'); ar.className = 'pcs-ahb-row';
-          if(_hasTerms) ar.appendChild(_mkRadio(row.lbl, m, false));
-          const nm=document.createElement('span'); nm.className='pcs-ahb-lbl'; nm.textContent=row.lbl;
-          const pr=document.createElement('span'); pr.className='pcs-hdr-price'; pr.textContent='USD '+m.toFixed(2)+'/mo';
-          ar.appendChild(nm); ar.appendChild(pr);
-          wrap.appendChild(ar);
+          const pcs = document.createElement('div'); pcs.className = 'pcs';
+          const hdr = document.createElement('div'); hdr.className = 'pcs-header';
+          hdr.addEventListener('click', () => pcs.classList.toggle('open'));
+          const left = document.createElement('span'); left.className = 'pcs-hdr-left';
+          if(_hasTerms) left.appendChild(_mkRadio(row.lbl, m, false));
+          const nm=document.createElement('span'); nm.textContent=row.lbl; left.appendChild(nm);
+          const pr=document.createElement('span'); pr.className='pcs-hdr-price'; pr.textContent='USD '+m.toFixed(2)+'/mo'; left.appendChild(pr);
+          hdr.appendChild(left);
+          const chev=document.createElement('span'); chev.className='chev'; chev.textContent='›'; hdr.appendChild(chev);
+          pcs.appendChild(hdr);
+          const body = document.createElement('div'); body.className = 'pcs-body';
+          [['Compute','USD '+m.toFixed(2)+'/month'],
+           ['License','USD 0.00/month  (Azure Hybrid Benefit)'],
+           ['Total',  'USD '+m.toFixed(2)+'/month']].forEach(([bl,bv]) => {
+            const r=document.createElement('div'); r.className='pcs-row';
+            r.innerHTML=`<span class="pcs-lbl">${esc(bl)}</span><span class="pcs-val">${esc(bv)}</span>`;
+            body.appendChild(r);
+          });
+          pcs.appendChild(body);
+          wrap.appendChild(pcs);
         }
       } else {
         // SP / RI: collapsible with radio + total price in header
