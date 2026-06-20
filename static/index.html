@@ -45,7 +45,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .pc-specs{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;opacity:.9}
 
 .pc-payg{background:#F0F7FF;border-bottom:1px solid #D0E8FF;padding:12px 18px;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px}
-.pc-payg-lbl{font-size:11px;font-weight:600;color:#005A9E;text-transform:uppercase;letter-spacing:.5px;width:100%;margin-bottom:4px}
+.pc-payg-lbl{font-size:11px;font-weight:600;color:#005A9E;text-transform:uppercase;letter-spacing:.5px}
 .pc-payg-mo{font-size:22px;font-weight:700;color:#0078D4}
 .pc-payg-unit{font-size:13px;font-weight:400;color:#5A7A9A}
 .pc-payg-hr{font-size:13px;color:#5A7A9A}
@@ -128,15 +128,17 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .pc-atq:hover{background:#DCFCE7}
 .pc-atq:disabled{border-color:#D1D5DB;color:#8B95A2;background:#fff;cursor:not-allowed}
 
-/* ── pricing term selector ──────────────────────────────────────────────── */
-.pc-terms{padding:10px 18px;background:#F8FBFF;border-bottom:1px solid #EEF2F7}
-.pc-terms-lbl{font-size:11px;font-weight:600;color:#005A9E;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-.pc-term-row{display:flex;align-items:center;gap:9px;padding:2px 0;cursor:pointer;border-radius:4px}
-.pc-term-radio{accent-color:#0078D4;cursor:pointer;flex-shrink:0}
-.pc-term-name{font-size:12px;color:#444;flex:1}
-.pc-term-price{font-size:12px;font-weight:600;color:#1A1A2E;white-space:nowrap}
-.pc-term-row.selected .pc-term-name{color:#0078D4;font-weight:500}
-.pc-term-row.selected .pc-term-price{color:#0078D4}
+/* ── in-header term radios ───────────────────────────────────────────────── */
+.pcs-term-radio{accent-color:#0078D4;cursor:pointer;flex-shrink:0}
+.pc-payg-hdr{width:100%;display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.pcs-hdr-left{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.pcs-hdr-price{margin-left:auto;font-size:11px;font-weight:600;color:#005A9E;white-space:nowrap;padding-right:6px}
+.pcs-ahb-row{padding:10px 18px;font-size:13px;font-weight:500;color:#333;display:flex;align-items:center;border-bottom:1px solid #EEF2F7;user-select:none}
+.pcs-ahb-row:hover{background:#F8FBFF}
+.pcs-ahb-row:last-child{border-bottom:none}
+.pcs-ahb-lbl{flex:1}
+.pcs-header:has(.pcs-term-radio:checked){background:#EBF5FF}
+.pcs-ahb-row:has(.pcs-term-radio:checked){background:#EBF5FF}
 
 /* ── typing indicator ───────────────────────────────────────────────────── */
 .typing{display:flex;align-items:center;gap:4px;padding:4px 0}
@@ -457,66 +459,83 @@ function buildCard(text){
     </div>`;
   card.appendChild(head);
 
-  // PAYG box — always visible, no click required
+  // ── term setup: one radio group per card ────────────────────────────────────
+  const _terms = _extractTerms(payg, secs);
+  const _rgroup = 'tc' + (++_cardSeq);
+  const _hasTerms = _terms.length > 1;
+
+  function _mkRadio(label, monthly, isDefault){
+    const rb = document.createElement('input');
+    rb.type='radio'; rb.name=_rgroup; rb.className='pcs-term-radio';
+    rb.value=monthly; rb.dataset.label=label; rb.checked=isDefault;
+    rb.addEventListener('click', e => e.stopPropagation());
+    return rb;
+  }
+  function _secM(sec){
+    if(sec.key==='sp1'||sec.key==='sp3'){
+      const r=sec.rows.find(r=>r.lbl.toLowerCase()==='total')||sec.rows.find(r=>/^per vm/i.test(r.lbl));
+      return r ? parseUSDMonth(r.val) : 0;
+    }
+    if(sec.key==='ri1'||sec.key==='ri3'){
+      const r=sec.rows.find(r=>/^per vm/i.test(r.lbl));
+      return r ? parseUSDMonth(r.val) : 0;
+    }
+    return 0;
+  }
+
+  // PAYG box — radio embedded in label row, prices below
   if(payg.hourly || payg.monthly){
-    const pg = document.createElement('div');
-    pg.className = 'pc-payg';
-    pg.innerHTML = `<div class="pc-payg-lbl">Pay-as-You-Go</div>`
-      +(payg.monthly?`<div class="pc-payg-mo">${esc(payg.monthly)}</div>`:'')
-      +(payg.hourly?`<div class="pc-payg-hr">${esc(payg.hourly)}</div>`:'');
+    const pg = document.createElement('div'); pg.className = 'pc-payg';
+    const paygM = parseUSDMonth(payg.monthly);
+    const hdrRow = document.createElement('div'); hdrRow.className = 'pc-payg-hdr';
+    if(_hasTerms && paygM) hdrRow.appendChild(_mkRadio('PAYG', paygM, true));
+    const lbl = document.createElement('span'); lbl.className='pc-payg-lbl'; lbl.textContent='Pay-as-You-Go';
+    hdrRow.appendChild(lbl);
+    pg.appendChild(hdrRow);
+    if(payg.monthly){ const m=document.createElement('div'); m.className='pc-payg-mo'; m.textContent=payg.monthly; pg.appendChild(m); }
+    if(payg.hourly){ const h=document.createElement('div'); h.className='pc-payg-hr'; h.textContent=payg.hourly; pg.appendChild(h); }
     card.appendChild(pg);
   }
 
-  // ── Term selector ──────────────────────────────────────────────────────────
-  const _terms = _extractTerms(payg, secs);
-  const _rgroup = 'tc' + (++_cardSeq);
-  if(_terms.length > 1){
-    const tblk = document.createElement('div');
-    tblk.className = 'pc-terms';
-    const tlbl = document.createElement('div');
-    tlbl.className = 'pc-terms-lbl';
-    tlbl.textContent = 'Select Pricing Term';
-    tblk.appendChild(tlbl);
-    _terms.forEach((t, i) => {
-      const row = document.createElement('label');
-      row.className = 'pc-term-row' + (i === 0 ? ' selected' : '');
-      const rb = document.createElement('input');
-      rb.type = 'radio'; rb.name = _rgroup; rb.className = 'pc-term-radio';
-      rb.value = t.monthly; rb.dataset.label = t.label; rb.checked = (i === 0);
-      rb.addEventListener('change', () => {
-        tblk.querySelectorAll('.pc-term-row').forEach(r => r.classList.remove('selected'));
-        row.classList.add('selected');
-      });
-      const nm = document.createElement('span'); nm.className = 'pc-term-name'; nm.textContent = t.label;
-      const pr = document.createElement('span'); pr.className = 'pc-term-price'; pr.textContent = 'USD '+t.monthly.toFixed(2)+'/mo';
-      row.appendChild(rb); row.appendChild(nm); row.appendChild(pr);
-      tblk.appendChild(row);
-    });
-    card.appendChild(tblk);
-  }
-
-  // collapsible sections: Savings Plan tiers, RI tiers, AHB
+  // Collapsible sections (SP/RI with radio+price in header) + AHB as flat selectable rows
   if(secs.length){
-    const wrap = document.createElement('div');
-    wrap.className = 'pc-sections';
+    const wrap = document.createElement('div'); wrap.className = 'pc-sections';
     for(const sec of secs){
-      const pcs  = document.createElement('div');
-      pcs.className = 'pcs';
-      const hdr  = document.createElement('div');
-      hdr.className = 'pcs-header';
-      hdr.innerHTML = `<span>${esc(sec.label)}${sec.badge?` <span class="pcs-badge ${sec.bc}">${esc(sec.badge)}</span>`:''}</span><span class="chev">›</span>`;
-      hdr.addEventListener('click', () => pcs.classList.toggle('open'));
-      pcs.appendChild(hdr);
-      const body = document.createElement('div');
-      body.className = 'pcs-body';
-      for(const row of sec.rows){
-        const r = document.createElement('div');
-        r.className = 'pcs-row';
-        r.innerHTML = `<span class="pcs-lbl">${esc(row.lbl)}</span><span class="pcs-val">${esc(row.val)}</span>`;
-        body.appendChild(r);
+      if(sec.key === 'ahb'){
+        // Each AHB pricing row becomes a standalone flat selectable row — no collapse
+        for(const row of sec.rows){
+          if(!/\bHB\b/i.test(row.lbl)) continue;
+          const m = parseUSDMonth(row.val); if(!m) continue;
+          const ar = document.createElement('div'); ar.className = 'pcs-ahb-row';
+          if(_hasTerms) ar.appendChild(_mkRadio(row.lbl, m, false));
+          const nm=document.createElement('span'); nm.className='pcs-ahb-lbl'; nm.textContent=row.lbl;
+          const pr=document.createElement('span'); pr.className='pcs-hdr-price'; pr.textContent='USD '+m.toFixed(2)+'/mo';
+          ar.appendChild(nm); ar.appendChild(pr);
+          wrap.appendChild(ar);
+        }
+      } else {
+        // SP / RI: collapsible with radio + total price in header
+        const sm = _secM(sec);
+        const pcs = document.createElement('div'); pcs.className = 'pcs';
+        const hdr = document.createElement('div'); hdr.className = 'pcs-header';
+        hdr.addEventListener('click', () => pcs.classList.toggle('open'));
+        const left = document.createElement('span'); left.className = 'pcs-hdr-left';
+        if(_hasTerms && sm) left.appendChild(_mkRadio(sec.label, sm, false));
+        const nm = document.createElement('span'); nm.textContent = sec.label; left.appendChild(nm);
+        if(sec.badge){ const b=document.createElement('span'); b.className='pcs-badge '+sec.bc; b.textContent=sec.badge; left.appendChild(b); }
+        if(sm){ const pr=document.createElement('span'); pr.className='pcs-hdr-price'; pr.textContent='USD '+sm.toFixed(2)+'/mo'; left.appendChild(pr); }
+        hdr.appendChild(left);
+        const chev=document.createElement('span'); chev.className='chev'; chev.textContent='›'; hdr.appendChild(chev);
+        pcs.appendChild(hdr);
+        const body = document.createElement('div'); body.className = 'pcs-body';
+        for(const row of sec.rows){
+          const r=document.createElement('div'); r.className='pcs-row';
+          r.innerHTML=`<span class="pcs-lbl">${esc(row.lbl)}</span><span class="pcs-val">${esc(row.val)}</span>`;
+          body.appendChild(r);
+        }
+        pcs.appendChild(body);
+        wrap.appendChild(pcs);
       }
-      pcs.appendChild(body);
-      wrap.appendChild(pcs);
     }
     card.appendChild(wrap);
   }
