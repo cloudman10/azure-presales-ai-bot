@@ -8,12 +8,12 @@
 ## Current Status (2026-06-20) — v1.5.0
 
 ### Last Known-Good State (2026-06-20)
-- Commit: d133c146fdaf1c8d212b96f7eb8e22bf255814f2 (main)
-- Status: main + dev healthy. ARM deployability gate live; AI Search re-indexed (1185 SKUs). Melbourne + Australia East both verified returning 3 valid deployable options, no "?" RAM.
+- Commit: pending merge (see below)
+- Status: main + dev healthy. ARM deployability gate live; AI Search re-indexed (1185 SKUs); per-VM pricing term selection (PAYG/SP/RI/+HB radios) live.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard d133c146fdaf1c8d212b96f7eb8e22bf255814f2
+  git reset --hard <commit-hash>
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
@@ -95,6 +95,30 @@ Gates advisor recommendations on ARM Compute SKU deployability — prevents reco
 
 **Index staleness:** The index is a point-in-time snapshot of australiaeast ARM SKUs. It drifts as Azure adds/retires SKUs. The ARM deployability gate (`fetch_deployable_skus`) is the correctness gate — a stale index causes "?" in specs but never causes a bad SKU recommendation. Consider scheduling the indexer. [deferred]
 
+### Quote — pricing term selection (2026-06-20) — COMPLETE
+
+Users can select one pricing term per VM card before adding to the quote. The selected term's monthly cost and label feed the basket line.
+
+**Term selection (`static/index.html`):**
+- Radio button placed inside each pricing term's own header — no separate selection block. PAYG default. Exactly one term selectable per card (single radio group, unique `tc{n}` name per card).
+- Available terms: PAYG (hero block), 1-Year Savings Plan, 3-Year Savings Plan, 1-Year Reserved Instance, 3-Year Reserved Instance. Windows-only additions: PAYG + HB, 1-Year RI + HB, 3-Year RI + HB. Linux cards: no +HB rows.
+- Clicking a term's radio selects it without expanding the breakdown body (`stopPropagation` prevents header click from firing). Clicking the rest of the header still toggles the accordion. SP/RI: radio + total monthly price in the collapsible header. +HB rows: same collapsible style, each with its own radio.
+- `card._getSelectedTerm()` → `{label, monthly}` reads the checked radio; `addToQuote()` sends `vm_unit_cost: monthly, term: label`. Mixed terms across basket lines fully supported.
+
+**+HB = Linux-equivalent rate (compute only, Windows licence removed):**
+- +HB values are actual Linux prices fetched from the Azure Retail Prices API — not a percentage approximation. `PAYG + HB = linux_payg['retailPrice'] * 730`; `1/3-Year RI + HB = ri_monthly(find_price(items, 'Linux', 'Reservation', '1/3 Year'))`. No backend change was needed — the pricing agent already fetches Linux rates directly.
+- Verified: D4s_v5 Australia East — Windows PAYG $309.52/mo, Linux PAYG $175.20/mo. $309.52 − $134.32 (Windows licence RRP) = $175.20. PAYG + HB matches Linux PAYG exactly.
+- Each +HB row expands to: `Compute: $X/month` (the Linux-equivalent rate) + `License: $0.00/month  (Azure Hybrid Benefit)` + `Total: $X/month`. BYO-licence assumption is explicit inline.
+
+**Basket + export:**
+- Storage stays undiscounted regardless of term (RI/SP/HB discounts apply to compute only; disk costs added at list price).
+- Basket drawer label: `Nx Standard_D4s_v5 (3-Year RI + HB)` — SKU + term in parentheses, monthly line total.
+- Excel/PDF: VM row description is `VM - {term}` (e.g. `VM - 3-Year Reserved Instance`).
+- +HB footnote appended to export when any basket line carries a `+ HB` term: `"+ HB lines assume customer owns eligible Azure Hybrid Benefit (Windows Server) licenses."`
+- Monthly figures only throughout — no annual or committed-cost totals shown.
+
+**Note — SP + HB not offered:** No Azure Retail Prices API data exists for Savings Plan + Hybrid Benefit combined. RI + HB is available and shown. SP + HB is omitted; flag as a possible future addition if a customer asks.
+
 ---
 
 ### Storage Pricing — Phase 1 §2.2 (2026-06-08) — COMPLETE
@@ -143,6 +167,7 @@ All session state (conversation history, advisor picks, quote basket) lives in a
 - Minor formatter spacing nits ("Microsoft RetailRRP", "Capacity only;per-10K")
 
 ### Next / deferred
+- **SP + HB combination** — no Azure Retail Prices API data for Savings Plan + Hybrid Benefit combined; RI + HB is available and shown. Flag as a possible future addition if a customer specifically asks.
 - **Quote history / save** — deferred. Options: (a) new-conversation confirm guard; (b) client-side save/restore to JSON file; (c) named server-side saved quotes (requires Redis + auth). Redis migration gates all server-side persistence options.
 - **Session/basket persistence migration** — Redis (Azure Cache for Redis) required before prod basket + saved quotes. Unblocks basket on prod and fixes the multi-worker advisor "session cleared" bug.
 - **Phase 2 storage features** — Standard SSD/HDD transaction costs, full v2 IOPS/throughput, snapshots/backup, blob storage, Azure Files premium.
@@ -385,6 +410,7 @@ azure-presales-ai-bot/
 - Alt-region advisor pick fix — `_picks.sku_region_displays[]` per option; frontend prices each option in its own source region (fixes "pricing fetch failed" on `[Available in Australia East]` alt-region fills)
 - Advisor deployability gate — `fetch_deployable_skus()` cross-checks ARM Compute SKUs; candidates absent from ARM filtered before scoring; ARM data cached 1 hour and shared with `fetch_temp_storage_gb` / `vm_supports_premium`; ARM + Prices API fetched concurrently via `asyncio.gather`
 - AI Search index refreshed (2026-06-20) — 1,185 SKUs incl. Easv6 variants; indexer switched to `DefaultAzureCredential` (CLI locally, Managed Identity in prod)
+- Per-VM pricing term selection — radio in each term's own header (PAYG hero, 1/3-Yr SP, 1/3-Yr RI, PAYG+HB, 1/3-Yr RI+HB for Windows); PAYG default; radio click selects without expanding breakdown; SP/RI show total monthly in header; +HB rows collapsible with Compute + License $0 (AHB) + Total; basket and export show term label per line; +HB footnote in export; storage undiscounted regardless of term
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
 - Modern SKU preference — v4/v5/v6 ranked above v1/v2; Promo/Basic excluded
 - CORS middleware (`allow_origins=["*"]`) for Replit frontend access
