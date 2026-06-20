@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 # ── Load .env from repo root ───────────────────────────────────────────────────
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from azure.identity import ClientSecretCredential, DefaultAzureCredential
+from azure.identity import DefaultAzureCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
@@ -45,10 +45,6 @@ SEARCH_API_KEY     = os.environ["AZURE_SEARCH_API_KEY"]
 SEARCH_INDEX       = "vm-skus"
 TARGET_REGION      = "australiaeast"
 UPLOAD_BATCH_SIZE  = 100
-
-TENANT_ID     = os.getenv("AZURE_TENANT_ID")
-CLIENT_ID     = os.getenv("AZURE_CLIENT_ID")
-CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET")
 
 # ── Series metadata ────────────────────────────────────────────────────────────
 
@@ -111,10 +107,7 @@ def _series_letter(sku_name: str) -> str:
 
 
 def _get_credential():
-    if TENANT_ID and CLIENT_ID and CLIENT_SECRET:
-        log.info("Auth: ClientSecretCredential (service principal)")
-        return ClientSecretCredential(TENANT_ID, CLIENT_ID, CLIENT_SECRET)
-    log.info("Auth: DefaultAzureCredential (Managed Identity / CLI)")
+    log.info("Auth: DefaultAzureCredential (CLI locally / Managed Identity in prod)")
     return DefaultAzureCredential()
 
 

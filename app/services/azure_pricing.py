@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import re
+import time as _time
 
 import httpx
 
@@ -170,29 +171,89 @@ async def _get_arm_token() -> str | None:
         return None
 
 
-async def fetch_temp_storage_gb(sku: str, region: str) -> int | None:
-    subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
-    if not subscription_id:
-        return None
+# ── ARM Compute SKU cache ─────────────────────────────────────────────────────
+# One ARM call per region per process, shared by all three callers below.
+# TTL: 1 hour — the SKU list changes at most on monthly Azure updates.
+
+_arm_sku_cache: dict[str, tuple[float, list[dict]]] = {}
+_ARM_SKU_TTL = 3600
+
+
+async def _get_arm_skus_for_region(region: str) -> list[dict]:
+    """
+    Fetch and cache all ARM Compute SKU records for a region.
+    Follows nextLink pagination so no SKU is missed.
+    Returns [] on any credential/network failure — callers must treat [] as 'skip filter'.
+    """
+    cached = _arm_sku_cache.get(region)
+    if cached:
+        ts, skus = cached
+        if _time.monotonic() - ts < _ARM_SKU_TTL:
+            return skus
+
     token = await _get_arm_token()
-    if not token:
-        return None
+    sub   = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+    if not token or not sub:
+        logger.warning("_get_arm_skus_for_region: no ARM credentials for region=%s", region)
+        return []
+
+    all_skus: list[dict] = []
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus"
-            resp = await client.get(
-                url,
-                params={'api-version': '2021-07-01', '$filter': f"location eq '{region}'"},
-                headers={'Authorization': f'Bearer {token}'},
+        async with httpx.AsyncClient(timeout=20) as client:
+            next_url: str | None = (
+                f"https://management.azure.com/subscriptions/{sub}"
+                "/providers/Microsoft.Compute/skus"
             )
-            if not resp.is_success:
-                return None
-            for s in resp.json().get('value', []):
-                if s.get('name') == sku and s.get('resourceType') == 'virtualMachines':
-                    for cap in s.get('capabilities', []):
-                        if cap.get('name') == 'MaxResourceVolumeMB':
-                            mb = int(cap.get('value', 0))
-                            return mb // 1024 if mb > 0 else None
+            params: dict | None = {
+                "api-version": "2021-07-01",
+                "$filter": f"location eq '{region}'",
+            }
+            while next_url:
+                resp = await client.get(
+                    next_url,
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                if not resp.is_success:
+                    logger.warning(
+                        "_get_arm_skus_for_region: HTTP %d region=%s",
+                        resp.status_code, region,
+                    )
+                    break
+                data = resp.json()
+                all_skus.extend(data.get("value", []))
+                next_url = data.get("nextLink")
+                params   = None  # nextLink is self-contained
+    except Exception as e:
+        logger.warning("_get_arm_skus_for_region: error region=%s: %s", region, e)
+        return []
+
+    _arm_sku_cache[region] = (_time.monotonic(), all_skus)
+    logger.info("_get_arm_skus_for_region: cached %d ARM SKUs for region=%s", len(all_skus), region)
+    return all_skus
+
+
+async def fetch_deployable_skus(region: str) -> set[str]:
+    """
+    Return the set of armSkuName values actually deployable in this region
+    per ARM Compute (resourceType='virtualMachines').
+    Empty set on failure — callers must skip the filter when this returns empty.
+    """
+    skus   = await _get_arm_skus_for_region(region)
+    result = {s["name"] for s in skus if s.get("resourceType") == "virtualMachines"}
+    logger.info("fetch_deployable_skus: region=%s count=%d", region, len(result))
+    return result
+
+
+async def fetch_temp_storage_gb(sku: str, region: str) -> int | None:
+    """Temp disk size in GiB from cached ARM Compute SKU capabilities."""
+    try:
+        for s in await _get_arm_skus_for_region(region):
+            if s.get("name") == sku and s.get("resourceType") == "virtualMachines":
+                for cap in s.get("capabilities", []):
+                    if cap.get("name") == "MaxResourceVolumeMB":
+                        mb = int(cap.get("value", 0))
+                        return mb // 1024 if mb > 0 else None
     except Exception:
         return None
     return None
@@ -268,25 +329,12 @@ async def fetch_v2_capacity_rate(region: str) -> float | None:
 async def vm_supports_premium(sku: str, region: str) -> bool:
     """True if VM SKU exposes PremiumIO=True in ARM Compute capabilities.
     Returns False on any failure (safe default → Standard only)."""
-    token = await _get_arm_token()
-    sub   = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
-    if not token or not sub:
-        return False
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            url  = f"https://management.azure.com/subscriptions/{sub}/providers/Microsoft.Compute/skus"
-            resp = await client.get(
-                url,
-                params={"api-version": "2021-07-01", "$filter": f"location eq '{region}'"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            if not resp.is_success:
-                return False
-            for s in resp.json().get("value", []):
-                if s.get("name") == sku and s.get("resourceType") == "virtualMachines":
-                    for cap in s.get("capabilities", []):
-                        if cap.get("name") == "PremiumIO":
-                            return str(cap.get("value", "")).lower() == "true"
+        for s in await _get_arm_skus_for_region(region):
+            if s.get("name") == sku and s.get("resourceType") == "virtualMachines":
+                for cap in s.get("capabilities", []):
+                    if cap.get("name") == "PremiumIO":
+                        return str(cap.get("value", "")).lower() == "true"
     except Exception:
         return False
     return False

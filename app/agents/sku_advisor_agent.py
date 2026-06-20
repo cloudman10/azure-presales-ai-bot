@@ -601,12 +601,17 @@ async def _pick_vms_from_prices(
     concurrently.  Each returned dict contains a '_price_item' key with the
     raw API price record; the caller pops it before passing to format_recommendations.
     """
-    from app.services.azure_pricing import fetch_vm_prices_for_region
+    from app.services.azure_pricing import fetch_deployable_skus, fetch_vm_prices_for_region
 
-    raw = await fetch_vm_prices_for_region(region, os_type)
+    # Fire Prices API and ARM deployability check concurrently — ARM result is cached
+    # after first call per region so the second+ recommendation in a session is free.
+    raw, deployable = await asyncio.gather(
+        fetch_vm_prices_for_region(region, os_type),
+        fetch_deployable_skus(region),
+    )
     logger.info(
-        "sku_advisor: _pick_vms_from_prices region=%s os=%s raw=%d vcpus_req=%s",
-        region, os_type, len(raw), vcpus,
+        "sku_advisor: _pick_vms_from_prices region=%s os=%s raw=%d deployable_arm=%d vcpus_req=%s",
+        region, os_type, len(raw), len(deployable), vcpus,
     )
 
     def _is_standard(item: dict) -> bool:
@@ -627,6 +632,18 @@ async def _pick_vms_from_prices(
         )
 
     items = [i for i in raw if _is_standard(i)]
+
+    # ARM deployability gate — exclude any SKU not listed in ARM Compute for this region.
+    # The Prices API publishes "projected" prices (isPrimaryMeterRegion=false) for SKUs
+    # that are in the global catalogue but not actually deployable in the region.
+    # Authoritative source: ARM Compute/skus. Skip filter only if ARM call failed (deployable=={}).
+    if deployable:
+        before = len(items)
+        items  = [i for i in items if i.get("armSkuName") in deployable]
+        logger.info(
+            "sku_advisor: ARM deployability gate region=%s excluded=%d remaining=%d",
+            region, before - len(items), len(items),
+        )
 
     if vcpus:
         items = [i for i in items
