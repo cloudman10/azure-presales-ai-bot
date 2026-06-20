@@ -7,13 +7,13 @@
 
 ## Current Status (2026-06-20) — v1.5.0
 
-### Last Known-Good State (2026-06-14)
-- Commit: f22e1ef2c2c8b177596c0c43d1500f6b7b42a4ab (main)
-- Status: main + dev healthy, v1.5.0 multi-VM basket + export merged to main.
+### Last Known-Good State (2026-06-20)
+- Commit: d133c146fdaf1c8d212b96f7eb8e22bf255814f2 (main)
+- Status: main + dev healthy. ARM deployability gate live; AI Search re-indexed (1185 SKUs). Melbourne + Australia East both verified returning 3 valid deployable options, no "?" RAM.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard f22e1ef2c2c8b177596c0c43d1500f6b7b42a4ab
+  git reset --hard d133c146fdaf1c8d212b96f7eb8e22bf255814f2
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
