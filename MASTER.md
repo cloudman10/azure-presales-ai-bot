@@ -5,15 +5,15 @@
 
 ---
 
-## Current Status (2026-06-21) — v1.5.2
+## Current Status (2026-06-21) — v1.5.3
 
 ### Last Known-Good State (2026-06-21)
-- Commit: 151359667e42826ed7e0725465ccffbde8a18adb (main)
-- Status: main + dev healthy. All LLM calls through Azure AI Foundry (GPT-4o). Anthropic dependency removed. ANTHROPIC_API_KEY removed from dev App Service.
+- Commit: aa4c262 → pending merge to main
+- Status: dev healthy. LLM_PROVIDER=foundry active; Anthropic path dormant behind flag. All three chat paths (pricing, advisor, fallback) verified on dev.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard 151359667e42826ed7e0725465ccffbde8a18adb
+  git reset --hard <prev-hash>
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
@@ -222,15 +222,21 @@ Dev stays on self-signed by design. Azure managed cert attempted 2026-06-07 — 
 
 ### LLM Engine — SINGLE PROVIDER (Azure AI Foundry / GPT-4o)
 
-All LLM calls go through Azure AI Foundry (GPT-4o). No Anthropic dependency remains.
+Active provider: **Azure AI Foundry / GPT-4o** (controlled by `LLM_PROVIDER=foundry`, the default).
+Anthropic Claude is wired but dormant — switch via config when Anthropic becomes billable on the Azure subscription.
 
 | Agent / path | Provider | Model | Auth |
 |---|---|---|---|
 | `pricing_agent.py` — VM pricing flow | **Azure OpenAI** via Azure AI Foundry | `gpt-4o` (`AZURE_OPENAI_DEPLOYMENT`, default `gpt-4o`) | API key header (`AZURE_OPENAI_KEY`) |
-| `orchestrator._call_llm()` — general conversation fallback | **Azure OpenAI** via Azure AI Foundry | same deployment as above | same key / endpoint |
+| `orchestrator._call_llm()` — general conversation fallback | **routed by `LLM_PROVIDER`** — currently Foundry/GPT-4o | same as above when `foundry` | same key / endpoint |
 | `sku_advisor_agent.py` — scenario advisor | No LLM — Azure AI Search + rule-based only | — | `AZURE_SEARCH_API_KEY` |
 
-**Note:** Both agent paths call Azure OpenAI via raw `httpx` (no `openai` Python SDK — hence it's not in `requirements.txt`). The `anthropic` package and `ANTHROPIC_API_KEY` env var have been fully removed. Verified on dev: fallback works with `ANTHROPIC_API_KEY` absent from App Service settings (2026-06-21).
+**`LLM_PROVIDER` flag (`orchestrator._call_llm`):**
+- `"foundry"` (default, active) → `_call_foundry()` — Azure AI Foundry / GPT-4o via httpx. No Anthropic call.
+- `"anthropic"` (dormant) → `_call_anthropic()` — Anthropic Claude Sonnet (`claude-sonnet-4-20250514`). Requires `ANTHROPIC_API_KEY`.
+
+**To switch to Anthropic** (when available on the Azure subscription): set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` in App Service settings. No rebuild or code change needed.
+`ANTHROPIC_API_KEY` is NOT in App Service settings today — the code handles it absent cleanly when `LLM_PROVIDER=foundry`.
 
 ### Hosting
 
@@ -243,8 +249,8 @@ All LLM calls go through Azure AI Foundry (GPT-4o). No Anthropic dependency rema
 
 | Service | Auth method | Env vars involved |
 |---|---|---|
-| Azure OpenAI (pricing_agent) | API key | `AZURE_OPENAI_KEY` |
-| Anthropic Claude (orchestrator) | API key | `ANTHROPIC_API_KEY` |
+| Azure OpenAI — all active LLM paths | API key | `AZURE_OPENAI_KEY` |
+| Anthropic Claude — dormant (`LLM_PROVIDER=anthropic`) | API key | `ANTHROPIC_API_KEY` (not set; add when switching) |
 | Azure AI Search (advisor + indexer) | Admin key (`AzureKeyCredential`) | `AZURE_SEARCH_API_KEY` |
 | ARM Compute SKU API (azure_pricing.py) | MSI **or** service principal (SP wins if all 3 vars set) | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` |
 | ARM (indexer script, local only) | `DefaultAzureCredential` (CLI locally / MSI in prod) | `AZURE_SUBSCRIPTION_ID` |
@@ -260,8 +266,12 @@ All LLM calls go through Azure AI Foundry (GPT-4o). No Anthropic dependency rema
 - `AZURE_OPENAI_KEY` — API key for Azure AI Foundry
 - `AZURE_OPENAI_DEPLOYMENT` — deployment name (default: `gpt-4o`)
 
+**LLM provider flag:**
+- `LLM_PROVIDER` — `"foundry"` (default, active) or `"anthropic"` (dormant). Set in App Service settings.
+
 **LLM — `orchestrator._call_llm()` (general conversation fallback):**
-- Uses the same `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_KEY` / `AZURE_OPENAI_DEPLOYMENT` as `pricing_agent.py`. No separate env vars.
+- When `LLM_PROVIDER=foundry`: uses the same `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_KEY` / `AZURE_OPENAI_DEPLOYMENT`. No separate env vars.
+- When `LLM_PROVIDER=anthropic`: requires `ANTHROPIC_API_KEY`. Key is not set in App Service today.
 
 **Azure AI Search (`sku_advisor_agent.py`):**
 - `AZURE_SEARCH_ENDPOINT` — `https://hyperxen-search.search.windows.net`
@@ -625,7 +635,7 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 | `AZURE_CLIENT_SECRET` | Service principal secret |
 | `AZURE_SEARCH_ENDPOINT` | `https://hyperxen-search.search.windows.net` |
 | `AZURE_SEARCH_API_KEY` | Azure AI Search admin key |
-| ~~`ANTHROPIC_API_KEY`~~ | **REMOVED** — Anthropic dependency eliminated 2026-06-21. Key removed from App Service. |
+| `ANTHROPIC_API_KEY` | Anthropic API key — **not set in App Service** (Anthropic path dormant). Add when switching `LLM_PROVIDER=anthropic`. |
 | `ENVIRONMENT` | `dev` / `prod` |
 | `PORT` | `8000` |
 
