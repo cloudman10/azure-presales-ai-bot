@@ -23,7 +23,8 @@
 | Frontend (Replit UI) | ✅ Live |
 | Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
 | Dev App | ✅ Live and healthy — https://hyperxen-pricing-bot-dev.azurewebsites.net |
-| LLM (GPT-4o via Azure AI Foundry) | ✅ Verified working |
+| LLM — GPT-4o via Azure AI Foundry (`pricing_agent`) | ✅ Verified working |
+| LLM — Claude Sonnet 4 via Anthropic (`orchestrator` fallback) | ✅ Live |
 | Azure AI Search | ✅ Indexed (1185 active SKUs, re-indexed 2026-06-20) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
@@ -218,6 +219,81 @@ Dev stays on self-signed by design. Azure managed cert attempted 2026-06-07 — 
 
 ---
 
+## Runtime Environment (audited 2026-06-21)
+
+### LLM Engine — DUAL PROVIDER
+
+The app uses two LLM providers simultaneously:
+
+| Agent / path | Provider | Model | Auth |
+|---|---|---|---|
+| `pricing_agent.py` — VM pricing flow | **Azure OpenAI** via Azure AI Foundry | `gpt-4o` (`AZURE_OPENAI_DEPLOYMENT`, default `gpt-4o`) | API key header (`AZURE_OPENAI_KEY`) |
+| `orchestrator._call_claude()` — general conversation fallback | **Anthropic Claude** (direct API) | `claude-sonnet-4-20250514` | SDK via `ANTHROPIC_API_KEY` |
+| `sku_advisor_agent.py` — scenario advisor | No LLM — Azure AI Search + rule-based only | — | `AZURE_SEARCH_API_KEY` |
+
+**Note:** `pricing_agent.py` calls Azure OpenAI via raw `httpx` (not the `openai` Python SDK), which is why `requirements.txt` has no `openai` package. The Anthropic SDK (`anthropic==0.97.0`) is used for the Claude fallback path.
+
+### Hosting
+
+- **Platform:** Azure App Service Linux B1 (`rg-hyperxen-app-dev`)
+- **Runtime:** Python 3.11
+- **Process manager:** `gunicorn -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 app.main:app` (from `startup.sh`)
+- **Worker count:** `-w 1` — **intentional, required** while session state is in-memory (`app/state.py`). Multi-worker breaks basket/session consistency. Redis required before increasing workers.
+
+### Auth / Identity Model
+
+| Service | Auth method | Env vars involved |
+|---|---|---|
+| Azure OpenAI (pricing_agent) | API key | `AZURE_OPENAI_KEY` |
+| Anthropic Claude (orchestrator) | API key | `ANTHROPIC_API_KEY` |
+| Azure AI Search (advisor + indexer) | Admin key (`AzureKeyCredential`) | `AZURE_SEARCH_API_KEY` |
+| ARM Compute SKU API (azure_pricing.py) | MSI **or** service principal (SP wins if all 3 vars set) | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` |
+| ARM (indexer script, local only) | `DefaultAzureCredential` (CLI locally / MSI in prod) | `AZURE_SUBSCRIPTION_ID` |
+| Application Insights | Connection string | `APPLICATIONINSIGHTS_CONNECTION_STRING` |
+| GitHub Actions CI/CD | Service principal `hyperxen-github-actions` | `AZURE_CREDENTIALS` (GitHub Secret) |
+
+**ARM auth fallback:** If `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` are all set → service principal path. If any is missing → MSI via `http://169.254.169.254/metadata`. On App Service the MSI path works; the SP path is the **expiry risk**.
+
+### All Environment Variables (runtime, grouped)
+
+**LLM — Azure OpenAI (`pricing_agent.py`):**
+- `AZURE_OPENAI_ENDPOINT` — `https://hyperxen-foundry-presales1.services.ai.azure.com`
+- `AZURE_OPENAI_KEY` — API key for Azure AI Foundry
+- `AZURE_OPENAI_DEPLOYMENT` — deployment name (default: `gpt-4o`)
+
+**LLM — Anthropic Claude (`orchestrator._call_claude()`):**
+- `ANTHROPIC_API_KEY` — Anthropic API key; live in production
+
+**Azure AI Search (`sku_advisor_agent.py`):**
+- `AZURE_SEARCH_ENDPOINT` — `https://hyperxen-search.search.windows.net`
+- `AZURE_SEARCH_API_KEY` — admin key (also used by `scripts/index_vm_skus.py`)
+
+**ARM Compute SKU API (`azure_pricing.py`):**
+- `AZURE_SUBSCRIPTION_ID` — subscription for ARM SKU queries and indexer
+- `AZURE_TENANT_ID` — optional; only needed for SP path (else MSI)
+- `AZURE_CLIENT_ID` — optional; only needed for SP path
+- `AZURE_CLIENT_SECRET` — optional; only needed for SP path — **⚠ EXPIRY RISK**
+
+**Observability:**
+- `APPLICATIONINSIGHTS_CONNECTION_STRING` — Azure Monitor SDK (`configure_azure_monitor()` in `main.py`)
+
+**Runtime / framework:**
+- `ENVIRONMENT` — `dev` or `prod` (read by `settings.py` / `pydantic-settings`)
+- `PORT` — `8000` (read by `settings.py`)
+
+### Expiry-Prone Secrets — Watch List
+
+| Secret | Location | Risk | Rotation action |
+|---|---|---|---|
+| `AZURE_CLIENT_SECRET` | App Service app settings | **HIGH** — SP secret, typically 1–2 yr expiry. Expiry silently falls back to MSI; if MSI also fails ARM SKU lookups degrade (temp storage, premium gate, deployability filter return empty). | `az ad sp credential reset --id <client-id>`; update App Service setting |
+| `AZURE_CREDENTIALS` (GitHub Secret) | GitHub Actions | **MEDIUM** — expires ~May 2027 (service principal `hyperxen-github-actions`, clientId `51c2f18d-444d-4af8-8129-8ec4b317fb0f`). Expiry breaks CI/CD deploys. | `az ad sp credential reset --id 51c2f18d-444d-4af8-8129-8ec4b317fb0f`; update GitHub Secret |
+| Dev SSL cert | App Service TLS binding | **LOW** — self-signed, expires 2027-05-02. Only affects `dev.hyperxen.com`. | Regenerate PFX with openssl, re-upload and rebind |
+| `AZURE_OPENAI_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Azure AI Foundry portal → Keys |
+| `ANTHROPIC_API_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Anthropic console |
+| `AZURE_SEARCH_API_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Azure AI Search portal → Keys |
+
+---
+
 ## Architecture
 
 ```
@@ -241,9 +317,13 @@ Azure App Service (dev)     Azure App Service (prod)
         │                          │
         └──────────┬───────────────┘
                    │
-        ├──► GPT-4o via Azure AI Foundry
+        ├──► GPT-4o via Azure AI Foundry  (pricing_agent — VM pricing flow)
         │    https://hyperxen-foundry-presales1.services.ai.azure.com
         │    Deployment: gpt-4o
+        │
+        ├──► Anthropic Claude Sonnet     (orchestrator — general conversation fallback)
+        │    https://api.anthropic.com
+        │    Model: claude-sonnet-4-20250514
         │
         ├──► Azure AI Search
         │    https://hyperxen-search.search.windows.net
@@ -331,7 +411,7 @@ To switch back to prod: change `BACKEND_URL` value back to `https://hyperxen-pri
 | Setting | Value |
 |---------|-------|
 | Runtime | PYTHON\|3.11 |
-| Startup command | `uvicorn app.main:app --host 0.0.0.0 --port 8000` |
+| Startup command | `startup.sh` → `gunicorn -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 app.main:app` |
 | Health check path | `/` |
 | `PYTHONPATH` | `/home/site/wwwroot` |
 | `AZURE_OPENAI_ENDPOINT` | `https://hyperxen-foundry-presales1.services.ai.azure.com` |
@@ -530,7 +610,7 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 | 7 | ✅ Done | SKU normalization (including constrained vCPU) |
 | 8 | ✅ Done | Temp storage via ARM SKU capabilities API |
 | 9 | ✅ Done | Deployed to Azure App Service (Bicep), URL live |
-| 10 | ⏳ Pending | Claude via Foundry — Microsoft quota approval pending |
+| 10 | ✅ Done | Claude Sonnet live as general conversation fallback (`orchestrator._call_claude`) — Anthropic direct API |
 | 11 | ✅ Done | SKU Advisor Agent with Azure AI Search |
 | 12 | ✅ Done | Report Agent — Excel/PDF download with HyperXen branding |
 | 13 | ✅ Done | Replit Frontend — HyperXen.ai connected to backend |
@@ -551,7 +631,7 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 | `AZURE_CLIENT_SECRET` | Service principal secret |
 | `AZURE_SEARCH_ENDPOINT` | `https://hyperxen-search.search.windows.net` |
 | `AZURE_SEARCH_API_KEY` | Azure AI Search admin key |
-| `ANTHROPIC_API_KEY` | Anthropic API key (for future Claude integration) |
+| `ANTHROPIC_API_KEY` | Anthropic API key — **LIVE**: `orchestrator._call_claude()` uses Claude Sonnet for general conversation fallback |
 | `ENVIRONMENT` | `dev` / `prod` |
 | `PORT` | `8000` |
 
