@@ -2,7 +2,7 @@ import logging
 import os
 import re
 
-import anthropic
+import httpx
 
 from app.agents import pricing_agent
 from app.agents.sku_advisor_agent import detect_scenario_query, parse_requirements
@@ -265,7 +265,7 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
 
     else:
         logger.debug("session=%s routing to orchestrator (general)", session_id)
-        result = await _call_claude(history)
+        result = await _call_llm(history)
 
     # Append assistant reply to history
     history.append({"role": "assistant", "content": result["reply"]})
@@ -273,19 +273,27 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
     return result
 
 
-async def _call_claude(messages: list[dict]) -> dict:
+async def _call_llm(messages: list[dict]) -> dict:
+    endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
+    api_key    = os.environ["AZURE_OPENAI_KEY"]
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+    url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=2024-02-01"
+    logger.info("orchestrator._call_llm: endpoint=%s deployment=%s", endpoint, deployment)
     try:
-        client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=512,
-            system=SYSTEM_PROMPT,
-            messages=messages,
-        )
-        text = response.content[0].text if response.content else ""
+        oai_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for m in messages:
+            oai_messages.append({"role": m["role"], "content": m["content"]})
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json={"model": deployment, "messages": oai_messages, "max_tokens": 512},
+            )
+        response.raise_for_status()
+        text = response.json()["choices"][0]["message"]["content"]
         return {"reply": text, "type": "conversation"}
     except Exception as e:
-        logger.error("_call_claude failed: %s", e)
+        logger.error("_call_llm failed: %s", e)
         return {
             "reply": (
                 "I'm not able to answer that right now, but I can help with Azure VM pricing. "
