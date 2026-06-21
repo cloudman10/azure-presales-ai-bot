@@ -98,7 +98,7 @@ def render_architecture(arch: dict) -> bytes:
                 nodes: dict = {}
 
                 if region:
-                    with Cluster(f"Azure  —  {region}"):
+                    with Cluster(f"Azure - {region}"):
                         for res in resources:
                             cls = type_map.get(res["type"], fallback)
                             nodes[res["id"]] = cls(res["name"])

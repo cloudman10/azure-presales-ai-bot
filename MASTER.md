@@ -551,6 +551,25 @@ $content = Invoke-RestMethod -Uri $defaultLog.href -Headers @{Authorization="Bas
 ($content -split "`n") | Select-Object -Last 50
 ```
 
+### Deployment Gotchas
+
+**`startup.sh` does NOT update via the normal Oryx/Kudu deploy.**
+`startup.sh` lives at `/home/site/startup.sh` on the persistent `/home` volume. Oryx-based deploys (zip → Kudu → `output.tar.zst`) never touch this file. Before 2026-06-21, deploys would silently leave the old version running indefinitely — this is why the graphviz install block "had no effect" even after code was updated.
+
+Fix in place: both GH Actions workflows now include a `curl -X PUT` step that writes `startup.sh` directly to `/home/site/startup.sh` via the Kudu VFS API after each successful deploy. If `startup.sh` changes ever seem to "not take effect," check:
+1. Whether the GH Actions "Sync startup.sh" step ran successfully (check workflow logs).
+2. Whether the container has restarted since the sync (new file is only read on next container start).
+
+**Graphviz installed at container start, not build time.**
+The `diagrams` library (`/api/diagram/*`) requires the `dot` binary, which is not pre-installed in the Azure App Service Python 3.11 container. `startup.sh` installs it via `apt-get install -y graphviz` on each cold-container start (~10s overhead). Confirmed working as of 2026-06-21: `dot - graphviz version 2.43.0` at `/usr/bin/dot`.
+
+Future hardening option: a custom Docker image with Graphviz baked in (`FROM mcr.microsoft.com/appsvc/python:3.11 && RUN apt-get install -y graphviz`) is the robust long-term alternative if the startup-install ever proves flaky (slow cold starts, apt unavailable, Azure removes root access). Requires switching App Service to Custom Container mode with ACR. Filed as a known future hardening item — current approach is stable.
+
+**Self-healing fallback for `az webapp restart`.**
+`az webapp restart` kills the container process and clears ephemeral `/tmp/`. The Oryx-built `antenv` (normally in `/tmp/<hash>/antenv/`) is gone, so the standard gunicorn launch path breaks. `startup.sh` detects this and falls back to re-extracting `/home/site/wwwroot/output.tar.zst` into persistent `/home/site/oryx-build/`. Re-extraction only runs when `output.tar.zst` is newer than the last extract (~2–4 min for 242 MB uncompressed); subsequent restarts reuse the existing `/home/site/oryx-build/antenv` directly (fast path, <1s).
+
+---
+
 ### Bicep Infrastructure
 
 > Always run `az deployment group what-if --resource-group rg-hyperxen-app-dev --template-file infra/main.bicep` before deploying Bicep to preview changes.

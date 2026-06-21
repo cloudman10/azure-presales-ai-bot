@@ -5,11 +5,14 @@ app/routers/diagram.py
   GET  /health   — graphviz availability check
   GET  /sample   — render hardcoded 3-tier sample → image/png
   POST /chat     — AI architecture discovery conversation
+  POST /render   — render architecture JSON → image/png
 """
 
 import asyncio
+import base64
 import logging
 import shutil
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -27,6 +30,13 @@ router = APIRouter()
 class DiagramChatRequest(BaseModel):
     session_id: str
     message: str
+
+
+class RenderRequest(BaseModel):
+    title: str
+    region: str
+    resources: list[dict[str, Any]]
+    connections: list[dict[str, Any]]
 
 
 @router.get("/health")
@@ -97,4 +107,34 @@ async def diagram_chat(body: DiagramChatRequest):
             status_code=500,
             content={"error": "chat failed", "detail": str(exc)},
         )
+
+    if result.get("type") == "architecture":
+        try:
+            png_bytes = await asyncio.to_thread(render_architecture, result["json"])
+            result["png_base64"] = base64.b64encode(png_bytes).decode()
+        except Exception as exc:
+            logger.warning("diagram render failed for session=%s: %s", body.session_id, exc)
+            result["render_error"] = str(exc)
+
     return result
+
+
+@router.post("/render")
+async def diagram_render(body: RenderRequest):
+    """Render an architecture JSON dict to PNG. Returns image/png."""
+    arch = body.model_dump()
+    try:
+        png_bytes = await asyncio.to_thread(render_architecture, arch)
+    except FileNotFoundError as exc:
+        logger.error("graphviz not found: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"error": "graphviz not available", "detail": str(exc)},
+        )
+    except Exception as exc:
+        logger.exception("diagram render failed")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "render failed", "detail": str(exc)},
+        )
+    return Response(content=png_bytes, media_type="image/png")
