@@ -1,7 +1,10 @@
 """
 app/routers/diagram.py
 
-Phase 1: diagram render endpoints.  No AI — hardcoded sample only.
+/api/diagram/* endpoints:
+  GET  /health   — graphviz availability check
+  GET  /sample   — render hardcoded 3-tier sample → image/png
+  POST /chat     — AI architecture discovery conversation
 """
 
 import asyncio
@@ -10,12 +13,20 @@ import shutil
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 
+from app.services import diagram_architect
 from app.services.diagram_renderer import SAMPLE_ARCHITECTURE, render_architecture
+from app.state import sessions
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class DiagramChatRequest(BaseModel):
+    session_id: str
+    message: str
 
 
 @router.get("/health")
@@ -58,5 +69,32 @@ async def diagram_sample():
             status_code=500,
             content={"error": "render failed", "detail": str(exc)},
         )
-
     return Response(content=png_bytes, media_type="image/png")
+
+
+@router.post("/chat")
+async def diagram_chat(body: DiagramChatRequest):
+    """
+    AI architecture discovery — one turn per call.
+
+    Maintains conversation history in the session store under
+    sessions["{session_id}_diagram_history"].
+
+    Returns:
+      {"type": "question", "reply": "<question>"}        — still gathering
+      {"type": "architecture", "json": {...}}            — complete architecture
+    """
+    hist_key = f"{body.session_id}_diagram_history"
+    if hist_key not in sessions:
+        sessions[hist_key] = []
+    history: list[dict] = sessions[hist_key]
+
+    try:
+        result = await diagram_architect.chat(history, body.message)
+    except Exception as exc:
+        logger.exception("diagram_chat failed: session=%s", body.session_id)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "chat failed", "detail": str(exc)},
+        )
+    return result
