@@ -8,8 +8,8 @@
 ## Current Status (2026-06-21) — v1.5.3
 
 ### Last Known-Good State (2026-06-21)
-- Commit: aa4c262 → pending merge to main
-- Status: dev healthy. LLM_PROVIDER=foundry active; Anthropic path dormant behind flag. All three chat paths (pricing, advisor, fallback) verified on dev.
+- Commit: 690046172db6d3c0365d3b768a7d556d32f0d40e (main)
+- Status: main + dev healthy. LLM_PROVIDER=foundry active; Anthropic path dormant behind flag. All three chat paths (pricing, advisor, fallback) verified on dev.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
