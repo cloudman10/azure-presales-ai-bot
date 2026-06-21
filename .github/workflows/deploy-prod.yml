@@ -23,7 +23,7 @@ jobs:
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PROD }}
           package: deploy.zip
 
-      - name: Sync startup.sh to App Service persistent storage
+      - name: Sync startup.sh and restart app
         run: |
           CREDS=$(python3 -c "
           import xml.etree.ElementTree as ET, os
@@ -34,5 +34,8 @@ jobs:
           curl -sf -X PUT "https://hyperxen-pricing-bot-db5hmngq3woxa.scm.azurewebsites.net/api/vfs/site/startup.sh" \
             -u "${CREDS}" -H "If-Match: *" --data-binary @startup.sh
           echo "startup.sh synced to /home/site/startup.sh"
+          curl -sf -X DELETE "https://hyperxen-pricing-bot-db5hmngq3woxa.scm.azurewebsites.net/api/processes/0" \
+            -u "${CREDS}" || true
+          echo "app process restarted"
         env:
           PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PROD }}
