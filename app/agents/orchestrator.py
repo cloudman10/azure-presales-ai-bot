@@ -2,6 +2,7 @@ import logging
 import os
 import re
 
+import anthropic
 import httpx
 
 from app.agents import pricing_agent
@@ -274,26 +275,17 @@ async def run(session_id: str, message: str, sessions: dict) -> dict:
 
 
 async def _call_llm(messages: list[dict]) -> dict:
-    endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
-    api_key    = os.environ["AZURE_OPENAI_KEY"]
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
-    url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=2024-02-01"
-    logger.info("orchestrator._call_llm: endpoint=%s deployment=%s", endpoint, deployment)
+    # LLM_PROVIDER controls which backend handles general conversation.
+    # "foundry"   → Azure AI Foundry / GPT-4o (default; active while Azure credits are in use)
+    # "anthropic" → Anthropic Claude (dormant; switch when Anthropic is billable on the Azure subscription)
+    # To flip: set LLM_PROVIDER=anthropic + ANTHROPIC_API_KEY in App Service settings. No rebuild needed.
+    provider = os.environ.get("LLM_PROVIDER", "foundry").lower()
     try:
-        oai_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for m in messages:
-            oai_messages.append({"role": m["role"], "content": m["content"]})
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                url,
-                headers={"api-key": api_key, "Content-Type": "application/json"},
-                json={"model": deployment, "messages": oai_messages, "max_tokens": 512},
-            )
-        response.raise_for_status()
-        text = response.json()["choices"][0]["message"]["content"]
-        return {"reply": text, "type": "conversation"}
+        if provider == "anthropic":
+            return await _call_anthropic(messages)
+        return await _call_foundry(messages)
     except Exception as e:
-        logger.error("_call_llm failed: %s", e)
+        logger.error("_call_llm provider=%s failed: %s", provider, e)
         return {
             "reply": (
                 "I'm not able to answer that right now, but I can help with Azure VM pricing. "
@@ -301,3 +293,38 @@ async def _call_llm(messages: list[dict]) -> dict:
             ),
             "type": "conversation",
         }
+
+
+async def _call_foundry(messages: list[dict]) -> dict:
+    endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
+    api_key    = os.environ["AZURE_OPENAI_KEY"]
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+    url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=2024-02-01"
+    logger.info("orchestrator._call_foundry: endpoint=%s deployment=%s", endpoint, deployment)
+    oai_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for m in messages:
+        oai_messages.append({"role": m["role"], "content": m["content"]})
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            url,
+            headers={"api-key": api_key, "Content-Type": "application/json"},
+            json={"model": deployment, "messages": oai_messages, "max_tokens": 512},
+        )
+    response.raise_for_status()
+    return {"reply": response.json()["choices"][0]["message"]["content"], "type": "conversation"}
+
+
+async def _call_anthropic(messages: list[dict]) -> dict:
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set; cannot use provider=anthropic")
+    logger.info("orchestrator._call_anthropic: model=claude-sonnet-4-20250514")
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    response = await client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=512,
+        system=SYSTEM_PROMPT,
+        messages=messages,
+    )
+    text = response.content[0].text if response.content else ""
+    return {"reply": text, "type": "conversation"}
