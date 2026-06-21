@@ -53,10 +53,10 @@ Connection rules: every id in connections must exist in resources.
 Examples (emit as a single line exactly like this):
 
 Simple PaaS web app:
-ARCHITECTURE_JSON: {"title":"Web App — Australia East","region":"Australia East","resources":[{"id":"app1","type":"AppService","name":"Web App"},{"id":"db1","type":"SQLDatabase","name":"Azure SQL"}],"connections":[{"from":"app1","to":"db1"}]}
+ARCHITECTURE_JSON: {"title":"Web App - Australia East","region":"Australia East","resources":[{"id":"app1","type":"AppService","name":"Web App"},{"id":"db1","type":"SQLDatabase","name":"Azure SQL"}],"connections":[{"from":"app1","to":"db1"}]}
 
 3-tier IaaS with load balancer:
-ARCHITECTURE_JSON: {"title":"3-Tier App — East US","region":"East US","resources":[{"id":"lb1","type":"LoadBalancer","name":"Load Balancer"},{"id":"web1","type":"VirtualMachine","name":"Web VM 1"},{"id":"web2","type":"VirtualMachine","name":"Web VM 2"},{"id":"db1","type":"SQLDatabase","name":"Azure SQL"}],"connections":[{"from":"lb1","to":"web1"},{"from":"lb1","to":"web2"},{"from":"web1","to":"db1"},{"from":"web2","to":"db1"}]}
+ARCHITECTURE_JSON: {"title":"3-Tier App - East US","region":"East US","resources":[{"id":"lb1","type":"LoadBalancer","name":"Load Balancer"},{"id":"web1","type":"VirtualMachine","name":"Web VM 1"},{"id":"web2","type":"VirtualMachine","name":"Web VM 2"},{"id":"db1","type":"SQLDatabase","name":"Azure SQL"}],"connections":[{"from":"lb1","to":"web1"},{"from":"lb1","to":"web2"},{"from":"web1","to":"db1"},{"from":"web2","to":"db1"}]}
 """
 
 _JSON_RE = re.compile(
