@@ -177,25 +177,25 @@ _JSON_RE = re.compile(
     re.DOTALL,
 )
 
-# Non-ASCII sequences that GPT-4o sometimes emits despite the ASCII-only rule
-_ASCII_SUBS = [
-    ("—", " - "),        # em-dash
-    ("–", " - "),        # en-dash
-    ("’", "'"),           # right single quote
-    ("‘", "'"),           # left single quote
-    ("“", '"'),           # left double quote
-    ("”", '"'),           # right double quote
-    ("â€"", " - "),            # garbled em-dash (UTF-8 read as CP1252)
-    ("…", "..."),         # ellipsis
-]
+_AP   = chr(39)                      # ASCII apostrophe  U+0027
+_DQ   = chr(34)                      # ASCII double quote U+0022
+_DASH = chr(32) + chr(45) + chr(32)  # space-hyphen-space
+_DOTS = chr(46) * 3                  # three full stops
+
+_CP_SUBS = {
+    0x2014: _DASH,  # em-dash
+    0x2013: _DASH,  # en-dash
+    0x2018: _AP,    # left single quotation mark
+    0x2019: _AP,    # right single quotation mark
+    0x201c: _DQ,    # left double quotation mark
+    0x201d: _DQ,    # right double quotation mark
+    0x2026: _DOTS,  # ellipsis
+}
 
 
 def _sanitize(obj):
-    """Recursively replace non-ASCII sequences in all string values."""
     if isinstance(obj, str):
-        for bad, good in _ASCII_SUBS:
-            obj = obj.replace(bad, good)
-        return obj
+        return str().join(_CP_SUBS.get(ord(c), c) for c in obj)
     if isinstance(obj, dict):
         return {k: _sanitize(v) for k, v in obj.items()}
     if isinstance(obj, list):
