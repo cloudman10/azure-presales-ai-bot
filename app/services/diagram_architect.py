@@ -32,6 +32,7 @@ Rules:
 4. Always ask for the Azure region if the user has not stated one.
 5. Use ONLY the supported resource types below — never invent others.
 6. A valid architecture needs at least 2 resources and 1 connection.
+7. Use only ASCII characters in all field values. In the title use " - " (hyphen) not "—" (em-dash).
 
 Supported resource types (exact strings only):
   VirtualMachine | LoadBalancer | SQLDatabase | StorageAccount | AppService | VirtualNetwork
@@ -82,6 +83,14 @@ async def chat(history: list[dict], message: str) -> dict:
     if match:
         try:
             arch_json = json.loads(match.group(1))
+            # Sanitize title: replace em-dash variants (model sometimes ignores ASCII-only rule)
+            if "title" in arch_json:
+                arch_json["title"] = (
+                    arch_json["title"]
+                    .replace("â€”", " - ")  # garbled UTF-8 em-dash via CP1252
+                    .replace("—", " - ")              # proper em-dash
+                    .replace("–", " - ")              # en-dash
+                )
             return {"type": "architecture", "json": arch_json}
         except json.JSONDecodeError as exc:
             logger.error("diagram_architect: invalid JSON from model: %s | raw=%s", exc, raw[:300])
