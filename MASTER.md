@@ -8,12 +8,12 @@
 ## Current Status (2026-06-21) — v1.5.3
 
 ### Last Known-Good State (2026-06-21)
-- Commit: 690046172db6d3c0365d3b768a7d556d32f0d40e (main)
-- Status: main + dev healthy. LLM_PROVIDER=foundry active; Anthropic path dormant behind flag. All three chat paths (pricing, advisor, fallback) verified on dev.
+- Commit: 3550e67cef6eb96ab18df656ff1d5ff75aa7bb6f (main)
+- Status: dev + prod healthy. `LLM_PROVIDER=foundry` active on both; Anthropic path dormant in code. All three paths (pricing, advisor, fallback) verified on prod. `ANTHROPIC_API_KEY` removed from both App Services — no accidental Anthropic call possible.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard <prev-hash>
+  git reset --hard 3550e67cef6eb96ab18df656ff1d5ff75aa7bb6f
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
@@ -220,23 +220,30 @@ Dev stays on self-signed by design. Azure managed cert attempted 2026-06-07 — 
 
 ## Runtime Environment (audited 2026-06-21)
 
-### LLM Engine — SINGLE PROVIDER (Azure AI Foundry / GPT-4o)
+### LLM Engine — Provider-Switchable via Config
 
-Active provider: **Azure AI Foundry / GPT-4o** (controlled by `LLM_PROVIDER=foundry`, the default).
-Anthropic Claude is wired but dormant — switch via config when Anthropic becomes billable on the Azure subscription.
+Active provider: **Azure AI Foundry / GPT-4o** (`LLM_PROVIDER=foundry` on both dev and prod).
+Anthropic Claude is wired in code but dormant — no key set, no live calls. Switch via config when Anthropic becomes billable on the Azure subscription.
 
-| Agent / path | Provider | Model | Auth |
-|---|---|---|---|
-| `pricing_agent.py` — VM pricing flow | **Azure OpenAI** via Azure AI Foundry | `gpt-4o` (`AZURE_OPENAI_DEPLOYMENT`, default `gpt-4o`) | API key header (`AZURE_OPENAI_KEY`) |
-| `orchestrator._call_llm()` — general conversation fallback | **routed by `LLM_PROVIDER`** — currently Foundry/GPT-4o | same as above when `foundry` | same key / endpoint |
-| `sku_advisor_agent.py` — scenario advisor | No LLM — Azure AI Search + rule-based only | — | `AZURE_SEARCH_API_KEY` |
+**Constraint:** All LLM usage must be Azure-billable via Foundry while Azure startup credits are in use. Anthropic is not covered by current credits. Do not set `LLM_PROVIDER=anthropic` in prod until Anthropic billing is confirmed on the subscription.
 
-**`LLM_PROVIDER` flag (`orchestrator._call_llm`):**
-- `"foundry"` (default, active) → `_call_foundry()` — Azure AI Foundry / GPT-4o via httpx. No Anthropic call.
-- `"anthropic"` (dormant) → `_call_anthropic()` — Anthropic Claude Sonnet (`claude-sonnet-4-20250514`). Requires `ANTHROPIC_API_KEY`.
+| Agent / path | Active provider | Notes |
+|---|---|---|
+| `pricing_agent.py` — VM pricing flow | Azure OpenAI / GPT-4o (Foundry) | Always Foundry; no provider flag |
+| `orchestrator._call_llm()` — general conversation fallback | Routed by `LLM_PROVIDER` — currently `_call_foundry()` | Both Foundry and Anthropic paths compiled and present |
+| `sku_advisor_agent.py` — scenario advisor | No LLM | Azure AI Search + rule-based only |
 
-**To switch to Anthropic** (when available on the Azure subscription): set `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` in App Service settings. No rebuild or code change needed.
-`ANTHROPIC_API_KEY` is NOT in App Service settings today — the code handles it absent cleanly when `LLM_PROVIDER=foundry`.
+**`LLM_PROVIDER` flag** (controls `orchestrator._call_llm` only):
+- `"foundry"` (default, **active on dev + prod**) → `_call_foundry()` — Azure AI Foundry / GPT-4o via httpx. No Anthropic call, no Anthropic key needed.
+- `"anthropic"` (**dormant**) → `_call_anthropic()` — Anthropic Claude Sonnet `claude-sonnet-4-20250514`. Raises clearly if `ANTHROPIC_API_KEY` absent (no silent fail).
+
+**To switch to Anthropic** when it's billable: add two App Service settings — no rebuild, no code change:
+```
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=<key>
+```
+
+**Current key state (both dev + prod):** `ANTHROPIC_API_KEY` — **not set** (removed 2026-06-21). `LLM_PROVIDER=foundry` — **set explicitly**. Verified on prod: fallback replies correctly after key removal.
 
 ### Hosting
 
