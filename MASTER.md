@@ -5,15 +5,15 @@
 
 ---
 
-## Current Status (2026-06-21) — v1.5.1
+## Current Status (2026-06-21) — v1.5.2
 
 ### Last Known-Good State (2026-06-21)
-- Commit: 6aadfc02e6264d725e5e63b33ff190ae8441a528 (main)
-- Status: main + dev healthy. ARM deployability gate live; AI Search re-indexed (1185 SKUs); per-VM pricing term selection (PAYG/SP/RI/+HB radios) live. Runtime environment audited and documented.
+- Commit: 151359667e42826ed7e0725465ccffbde8a18adb (main)
+- Status: main + dev healthy. All LLM calls through Azure AI Foundry (GPT-4o). Anthropic dependency removed. ANTHROPIC_API_KEY removed from dev App Service.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard 6aadfc02e6264d725e5e63b33ff190ae8441a528
+  git reset --hard 151359667e42826ed7e0725465ccffbde8a18adb
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
@@ -23,8 +23,7 @@
 | Frontend (Replit UI) | ✅ Live |
 | Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
 | Dev App | ✅ Live and healthy — https://hyperxen-pricing-bot-dev.azurewebsites.net |
-| LLM — GPT-4o via Azure AI Foundry (`pricing_agent`) | ✅ Verified working |
-| LLM — Claude Sonnet 4 via Anthropic (`orchestrator` fallback) | ✅ Live |
+| LLM — GPT-4o via Azure AI Foundry (all paths) | ✅ Verified working |
 | Azure AI Search | ✅ Indexed (1185 active SKUs, re-indexed 2026-06-20) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
@@ -221,17 +220,17 @@ Dev stays on self-signed by design. Azure managed cert attempted 2026-06-07 — 
 
 ## Runtime Environment (audited 2026-06-21)
 
-### LLM Engine — DUAL PROVIDER
+### LLM Engine — SINGLE PROVIDER (Azure AI Foundry / GPT-4o)
 
-The app uses two LLM providers simultaneously:
+All LLM calls go through Azure AI Foundry (GPT-4o). No Anthropic dependency remains.
 
 | Agent / path | Provider | Model | Auth |
 |---|---|---|---|
 | `pricing_agent.py` — VM pricing flow | **Azure OpenAI** via Azure AI Foundry | `gpt-4o` (`AZURE_OPENAI_DEPLOYMENT`, default `gpt-4o`) | API key header (`AZURE_OPENAI_KEY`) |
-| `orchestrator._call_claude()` — general conversation fallback | **Anthropic Claude** (direct API) | `claude-sonnet-4-20250514` | SDK via `ANTHROPIC_API_KEY` |
+| `orchestrator._call_llm()` — general conversation fallback | **Azure OpenAI** via Azure AI Foundry | same deployment as above | same key / endpoint |
 | `sku_advisor_agent.py` — scenario advisor | No LLM — Azure AI Search + rule-based only | — | `AZURE_SEARCH_API_KEY` |
 
-**Note:** `pricing_agent.py` calls Azure OpenAI via raw `httpx` (not the `openai` Python SDK), which is why `requirements.txt` has no `openai` package. The Anthropic SDK (`anthropic==0.97.0`) is used for the Claude fallback path.
+**Note:** Both agent paths call Azure OpenAI via raw `httpx` (no `openai` Python SDK — hence it's not in `requirements.txt`). The `anthropic` package and `ANTHROPIC_API_KEY` env var have been fully removed. Verified on dev: fallback works with `ANTHROPIC_API_KEY` absent from App Service settings (2026-06-21).
 
 ### Hosting
 
@@ -261,8 +260,8 @@ The app uses two LLM providers simultaneously:
 - `AZURE_OPENAI_KEY` — API key for Azure AI Foundry
 - `AZURE_OPENAI_DEPLOYMENT` — deployment name (default: `gpt-4o`)
 
-**LLM — Anthropic Claude (`orchestrator._call_claude()`):**
-- `ANTHROPIC_API_KEY` — Anthropic API key; live in production
+**LLM — `orchestrator._call_llm()` (general conversation fallback):**
+- Uses the same `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_KEY` / `AZURE_OPENAI_DEPLOYMENT` as `pricing_agent.py`. No separate env vars.
 
 **Azure AI Search (`sku_advisor_agent.py`):**
 - `AZURE_SEARCH_ENDPOINT` — `https://hyperxen-search.search.windows.net`
@@ -289,7 +288,6 @@ The app uses two LLM providers simultaneously:
 | `AZURE_CREDENTIALS` (GitHub Secret) | GitHub Actions | **MEDIUM** — expires ~May 2027 (service principal `hyperxen-github-actions`, clientId `51c2f18d-444d-4af8-8129-8ec4b317fb0f`). Expiry breaks CI/CD deploys. | `az ad sp credential reset --id 51c2f18d-444d-4af8-8129-8ec4b317fb0f`; update GitHub Secret |
 | Dev SSL cert | App Service TLS binding | **LOW** — self-signed, expires 2027-05-02. Only affects `dev.hyperxen.com`. | Regenerate PFX with openssl, re-upload and rebind |
 | `AZURE_OPENAI_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Azure AI Foundry portal → Keys |
-| `ANTHROPIC_API_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Anthropic console |
 | `AZURE_SEARCH_API_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Azure AI Search portal → Keys |
 
 ---
@@ -317,13 +315,9 @@ Azure App Service (dev)     Azure App Service (prod)
         │                          │
         └──────────┬───────────────┘
                    │
-        ├──► GPT-4o via Azure AI Foundry  (pricing_agent — VM pricing flow)
+        ├──► GPT-4o via Azure AI Foundry  (ALL LLM paths — pricing + conversation fallback)
         │    https://hyperxen-foundry-presales1.services.ai.azure.com
         │    Deployment: gpt-4o
-        │
-        ├──► Anthropic Claude Sonnet     (orchestrator — general conversation fallback)
-        │    https://api.anthropic.com
-        │    Model: claude-sonnet-4-20250514
         │
         ├──► Azure AI Search
         │    https://hyperxen-search.search.windows.net
@@ -465,7 +459,7 @@ azure-presales-ai-bot/
 
 ## What's Built and Working
 
-- FastAPI chat API (`/api/chat`) with Azure OpenAI GPT-4o
+- FastAPI chat API (`/api/chat`) with Azure OpenAI GPT-4o (all LLM paths — pricing flow + conversation fallback both route through Azure AI Foundry)
 - Multi-turn conversation: collects SKU, region, OS before fetching pricing
 - PAYG, 1-Year/3-Year RI, Savings Plan, and Azure Hybrid Benefit pricing
 - SKU Normalizer Agent — handles constrained vCPU normalization (e.g. `e42adsv5` → `Standard_E4-2ads_v5`)
@@ -631,7 +625,7 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 | `AZURE_CLIENT_SECRET` | Service principal secret |
 | `AZURE_SEARCH_ENDPOINT` | `https://hyperxen-search.search.windows.net` |
 | `AZURE_SEARCH_API_KEY` | Azure AI Search admin key |
-| `ANTHROPIC_API_KEY` | Anthropic API key — **LIVE**: `orchestrator._call_claude()` uses Claude Sonnet for general conversation fallback |
+| ~~`ANTHROPIC_API_KEY`~~ | **REMOVED** — Anthropic dependency eliminated 2026-06-21. Key removed from App Service. |
 | `ENVIRONMENT` | `dev` / `prod` |
 | `PORT` | `8000` |
 
