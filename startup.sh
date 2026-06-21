@@ -14,8 +14,17 @@ EXTRACT_DIR="/home/site/oryx-build"
 # Graphviz required by the diagrams library.
 if ! command -v dot >/dev/null 2>&1; then
     echo "[startup] installing graphviz..."
-    apt-get update -qq && apt-get install -y -qq graphviz
-    echo "[startup] graphviz: $(dot -V 2>&1)"
+    apt-get update -y 2>&1 | tail -3
+    apt-get install -y graphviz 2>&1 | tail -5
+    if command -v dot >/dev/null 2>&1; then
+        echo "[startup] graphviz OK: $(dot -V 2>&1)"
+    else
+        echo "[startup] WARNING: graphviz install failed — PATH=$(echo $PATH)"
+        # Fallback: try snap, or use existing binary if at known location
+        [ -x /usr/bin/dot ] && echo "[startup] found dot at /usr/bin/dot (not in PATH?)" && export PATH="/usr/bin:$PATH"
+    fi
+else
+    echo "[startup] graphviz already installed: $(dot -V 2>&1)"
 fi
 
 # zstd required to decompress output.tar.zst when antenv not in /tmp.
