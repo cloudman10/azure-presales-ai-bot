@@ -181,10 +181,13 @@ function buildDiagramCard(arch, pngBase64){
   head.appendChild(titleEl);
   const metaEl = document.createElement('div');
   metaEl.className = 'arch-meta';
-  const resCount = (arch.resources||[]).length;
+  const resCount = arch.zones
+    ? arch.zones.reduce((s, z) => s + (z.resources||[]).length, 0)
+    : (arch.resources||[]).length;
   const connCount = (arch.connections||[]).length;
+  const subtitle = arch.subtitle || arch.region || '';
   metaEl.innerHTML =
-    `<span>&#127760; ${esc(arch.region||'')}</span>` +
+    (subtitle ? `<span>${esc(subtitle)}</span>` : '') +
     `<span>&#9634; ${resCount} resource${resCount!==1?'s':''}</span>` +
     `<span>&#8596; ${connCount} connection${connCount!==1?'s':''}</span>`;
   head.appendChild(metaEl);
