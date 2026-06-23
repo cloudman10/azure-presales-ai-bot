@@ -114,7 +114,10 @@ async def diagram_chat(body: DiagramChatRequest):
             svg_bytes = await asyncio.to_thread(render_architecture_svg, result["json"])
             result["svg_b64"] = base64.b64encode(svg_bytes).decode()
         except Exception as exc:
-            logger.warning("SVG render failed, trying PNG fallback: %s", exc)
+            import traceback
+            svg_tb = traceback.format_exc()
+            logger.warning("SVG render failed, trying PNG fallback: %s\n%s", exc, svg_tb)
+            result["svg_error"] = f"{type(exc).__name__}: {exc}"
             try:
                 png_bytes = await asyncio.to_thread(render_architecture, result["json"])
                 result["png_base64"] = base64.b64encode(png_bytes).decode()
@@ -123,6 +126,28 @@ async def diagram_chat(body: DiagramChatRequest):
                 result["render_error"] = str(exc2)
 
     return result
+
+
+@router.get("/svg-test")
+async def diagram_svg_test():
+    """Smoke-test the SVG renderer with a minimal zones payload. Returns JSON."""
+    import traceback
+    test_arch = {
+        "title": "SVG Smoke Test",
+        "zones": [
+            {"id": "onprem", "type": "onprem", "label": "On-Premises",
+             "resources": [{"id": "hv1", "type": "HyperVHost", "name": "HyperV Host"}]},
+            {"id": "hub", "type": "hub", "label": "Hub VNet",
+             "resources": [{"id": "fw1", "type": "AzureFirewall", "name": "Azure Firewall"}]},
+        ],
+        "connections": [{"from": "hv1", "to": "fw1", "label": "VPN"}],
+    }
+    try:
+        from app.services.diagram_renderer_svg import render_architecture_svg
+        svg_bytes = await asyncio.to_thread(render_architecture_svg, test_arch)
+        return {"status": "ok", "bytes": len(svg_bytes), "preview": svg_bytes[:200].decode("utf-8", errors="replace")}
+    except Exception as exc:
+        return {"status": "error", "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()}
 
 
 @router.post("/render")
