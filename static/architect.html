@@ -7,7 +7,7 @@
 <style>
 /* ── reset ───────────────────────────────────────────────────────────────── */
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:100dvh;display:flex;flex-direction:column;max-width:920px;margin:0 auto}
+body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:100dvh;display:flex;flex-direction:column;max-width:1060px;margin:0 auto}
 
 /* ── header ──────────────────────────────────────────────────────────────── */
 .header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid #E5E9ED;flex-shrink:0}
@@ -37,11 +37,8 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .bubble.card-wrap{padding:0;background:transparent;border:none;white-space:normal;max-width:92%}
 
 /* ── architecture card ───────────────────────────────────────────────────── */
-.arch-card{background:#fff;border:1px solid #C3DDF5;border-radius:12px;overflow:hidden;max-width:640px}
-.arch-head{background:linear-gradient(135deg,#0078D4 0%,#005A9E 100%);color:#fff;padding:14px 18px}
-.arch-title{font-size:15px;font-weight:700;margin-bottom:4px}
-.arch-meta{font-size:12px;opacity:.85;display:flex;gap:14px;flex-wrap:wrap}
-.arch-img-wrap{padding:16px;background:#F8FBFF;border-top:1px solid #D0E8FF;border-bottom:1px solid #D0E8FF;text-align:center}
+.arch-card{background:#fff;border:1px solid #C3DDF5;border-radius:12px;overflow:hidden;max-width:1000px}
+.arch-img-wrap{padding:10px;background:#F8FBFF;text-align:center}
 .arch-img{max-width:100%;height:auto;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
 .arch-foot{padding:12px 18px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .dl-btn{font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid #0078D4;background:#fff;color:#0078D4;cursor:pointer;transition:all .15s;white-space:nowrap}
@@ -172,26 +169,7 @@ function buildDiagramCard(arch, pngBase64, svgB64){
   const card = document.createElement('div');
   card.className = 'arch-card';
 
-  // Header
-  const head = document.createElement('div');
-  head.className = 'arch-head';
-  const titleEl = document.createElement('div');
-  titleEl.className = 'arch-title';
-  titleEl.textContent = arch.title || 'Architecture';
-  head.appendChild(titleEl);
-  const metaEl = document.createElement('div');
-  metaEl.className = 'arch-meta';
-  const resCount = arch.zones
-    ? arch.zones.reduce((s, z) => s + (z.resources||[]).length, 0)
-    : (arch.resources||[]).length;
-  const connCount = (arch.connections||[]).length;
-  const subtitle = arch.subtitle || arch.region || '';
-  metaEl.innerHTML =
-    (subtitle ? `<span>${esc(subtitle)}</span>` : '') +
-    `<span>&#9634; ${resCount} resource${resCount!==1?'s':''}</span>` +
-    `<span>&#8596; ${connCount} connection${connCount!==1?'s':''}</span>`;
-  head.appendChild(metaEl);
-  card.appendChild(head);
+  // Title is rendered inside the SVG header bar — no separate card header needed.
 
   // Image — prefer SVG (vector, landscape) over PNG
   const isVector = !!svgB64;
