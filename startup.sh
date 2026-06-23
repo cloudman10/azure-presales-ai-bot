@@ -35,11 +35,25 @@ fi
 
 # ── Find or extract antenv ────────────────────────────────────────────────────
 
-# Happy path: container init already extracted output.tar.zst to /tmp/<hash>/antenv/.
+# Oryx container init may have extracted output.tar.zst to /tmp/<hash>/antenv.
+# BUT: after a new deployment + process-only restart (DELETE /api/processes/0),
+# the container is still alive so /tmp still has the OLD antenv.  We must check
+# whether output.tar.zst is newer than the /tmp antenv; if so, the /tmp copy is
+# stale and we fall through to the re-extract path.
 GUNICORN=$(find /tmp -maxdepth 4 -name gunicorn -path '*/antenv/bin/gunicorn' 2>/dev/null | head -1)
 
+if [ -n "$GUNICORN" ]; then
+    TMP_ANTENV=$(cd "$(dirname "$GUNICORN")/../.." && pwd)
+    if [ "${ZSTD_SRC}" -nt "${TMP_ANTENV}/antenv" ]; then
+        echo "[startup] new deployment detected (output.tar.zst newer than /tmp antenv) — re-extracting to ${EXTRACT_DIR}"
+        GUNICORN=""
+    else
+        echo "[startup] /tmp antenv is current — using it"
+    fi
+fi
+
 if [ -z "$GUNICORN" ]; then
-    echo "[startup] antenv not in /tmp — checking ${EXTRACT_DIR}..."
+    echo "[startup] antenv not in /tmp (or stale) — checking ${EXTRACT_DIR}..."
 
     # Re-extract if EXTRACT_DIR is missing or output.tar.zst is newer.
     NEEDS_EXTRACT=0
