@@ -7,6 +7,15 @@ No Graphviz or third-party renderer; pure Python SVG generation.
 """
 
 import html as _html
+import re as _re
+
+# ── XML 1.0 prohibited character ranges ───────────────────────────────────────
+# XML 1.0 allows: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+# Everything else is prohibited and must be stripped before embedding in SVG.
+_XML_PROHIBITED = _re.compile(
+    # XML 1.0 prohibited: everything NOT in #x9|#xA|#xD|[#x20-#xD7FF]|[#xE000-#xFFFD]
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]"
+)
 
 # ── Layout constants ───────────────────────────────────────────────────────────
 MARGIN        = 20
@@ -78,7 +87,8 @@ _COLOR = {
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _e(s: str) -> str:
-    return _html.escape(str(s))
+    """XML-safe escape: strip XML 1.0 prohibited chars, then HTML-escape."""
+    return _html.escape(_XML_PROHIBITED.sub("", str(s)))
 
 def _trunc(s: str, n: int = 24) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
@@ -303,6 +313,7 @@ def render_architecture_svg(arch: dict) -> bytes:
 
     # ── Assemble final SVG ────────────────────────────────────────────────────
     out: list[str] = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg"'
         f' width="{W}" height="{H}" viewBox="0 0 {W} {H}">',
 
@@ -350,4 +361,11 @@ def render_architecture_svg(arch: dict) -> bytes:
 
     out.append("</svg>")
 
-    return "\n".join(out).encode("utf-8")
+    svg_bytes = "\n".join(out).encode("utf-8")
+
+    # Validate well-formedness before returning so callers get a clear error
+    # rather than a silently broken image in the browser.
+    import xml.etree.ElementTree as _ET
+    _ET.fromstring(svg_bytes)   # raises ParseError on malformed XML
+
+    return svg_bytes
