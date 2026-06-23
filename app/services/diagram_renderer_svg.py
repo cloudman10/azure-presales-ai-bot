@@ -6,7 +6,9 @@ Produces a readable landscape layout — zones as side-by-side panels.
 No Graphviz or third-party renderer; pure Python SVG generation.
 """
 
+import base64 as _b64
 import html as _html
+import pathlib as _pl
 import re as _re
 
 # ── XML 1.0 prohibited character ranges ───────────────────────────────────────
@@ -39,7 +41,75 @@ _ZONE_STYLE = {
 }
 _DEFAULT_STYLE = {"bg": "#F5F5F5", "border": "#CCCCCC", "hdr": "#999999", "hdr_fg": "#FFFFFF"}
 
-# ── Resource type → badge abbreviation ────────────────────────────────────────
+# ── Official Azure icon mapping ───────────────────────────────────────────────
+_ICON_DIR = _pl.Path(__file__).parent.parent.parent / "static" / "azure-icons"
+
+_TYPE_ICON: dict[str, str] = {
+    "VirtualMachine": "virtual-machine.svg",
+    "HyperVHost":     "virtual-machine.svg",
+    "OnPremVM":       "virtual-machine.svg",
+    "OnPremServer":   "virtual-machine.svg",
+    "ScaleSet":       "scale-set.svg",
+    "AVDHostPool":    "host-pool.svg",
+    "AppService":     "app-service.svg",
+    "FunctionApp":    "function-app.svg",
+    "AKSCluster":     "aks.svg",
+    "ContainerApp":   "container-instance.svg",
+    "AzureFirewall":  "firewall.svg",
+    "OnPremFirewall": "firewall.svg",
+    "BastionHost":    "bastion.svg",
+    "VPNGateway":     "vpn-gateway.svg",
+    "ExpressRouteGateway": "expressroute.svg",
+    "LoadBalancer":   "load-balancer.svg",
+    "ApplicationGateway": "app-gateway.svg",
+    "VirtualNetwork": "virtual-network.svg",
+    "OnPremNetwork":  "virtual-network.svg",
+    "Subnet":         "subnet.svg",
+    "NetworkSecurityGroup": "nsg.svg",
+    "PrivateDNSZone": "dns-zone.svg",
+    "PrivateEndpoint": "private-link.svg",
+    "NATGateway":     "nat-gateway.svg",
+    "RouteTable":     "route-table.svg",
+    "SQLDatabase":    "sql-database.svg",
+    "SQLManagedInstance": "sql-managed-instance.svg",
+    "StorageAccount": "storage-account.svg",
+    "CosmosDB":       "cosmos-db.svg",
+    "MySQLDatabase":  "mysql.svg",
+    "PostgreSQLDatabase": "postgresql.svg",
+    "RedisCache":     "redis-cache.svg",
+    "DataFactory":    "data-factory.svg",
+    "EntraID":        "entra-id.svg",
+    "ManagedIdentity": "managed-identity.svg",
+    "KeyVault":       "key-vault.svg",
+    "DefenderForCloud": "defender.svg",
+    "AzurePolicy":    "policy.svg",
+    "Sentinel":       "sentinel.svg",
+    "RecoveryServicesVault": "recovery-vault.svg",
+    "LogAnalyticsWorkspace": "log-analytics.svg",
+    "AzureMonitor":   "monitor.svg",
+    "ApplicationInsights": "app-insights.svg",
+    "UpdateManager":  "updates.svg",
+    "AutomationAccount": "automation.svg",
+}
+
+_icon_cache: dict[str, str | None] = {}
+
+def _icon_uri(rtype: str) -> str | None:
+    filename = _TYPE_ICON.get(rtype)
+    if not filename:
+        return None
+    if filename in _icon_cache:
+        return _icon_cache[filename]
+    path = _ICON_DIR / filename
+    if path.exists():
+        uri: str | None = "data:image/svg+xml;base64," + _b64.b64encode(path.read_bytes()).decode()
+    else:
+        uri = None
+    _icon_cache[filename] = uri
+    return uri
+
+
+# ── Resource type → badge abbreviation (fallback when no icon) ────────────────
 _ABBREV = {
     "VirtualMachine": "VM",    "ScaleSet": "SS",         "AVDHostPool": "AVD",
     "FunctionApp": "FN",       "ContainerApp": "CA",     "AKSCluster": "AKS",
@@ -193,26 +263,40 @@ def render_architecture_svg(arch: dict) -> bytes:
                 rtype = res.get("type", "AzureService")
                 rname = _e(_trunc(res.get("name", rid)))
                 rrole = _e(_trunc(res.get("role", ""), 30))
-                abbr  = _ABBREV.get(rtype, rtype[:3].upper())
-                color = _COLOR.get(rtype, "#0078D4")
-                bw    = max(28, len(abbr) * 6 + 10)
                 rw    = PANEL_W - ZONE_PAD * 2
 
                 res_to_zone[rid] = zid
 
-                tx = bw + 9
+                icon  = _icon_uri(rtype)
+                ICON_SZ = 28
+
                 p += [
                     f'<g transform="translate({ZONE_PAD},{res_y:.0f})">',
                     # Row bg
                     f'<rect width="{rw}" height="{RES_H}" rx="4"'
                     f' fill="#FFFFFF" stroke="#E8E8E8" stroke-width="0.8"/>',
-                    # Colour badge
-                    f'<rect x="3" y="3" width="{bw}" height="{RES_H - 6}" rx="3" fill="{color}"/>',
-                    f'<text x="{3 + bw / 2:.1f}" y="{RES_H // 2 + 1}"'
-                    f' text-anchor="middle" dominant-baseline="middle"'
-                    f' font-size="8" font-weight="700" fill="#FFFFFF"'
-                    f' font-family="system-ui,Arial,sans-serif">{_e(abbr)}</text>',
                 ]
+
+                if icon:
+                    iy = (RES_H - ICON_SZ) // 2  # = 3 for RES_H=34
+                    tx = 3 + ICON_SZ + 5          # = 36
+                    p.append(
+                        f'<image href="{icon}" x="3" y="{iy}"'
+                        f' width="{ICON_SZ}" height="{ICON_SZ}"/>'
+                    )
+                else:
+                    abbr  = _ABBREV.get(rtype, rtype[:3].upper())
+                    color = _COLOR.get(rtype, "#0078D4")
+                    bw    = max(28, len(abbr) * 6 + 10)
+                    tx    = bw + 9
+                    p += [
+                        f'<rect x="3" y="3" width="{bw}" height="{RES_H - 6}" rx="3" fill="{color}"/>',
+                        f'<text x="{3 + bw / 2:.1f}" y="{RES_H // 2 + 1}"'
+                        f' text-anchor="middle" dominant-baseline="middle"'
+                        f' font-size="8" font-weight="700" fill="#FFFFFF"'
+                        f' font-family="system-ui,Arial,sans-serif">{_e(abbr)}</text>',
+                    ]
+
                 if rrole:
                     p += [
                         f'<text x="{tx}" y="{RES_H // 2 - 5}" dominant-baseline="middle"'
