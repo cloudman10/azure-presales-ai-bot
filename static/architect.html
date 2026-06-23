@@ -168,7 +168,7 @@ function addTyping(){
 }
 
 // ── diagram card builder ──────────────────────────────────────────────────────
-function buildDiagramCard(arch, pngBase64){
+function buildDiagramCard(arch, pngBase64, svgB64){
   const card = document.createElement('div');
   card.className = 'arch-card';
 
@@ -193,13 +193,17 @@ function buildDiagramCard(arch, pngBase64){
   head.appendChild(metaEl);
   card.appendChild(head);
 
-  // Image
+  // Image — prefer SVG (vector, landscape) over PNG
+  const isVector = !!svgB64;
+  const imgSrc = svgB64
+    ? 'data:image/svg+xml;base64,' + svgB64
+    : 'data:image/png;base64,' + (pngBase64 || '');
   const imgWrap = document.createElement('div');
   imgWrap.className = 'arch-img-wrap';
   const img = document.createElement('img');
   img.className = 'arch-img';
   img.alt = arch.title || 'Architecture diagram';
-  img.src = 'data:image/png;base64,' + pngBase64;
+  img.src = imgSrc;
   imgWrap.appendChild(img);
   card.appendChild(imgWrap);
 
@@ -208,12 +212,12 @@ function buildDiagramCard(arch, pngBase64){
   foot.className = 'arch-foot';
   const dlBtn = document.createElement('button');
   dlBtn.className = 'dl-btn';
-  dlBtn.innerHTML = '&#8659; Download PNG';
+  dlBtn.innerHTML = isVector ? '&#8659; Download SVG' : '&#8659; Download PNG';
   dlBtn.addEventListener('click', () => {
     const a = document.createElement('a');
-    a.href = img.src;
+    a.href = imgSrc;
     const slug = (arch.title||'architecture').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-    a.download = slug + '.png';
+    a.download = slug + (isVector ? '.svg' : '.png');
     a.click();
   });
   foot.appendChild(dlBtn);
@@ -244,8 +248,8 @@ async function send(){
     document.getElementById('typing')?.remove();
 
     if(d.type === 'architecture'){
-      if(d.png_base64){
-        addMsg('bot', buildDiagramCard(d.json, d.png_base64));
+      if(d.svg_b64 || d.png_base64){
+        addMsg('bot', buildDiagramCard(d.json, d.png_base64, d.svg_b64));
       } else {
         // Render failed — still show the JSON as a fallback
         addMsg('bot', 'Architecture complete (diagram render unavailable):\n\n' + JSON.stringify(d.json, null, 2));

@@ -110,11 +110,17 @@ async def diagram_chat(body: DiagramChatRequest):
 
     if result.get("type") == "architecture":
         try:
-            png_bytes = await asyncio.to_thread(render_architecture, result["json"])
-            result["png_base64"] = base64.b64encode(png_bytes).decode()
+            from app.services.diagram_renderer_svg import render_architecture_svg
+            svg_bytes = await asyncio.to_thread(render_architecture_svg, result["json"])
+            result["svg_b64"] = base64.b64encode(svg_bytes).decode()
         except Exception as exc:
-            logger.warning("diagram render failed for session=%s: %s", body.session_id, exc)
-            result["render_error"] = str(exc)
+            logger.warning("SVG render failed, trying PNG fallback: %s", exc)
+            try:
+                png_bytes = await asyncio.to_thread(render_architecture, result["json"])
+                result["png_base64"] = base64.b64encode(png_bytes).decode()
+            except Exception as exc2:
+                logger.warning("PNG render also failed: %s", exc2)
+                result["render_error"] = str(exc2)
 
     return result
 
