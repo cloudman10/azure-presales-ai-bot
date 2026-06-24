@@ -14,7 +14,7 @@ import logging
 import shutil
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -148,6 +148,27 @@ async def diagram_svg_test():
         return {"status": "ok", "bytes": len(svg_bytes), "preview": svg_bytes[:200].decode("utf-8", errors="replace")}
     except Exception as exc:
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()}
+
+
+@router.post("/render-drawio")
+async def diagram_render_drawio(request: Request):
+    """Convert architecture JSON to draw.io mxGraphModel XML. Returns {drawio_xml}."""
+    try:
+        arch = await request.json()
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON", "detail": str(exc)})
+    try:
+        from app.services.diagram_renderer_drawio import render_drawio
+        xml_str = await asyncio.to_thread(render_drawio, arch)
+        return {"drawio_xml": xml_str}
+    except Exception as exc:
+        import traceback as _tb
+        logger.exception("render-drawio failed")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "render failed", "detail": str(exc),
+                     "traceback": _tb.format_exc()},
+        )
 
 
 @router.post("/render")

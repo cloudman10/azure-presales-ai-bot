@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>HyperXen.ai — Architecture Designer (draw.io)</title>
+<!-- draw.io static viewer — renders mxGraphModel XML client-side, no server needed -->
+<script src="https://viewer.diagrams.net/js/viewer-static.min.js"></script>
+<style>
+/* ── reset ───────────────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:100dvh;display:flex;flex-direction:column;max-width:1060px;margin:0 auto}
+
+/* ── header ──────────────────────────────────────────────────────────────── */
+.header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid #E5E9ED;flex-shrink:0}
+.logo{width:32px;height:32px;border-radius:8px;background:#E65100;color:#fff;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.header-text h1{font-size:15px;font-weight:600;color:#1A1A2E}
+.header-text p{font-size:11px;color:#8B95A2;margin-top:1px}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.dot{width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0}
+.badge{font-size:10px;padding:2px 7px;border-radius:10px;background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;font-weight:600;white-space:nowrap}
+.new-btn{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid #E5E9ED;background:#fff;color:#666;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap;line-height:1;text-decoration:none}
+.new-btn:hover{border-color:#E65100;color:#E65100;background:#FFF3E0}
+
+/* ── chat area ───────────────────────────────────────────────────────────── */
+.chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;-webkit-overflow-scrolling:touch}
+.chat::-webkit-scrollbar{width:4px}.chat::-webkit-scrollbar-track{background:transparent}.chat::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px}
+
+/* ── message layout ──────────────────────────────────────────────────────── */
+.msg{display:flex;gap:10px;align-items:flex-start}
+.msg.user{flex-direction:row-reverse}
+.av{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.av.bot{background:#FFF3E0;color:#BF360C;border:1px solid #FFCC80}
+.av.user{background:#E65100;color:#fff}
+
+/* ── bubbles ─────────────────────────────────────────────────────────────── */
+.bubble{border-radius:12px;padding:12px 16px;font-size:14px;line-height:1.65;max-width:84%}
+.bubble.user{background:#E65100;color:#fff;border-radius:12px 12px 4px 12px}
+.bubble.bot{background:#fff;border:1px solid #E5E9ED;border-radius:12px 12px 12px 4px;color:#1A1A2E;white-space:pre-wrap}
+.bubble.card-wrap{padding:0;background:transparent;border:none;white-space:normal;max-width:96%}
+
+/* ── architecture card ───────────────────────────────────────────────────── */
+.arch-card{background:#fff;border:1px solid #FFCC80;border-radius:12px;overflow:hidden;max-width:1000px}
+.arch-img-wrap{padding:8px;background:#FFFAF5}
+/* draw.io viewer fills the div — min-height gives it room to render */
+.mxgraph{min-height:560px;width:100%;background:#fff}
+.arch-foot{padding:12px 18px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid #F5E6D0}
+.dl-btn{font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid #E65100;background:#fff;color:#E65100;cursor:pointer;transition:all .15s;white-space:nowrap}
+.dl-btn:hover{background:#E65100;color:#fff}
+.compare-link{font-size:12px;color:#8B95A2;text-decoration:none;padding:6px 0}
+.compare-link:hover{color:#E65100}
+
+/* ── typing indicator ────────────────────────────────────────────────────── */
+.typing{display:flex;align-items:center;gap:4px;padding:4px 0}
+.typing span{width:5px;height:5px;border-radius:50%;background:#FFCC80;animation:blink 1.2s ease-in-out infinite}
+.typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{transform:scale(.7);opacity:.5}40%{transform:scale(1);opacity:1}}
+
+/* ── sample chips ────────────────────────────────────────────────────────── */
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.chip{font-size:11.5px;padding:5px 10px;border-radius:6px;background:#FFF3E0;border:1px solid #FFCC80;color:#BF360C;cursor:pointer}
+.chip:hover{background:#FFE0B2;border-color:#E65100}
+
+/* ── input bar ───────────────────────────────────────────────────────────── */
+.bar{padding:12px 20px;padding-bottom:max(12px,env(safe-area-inset-bottom,12px));background:#fff;border-top:1px solid #E5E9ED;display:flex;gap:10px;flex-shrink:0}
+textarea{flex:1;min-height:44px;max-height:140px;resize:none;border:1px solid #D1D5DB;border-radius:10px;padding:11px 14px;font-family:inherit;font-size:14px;outline:none;line-height:1.5;transition:border-color .15s}
+textarea:focus{border-color:#E65100}
+.send{width:44px;height:44px;border-radius:10px;border:none;background:#E65100;color:#fff;cursor:pointer;font-size:18px;flex-shrink:0;transition:background .15s}
+.send:hover{background:#BF360C}.send:disabled{background:#D1D5DB;cursor:not-allowed}
+
+/* ── mobile ──────────────────────────────────────────────────────────────── */
+@media(max-width:600px){
+  .header{padding:10px 12px}
+  .header-text p,.badge{display:none}
+  .chat{padding:14px 12px}
+  .bubble{max-width:92%;font-size:13.5px}
+  .bubble.card-wrap{max-width:98%}
+  .arch-card{max-width:100%}
+  .bar{padding:10px 12px;padding-bottom:max(10px,env(safe-area-inset-bottom,10px))}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">D</div>
+  <div class="header-text">
+    <h1>HyperXen.ai</h1>
+    <p>Architecture Designer — draw.io renderer (spike)</p>
+  </div>
+  <div class="header-right">
+    <span class="badge">draw.io</span>
+    <div class="dot"></div>
+    <a href="/architect" class="new-btn" title="Switch to SVG renderer">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      SVG view
+    </a>
+    <a href="/" class="new-btn" title="Go to VM Pricing">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      Pricing
+    </a>
+    <button class="new-btn" id="newBtn" title="Start a new conversation">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 3 3 12 12 12"/></svg>
+      New
+    </button>
+  </div>
+</div>
+
+<div class="chat" id="chat"></div>
+
+<div class="bar">
+  <textarea id="inp" placeholder="Describe your Azure architecture…" rows="1"></textarea>
+  <button class="send" id="btn">&#9658;</button>
+</div>
+
+<script>
+const chat = document.getElementById('chat');
+const inp  = document.getElementById('inp');
+const btn  = document.getElementById('btn');
+
+let sessionId = mkSid();
+
+function mkSid(){ return 'arch1_' + Math.random().toString(36).substr(2,9); }
+
+inp.addEventListener('input', () => { inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px'; });
+inp.addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+btn.addEventListener('click', send);
+document.getElementById('newBtn').addEventListener('click', newSession);
+
+function newSession(){
+  sessionId = mkSid();
+  chat.innerHTML = '';
+  loadWelcome();
+}
+
+function addMsg(role, content){
+  const w  = document.createElement('div'); w.className = 'msg ' + role;
+  const av = document.createElement('div'); av.className = 'av '  + role;
+  av.textContent = role === 'bot' ? 'D' : 'You';
+
+  let b;
+  if(role === 'user'){
+    b = document.createElement('div');
+    b.className = 'bubble user';
+    b.textContent = content;
+  } else if(typeof content === 'object' && content.nodeType){
+    b = document.createElement('div');
+    b.className = 'bubble card-wrap';
+    b.appendChild(content);
+  } else {
+    b = document.createElement('div');
+    b.className = 'bubble bot';
+    b.textContent = content;
+  }
+
+  w.appendChild(av);
+  w.appendChild(b);
+  chat.appendChild(w);
+  chat.scrollTop = chat.scrollHeight;
+  return b;
+}
+
+function addTyping(){
+  const w  = document.createElement('div'); w.className = 'msg bot'; w.id = 'typing';
+  const av = document.createElement('div'); av.className = 'av bot'; av.textContent = 'D';
+  const b  = document.createElement('div'); b.className = 'bubble bot';
+  b.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+  w.appendChild(av); w.appendChild(b);
+  chat.appendChild(w);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ── draw.io diagram card ──────────────────────────────────────────────────────
+function buildDiagramCard(arch, drawioXml){
+  const card = document.createElement('div');
+  card.className = 'arch-card';
+
+  // draw.io viewer div
+  const wrap = document.createElement('div');
+  wrap.className = 'arch-img-wrap';
+
+  const mxDiv = document.createElement('div');
+  mxDiv.className = 'mxgraph';
+  mxDiv.setAttribute('data-mxgraph', JSON.stringify({
+    highlight: '#0000ff',
+    nav: true,
+    resize: true,
+    toolbar: 'zoom layers tags lightbox',
+    edit: '_blank',
+    xml: drawioXml,
+  }));
+  wrap.appendChild(mxDiv);
+  card.appendChild(wrap);
+
+  // Footer
+  const foot = document.createElement('div');
+  foot.className = 'arch-foot';
+
+  // Download .drawio
+  const dlBtn = document.createElement('button');
+  dlBtn.className = 'dl-btn';
+  dlBtn.textContent = '⬇ Download .drawio';
+  dlBtn.addEventListener('click', () => {
+    const blob = new Blob([drawioXml], {type: 'application/xml'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    const slug = (arch.title||'architecture').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    a.download = slug + '.drawio';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  foot.appendChild(dlBtn);
+
+  // Link to open in app.diagrams.net
+  const openBtn = document.createElement('button');
+  openBtn.className = 'dl-btn';
+  openBtn.textContent = '↗ Open in draw.io';
+  openBtn.addEventListener('click', () => {
+    // Encode as UTF-8 then deflate+base64 for app.diagrams.net URL
+    // Simpler: write to hidden form and POST (draw.io doesn't support POST import)
+    // Simplest for spike: use anchor data URI (works for small diagrams)
+    const encoded = encodeURIComponent(drawioXml);
+    // draw.io accepts XML via the page fragment: https://app.diagrams.net/#Hencoded
+    // But large XML exceeds URL limits — fall back to a note.
+    if(encoded.length < 8000){
+      window.open('https://app.diagrams.net/#' + encoded, '_blank');
+    } else {
+      alert('Diagram is too large for the URL scheme — use "Download .drawio" then open the file in draw.io.');
+    }
+  });
+  foot.appendChild(openBtn);
+
+  // Compare link back to SVG renderer
+  const cmpLink = document.createElement('a');
+  cmpLink.className = 'compare-link';
+  cmpLink.href = '/architect';
+  cmpLink.textContent = '↔ Compare with SVG renderer (/architect)';
+  foot.appendChild(cmpLink);
+
+  card.appendChild(foot);
+  return card;
+}
+
+// ── send ──────────────────────────────────────────────────────────────────────
+async function send(){
+  const text = inp.value.trim();
+  if(!text) return;
+
+  inp.value = '';
+  inp.style.height = 'auto';
+  btn.disabled = true;
+  addMsg('user', text);
+  addTyping();
+
+  try{
+    // Step 1: run discovery agent (same endpoint as /architect)
+    const r = await fetch('/api/diagram/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sessionId, message: text}),
+    });
+    if(!r.ok) throw new Error('Chat error ' + r.status);
+    const d = await r.json();
+    document.getElementById('typing')?.remove();
+
+    if(d.type === 'architecture'){
+      if(d.json){
+        // Step 2: render to draw.io XML
+        addTyping();
+        document.getElementById('typing').querySelector('.typing').innerHTML =
+          '<span></span><span></span><span></span>&nbsp;<small style="font-size:11px;color:#999">Rendering draw.io…</small>';
+        try{
+          const r2 = await fetch('/api/diagram/render-drawio', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(d.json),
+          });
+          document.getElementById('typing')?.remove();
+          if(!r2.ok) throw new Error('render-drawio error ' + r2.status);
+          const rd = await r2.json();
+          if(!rd.drawio_xml) throw new Error('No drawio_xml in response');
+
+          const card = buildDiagramCard(d.json, rd.drawio_xml);
+          addMsg('bot', card);
+
+          // Trigger viewer AFTER card is in DOM
+          requestAnimationFrame(() => {
+            if(window.GraphViewer){
+              window.GraphViewer.processElements();
+            }
+          });
+
+        } catch(renderErr){
+          document.getElementById('typing')?.remove();
+          addMsg('bot', 'Architecture ready but draw.io render failed: ' + renderErr.message +
+                        '\n\nJSON:\n' + JSON.stringify(d.json, null, 2));
+        }
+      } else {
+        addMsg('bot', 'Architecture complete (no JSON returned).');
+      }
+    } else {
+      addMsg('bot', d.reply || d.error || 'Unexpected response.');
+    }
+  } catch(e){
+    document.getElementById('typing')?.remove();
+    addMsg('bot', 'Network error: ' + e.message);
+  } finally{
+    btn.disabled = false;
+    inp.focus();
+  }
+}
+
+// ── welcome ───────────────────────────────────────────────────────────────────
+const SAMPLES = [
+  'A web app with a SQL database',
+  'Three-tier app with load balancer and 2 VMs',
+  'Microservices on App Service with storage',
+  'Simple VM with a SQL database in East US',
+];
+
+function loadWelcome(){
+  const b = addMsg('bot',
+    'Hi! This is the draw.io renderer spike (/architect1).\n\n' +
+    'Describe the same Azure scenario you tested on /architect — I\'ll use the same ' +
+    'discovery brain but render the result as a draw.io diagram for comparison.');
+  const chips = document.createElement('div');
+  chips.className = 'chips';
+  SAMPLES.forEach(s => {
+    const c = document.createElement('button');
+    c.className = 'chip';
+    c.textContent = s;
+    c.addEventListener('click', () => { inp.value = s; inp.focus(); });
+    chips.appendChild(c);
+  });
+  b.appendChild(chips);
+}
+
+loadWelcome();
+</script>
+</body>
+</html>

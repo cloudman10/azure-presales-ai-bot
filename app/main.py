@@ -62,6 +62,14 @@ async def architect() -> FileResponse:
     )
 
 
+@app.get("/architect1")
+async def architect1() -> FileResponse:
+    return FileResponse(
+        str(_BASE_DIR / "static" / "architect1.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}
