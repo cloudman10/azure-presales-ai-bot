@@ -744,7 +744,7 @@ Any future LLM text injection into SVG **must** go through `_xt()` (the renderer
 ### Known Limitations
 
 - **No connections rendered** — `connections[]` is parsed but SVG arrows between zones are not drawn (deferred). Zone-to-zone flow is implied by column order (left→right).
-- **No draw.io export** — SVG only; draw.io is a next-direction track (see below).
+- **No draw.io export** — SVG only; draw.io evaluated and rejected 2026-06-24 (see decision log).
 - **LLM grounding** — architect agent uses GPT-4o with no RAG retrieval. New or unusual Azure service types may produce unmapped `type` values that fall back to letter-badge.
 - **Auto-height** — canvas grows with zone count; very tall zone stacks may exceed typical slide height.
 - **Single-step architect** — no memory of prior architecture conversations (each `/architect` session is independent). Session ID scoped to page load.
@@ -764,19 +764,32 @@ Any future LLM text injection into SVG **must** go through `_xt()` (the renderer
 
 **Why this is first:** Grounds the tool in real data, differentiates from generic AI diagram generators, directly addresses the "how many VMs / what workloads?" question that every pre-sales conversation starts with.
 
-#### Track 2 — draw.io rendering experiment (separate branch)
+#### Track 2 — draw.io rendering experiment — **EVALUATED AND REJECTED (2026-06-24)**
 
-The SVG renderer produces a static image. draw.io XML format (`<mxGraphModel>`) supports interactive, editable diagrams that architects can modify in draw.io / Confluence / Visio.
+**Branch:** `feat/drawio-spike` (kept for reference, never merged to main)
 
-**Plan:** Produce `mxGraphModel` XML from the same architecture JSON; serve as a downloadable `.drawio` file alongside the SVG download. Keep on a separate branch (`feat/drawio-export`) — does not touch the SVG path.
+**What was built:** `app/services/diagram_renderer_drawio.py` produced mxGraphModel XML from the same architecture JSON. New `/architect1` route deployed to dev alongside `/architect` for side-by-side comparison. 50 Azure mscae stencil shape mappings. Inline browser rendering via `viewer.diagrams.net/js/viewer-static.min.js`.
 
-**Risk:** draw.io XML is positional (explicit x/y per node); auto-layout requires computing node positions in Python or calling the draw.io layout API. Non-trivial for a 3-column + sidebar layout.
+**Findings — why it was rejected:**
+
+1. **Fallback rectangles, not real Azure icons.** The draw.io static viewer (`viewer-static.min.js`) does not bundle the `mscae` Azure stencil library. All Azure-typed nodes render as plain `#dae8fc` rectangles instead of the Microsoft Azure icons. Getting real icons would require the server-side draw.io CLI (`drawio --export`), which is a heavyweight Linux dependency (Electron + Chromium, ~300 MB) — the opposite of our startup.sh philosophy.
+
+2. **Output far less complete than the SVG renderer.** The draw.io XML only has zones, resources, and connection edges. Missing entirely: gradient header + title, value-pillar callouts (Secure/Resilient/Efficient), migration approach band (numbered steps + arrows), Key Design Principles checklist, Future Options, Legend. The SVG renderer produces a complete consulting one-pager; the draw.io version is a bare swimlane diagram.
+
+3. **Messy connection labels.** draw.io's orthogonal edge routing overlaps label text with container borders when source and target are in different swimlane hierarchies (e.g., on-prem resource → Azure envelope resource). The SVG renderer doesn't draw connections at all (deferred) — a cleaner tradeoff than drawing them badly.
+
+4. **No interactive benefit for the spike goal.** The inline viewer renders a static canvas (same visual result as a PNG); "interactive" (zoom/pan) is a minor UX improvement that doesn't offset the above deficits.
+
+**Only residual value:** A `.drawio` download button so a customer's architect can open the diagram in draw.io and edit it. Not worth the complexity delta right now.
+
+**Canonical renderer:** SVG renderer (`diagram_renderer_svg.py`, tag `v-arch-svg-1.0`) remains the sole renderer. `/architect` (SVG) is the default and production path. `/architect1` was left on `dev` as a dead-end reference; it will not be promoted to `main`.
 
 #### Decision Log
 
 | Decision | Rationale |
 |----------|-----------|
 | SVG over draw.io first | SVG renders inline in the browser with zero client dependency; for a presales demo, instant inline visual wins over "open in another app" |
+| draw.io evaluated and rejected (2026-06-24) | Inline viewer shows fallback rectangles (no real icons without Electron/Chromium dep); output missing migration/principles/pillars/sidebars; connection labels messy. SVG renderer produces a better one-pager. |
 | SVG over PNG | PNG pixelates on retina/slides; SVG scales perfectly and is ~4× smaller (82 KB vs ~340 KB equivalent PNG) |
 | Removed `.arch-head` card title | HTML card showed title in plain text above SVG *and* SVG gradient bar also showed it — two identical titles looked like a bug. SVG header bar is now the single title display. |
 | shared/mgmt zones → sidebar only | Cross-cutting concerns (Entra ID, Monitor, Defender) belong in a dedicated right panel, not mixed into the on-prem→hub→spoke traffic flow. Matches Microsoft reference architecture layout standard. |
