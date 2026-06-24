@@ -5,18 +5,19 @@
 
 ---
 
-## Current Status (2026-06-21) — v1.5.3
+## Current Status (2026-06-24) — v2.0.0
 
-### Last Known-Good State (2026-06-21)
-- Commit: 3550e67cef6eb96ab18df656ff1d5ff75aa7bb6f (main)
-- Status: dev + prod healthy. `LLM_PROVIDER=foundry` active on both; Anthropic path dormant in code. All three paths (pricing, advisor, fallback) verified on prod. `ANTHROPIC_API_KEY` removed from both App Services — no accidental Anthropic call possible.
+### Last Known-Good State (2026-06-24)
+- Commit: 3c41f95 (main) — tag: **v-arch-svg-1.0**
+- Status: dev healthy. Solution Architecture Designer fully deployed and verified (14/14 section checks, 82,775-byte SVG, ERP migration scenario end-to-end). Pricing bot unchanged and operational.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard 3550e67cef6eb96ab18df656ff1d5ff75aa7bb6f
+  git reset --hard 3c41f95
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
+- Previous stable baseline (pricing bot only, pre-architect): commit `3550e67`.
 
 | Item | Status |
 |------|--------|
@@ -450,9 +451,13 @@ azure-presales-ai-bot/
 │   ├── state.py                  ← shared in-memory session dict (basket, history, advisor)
 │   ├── routers/
 │   │   ├── chat.py               ← /api/chat, /api/welcome, /api/report/*
-│   │   └── basket.py             ← /api/basket CRUD + /api/basket/report/excel|pdf
+│   │   ├── basket.py             ← /api/basket CRUD + /api/basket/report/excel|pdf
+│   │   └── diagram.py            ← /api/diagram/* (chat, render, svg-test, health, sample)
 │   ├── services/
-│   │   └── azure_pricing.py      ← Azure Retail Prices API + ARM SKU capabilities
+│   │   ├── azure_pricing.py      ← Azure Retail Prices API + ARM SKU capabilities
+│   │   ├── diagram_architect.py  ← multi-turn GPT-4o HLD discovery agent
+│   │   ├── diagram_renderer.py   ← PNG renderer (graphviz, fallback)
+│   │   └── diagram_renderer_svg.py ← primary SVG renderer (980px landscape HLD)
 │   ├── utils/
 │   │   ├── sku_normalizer.py     ← normalize_sku_name(), extract_sku()
 │   │   ├── pricing_calculator.py ← PAYG / RI / Savings Plan calculations
@@ -462,12 +467,14 @@ azure-presales-ai-bot/
 │   └── config/
 │       └── settings.py
 ├── static/
-│   └── index.html                ← chat UI with Excel/PDF download buttons
+│   ├── index.html                ← VM pricing chat UI with basket/export
+│   ├── architect.html            ← Solution Architecture Designer UI (/architect)
+│   └── azure-icons/              ← 40 official Azure Architecture Icons V23 SVGs
 ├── scripts/
 │   └── index_vm_skus.py          ← VM SKU indexer for Azure AI Search
 ├── infra/
 │   └── main.bicep                ← App Service infrastructure
-├── startup.sh                    ← pip install + uvicorn launch
+├── startup.sh                    ← graphviz install + gunicorn launch
 ├── requirements.txt
 └── MASTER.md                     ← this file
 ```
@@ -624,6 +631,156 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 - **Tracks:** all HTTP requests, response times, failures, dependencies (Azure AI Search, Prices API calls)
 - **Note:** Live Metrics not supported with OpenTelemetry SDK — use Search and Performance tabs instead
 - **Cold start warning:** B1 instance takes 75–211s on cold start due to OpenTelemetry outbound connections. Upgrade to S1 for Always On if needed.
+
+---
+
+---
+
+## Solution Architecture Designer
+
+Added in v2.0 (2026-06-24, tag `v-arch-svg-1.0`). A multi-turn LLM-powered agent that generates professional one-page High-Level Design (HLD) diagrams for Azure architectures — consultant-quality SVG output, suitable for presales decks and customer workshops.
+
+### Purpose
+
+A pre-sales conversation tool: the user describes a customer scenario (e.g., "5 Hyper-V VMs running an ERP workload, migrate to Azure with DR"), the agent asks clarifying questions, and produces a ready-to-share HLD. Accessed at `/architect`.
+
+### Flow
+
+```
+User message → POST /api/diagram/chat
+  → diagram_architect.py  (multi-turn GPT-4o discovery)
+  → emits ARCHITECTURE_JSON: {...}
+  → diagram_renderer_svg.py  (980px landscape SVG)
+  → svg_b64 in JSON response
+  → architect.html  (inline <img src="data:image/svg+xml;base64,...">)
+```
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/architect` | UI page (`static/architect.html`) |
+| `POST` | `/api/diagram/chat` | Main chat; returns `{type, reply, json, svg_b64, png_base64}` |
+| `GET` | `/api/diagram/svg-test` | Smoke-test with minimal hardcoded payload; returns raw SVG |
+| `GET` | `/api/diagram/health` | Health check |
+| `GET` | `/api/diagram/sample` | Returns sample architecture JSON |
+| `POST` | `/api/diagram/render` | Render arbitrary architecture JSON → SVG |
+
+### SVG Renderer (`app/services/diagram_renderer_svg.py`)
+
+980px × auto-height canvas, 5 visual bands top-to-bottom:
+
+1. **Header bar** — gradient `#0F2D57 → #1565C0`, large title, subtitle, 3 value-pillar callouts derived from `design_principles` by keyword matching. Pillar titles: "Secure & Zero Trust" / "Resilient & Available" / "Operationally Efficient".
+
+2. **Architecture area (center + right sidebar)**
+   - *Left 3 columns inside Azure envelope*: `onprem` (col 0), `hub` (col 1), `spoke`+unknown (col 2). Each zone: colored header bar, resource rows with 28×28px official Azure icon + name + role.
+   - *Right sidebar (200px)*: 4 stacked panels for cross-cutting concerns — Security & Identity, Management & Monitoring, Backup & DR, Region (with paired region). Populated from `shared`/`mgmt` zone types.
+
+3. **Migration Approach band** — numbered circles + step name + truncated description, horizontal flow with SVG `<path>` arrows.
+
+4. **Bottom band** — Key Design Principles (2-column checklist from `design_principles[]`) + Future Options (`future_options[]`).
+
+5. **Legend** — zone-type colour key.
+
+**Canvas width breakdown:**
+```
+W = 18 (left margin) + 726 (3×218px cols + 2×36px gaps) + 18 (gap) + 200 (sidebar) + 18 (right margin) = 980px
+```
+
+### Architecture JSON Schema
+
+```json
+{
+  "title": "string",
+  "subtitle": "string",
+  "zones": [
+    {
+      "id": "string",
+      "label": "string",
+      "type": "onprem|hub|spoke|shared|mgmt",
+      "resources": [
+        {"id": "string", "type": "ResourceType", "name": "string", "role": "string"}
+      ]
+    }
+  ],
+  "connections": [{"from": "string", "to": "string", "label": "string"}],
+  "shared_services": [{"type": "string", "name": "string", "purpose": "string"}],
+  "migration_approach": [{"step": "string", "description": "string"}],
+  "design_principles": ["string"],
+  "future_options": ["string"]
+}
+```
+
+**Zone type routing:**
+- `onprem` → center column 0
+- `hub` → center column 1
+- `spoke` + any unknown type → center column 2
+- `shared` → sidebar Security & Identity + Mgmt panels (by resource type)
+- `mgmt` → sidebar Management & Monitoring panel
+
+### Azure Icon Mapping
+
+Official Microsoft Azure Architecture Icons **V23** (707-entry pack). 40 SVG files in `static/azure-icons/`, mapped in `_TYPE_ICON` dict in `diagram_renderer_svg.py`. Unmapped types fall back to a colored letter-badge.
+
+| Category | Mapped types |
+|----------|-------------|
+| Compute | VirtualMachine, HyperVHost, OnPremVM, OnPremServer, ScaleSet, AVDHostPool, AppService, FunctionApp, AKSCluster, ContainerApp |
+| Network | AzureFirewall, OnPremFirewall, BastionHost, VPNGateway, ExpressRouteGateway, LoadBalancer, ApplicationGateway, VirtualNetwork, OnPremNetwork, Subnet, NetworkSecurityGroup, PrivateDNSZone, PrivateEndpoint, NATGateway, RouteTable |
+| Data | SQLDatabase, SQLManagedInstance, StorageAccount, CosmosDB, MySQLDatabase, PostgreSQLDatabase, RedisCache, DataFactory |
+| Security | EntraID*, ManagedIdentity, KeyVault, DefenderForCloud, AzurePolicy, Sentinel |
+| Operations | RecoveryServicesVault, LogAnalyticsWorkspace, AzureMonitor, ApplicationInsights, UpdateManager, AutomationAccount |
+
+*EntraID uses `enterprise-applications.svg` proxy — V23 has no standalone Entra ID service icon.
+
+### XML Encoding Rule (important — recurring issue)
+
+LLM-generated text can contain C0/C1 control characters (`\x00-\x08`, `\x0b`, `\x0c`, `\x0e-\x1f`, `\x7f`, `\x80-\x9f`) and smart Unicode quotes that are illegal in XML 1.0. The renderer:
+1. Strips prohibited chars via `_XML_PROHIBITED` regex before writing any text node
+2. Converts smart quotes / em-dashes to ASCII equivalents in `diagram_architect._sanitize()`
+3. Validates the final SVG with `xml.etree.ElementTree.fromstring()` — raises immediately on any violation
+
+Any future LLM text injection into SVG **must** go through `_xt()` (the renderer's text-escape + prohibited-char strip function).
+
+### Known Limitations
+
+- **No connections rendered** — `connections[]` is parsed but SVG arrows between zones are not drawn (deferred). Zone-to-zone flow is implied by column order (left→right).
+- **No draw.io export** — SVG only; draw.io is a next-direction track (see below).
+- **LLM grounding** — architect agent uses GPT-4o with no RAG retrieval. New or unusual Azure service types may produce unmapped `type` values that fall back to letter-badge.
+- **Auto-height** — canvas grows with zone count; very tall zone stacks may exceed typical slide height.
+- **Single-step architect** — no memory of prior architecture conversations (each `/architect` session is independent). Session ID scoped to page load.
+
+---
+
+### Next Directions (parked)
+
+#### Priority 1 — RAG grounding for the architect agent
+
+**Why:** The top presales differentiator would be grounding the agent against customer-specific data — Hyper-V inventory exports, Azure Migrate assessment CSVs, or a product catalogue. Without grounding, every scenario is a blank-slate LLM inference; with grounding, the agent could import a real migration assessment and produce a diagram directly from the customer's actual workload data.
+
+**Implementation path:**
+1. Ingest assessment CSV → Azure AI Search index (same infra as the VM SKU index, `rg-hyperxen-app-dev`)
+2. Add a RAG retrieval step in `diagram_architect.py` system context before the first turn
+3. Agent uses retrieved workload facts as grounding; still asks clarifying questions for gaps
+
+**Why this is first:** Grounds the tool in real data, differentiates from generic AI diagram generators, directly addresses the "how many VMs / what workloads?" question that every pre-sales conversation starts with.
+
+#### Track 2 — draw.io rendering experiment (separate branch)
+
+The SVG renderer produces a static image. draw.io XML format (`<mxGraphModel>`) supports interactive, editable diagrams that architects can modify in draw.io / Confluence / Visio.
+
+**Plan:** Produce `mxGraphModel` XML from the same architecture JSON; serve as a downloadable `.drawio` file alongside the SVG download. Keep on a separate branch (`feat/drawio-export`) — does not touch the SVG path.
+
+**Risk:** draw.io XML is positional (explicit x/y per node); auto-layout requires computing node positions in Python or calling the draw.io layout API. Non-trivial for a 3-column + sidebar layout.
+
+#### Decision Log
+
+| Decision | Rationale |
+|----------|-----------|
+| SVG over draw.io first | SVG renders inline in the browser with zero client dependency; for a presales demo, instant inline visual wins over "open in another app" |
+| SVG over PNG | PNG pixelates on retina/slides; SVG scales perfectly and is ~4× smaller (82 KB vs ~340 KB equivalent PNG) |
+| Removed `.arch-head` card title | HTML card showed title in plain text above SVG *and* SVG gradient bar also showed it — two identical titles looked like a bug. SVG header bar is now the single title display. |
+| shared/mgmt zones → sidebar only | Cross-cutting concerns (Entra ID, Monitor, Defender) belong in a dedicated right panel, not mixed into the on-prem→hub→spoke traffic flow. Matches Microsoft reference architecture layout standard. |
+| EntraID proxy icon | V23 has no standalone "Microsoft Entra ID" service icon. `enterprise-applications.svg` is the closest visual proxy (blue people icon). Will update if V24 adds one. |
 
 ---
 
