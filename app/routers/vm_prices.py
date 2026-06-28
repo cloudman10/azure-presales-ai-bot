@@ -71,7 +71,7 @@ async def search_prices(
                 "spot_hourly", "price_updated_at",
             ],
         )
-        docs = [dict(r) for r in results]
+        docs = [{k: v for k, v in dict(r).items() if not k.startswith("@")} for r in results]
         return {
             "count": len(docs),
             "region": region,
@@ -93,7 +93,6 @@ async def get_sku_prices(
         results = _client().search(
             search_text="*",
             filter=f"sku_name eq '{sku_name}' and retired eq false",
-            order_by=["os asc"],
             top=10,
             select=[
                 "sku_name", "region", "os", "vcpus", "ram_gb",
@@ -102,7 +101,7 @@ async def get_sku_prices(
                 "price_updated_at",
             ],
         )
-        docs = [dict(r) for r in results]
+        docs = [{k: v for k, v in dict(r).items() if not k.startswith("@")} for r in results]
         return {"sku_name": sku_name, "count": len(docs), "results": docs}
     except Exception as exc:
         logger.exception("vm_prices sku lookup failed: %s", sku_name)
