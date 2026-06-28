@@ -8,12 +8,12 @@
 ## Current Status (2026-06-28) — v2.1.0
 
 ### Last Known-Good State (2026-06-28)
-- Commit: TBD (main) — tag: **compare-prices-1.0**
+- Commit: `bc27f52` (main) — tag: **compare-prices-1.0**
 - Status: dev healthy. Compare Azure Prices tool fully deployed and validated (subscription-accurate SKU list, Arm64 gate, architecture badges, RAM min/max filter, Windows default). Pricing bot and Solution Architecture Designer unchanged and operational.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard <hash>
+  git reset --hard bc27f52
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
