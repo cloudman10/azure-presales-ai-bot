@@ -290,7 +290,7 @@ function updateStatus(shown) {
   } else if (q && shown < total) {
     txt = `<strong>${shown}</strong> of <strong>${total}</strong> VMs`;
   } else {
-    txt = `<strong>${shown}</strong> VM${shown!==1?'s':''} matched` + (total>=200?' (top 200)':'');
+    txt = `<strong>${shown}</strong> VM${shown!==1?'s':''} matched` + (total>=1000?' (top 1000)':'');
   }
   el.innerHTML = txt;
 }
@@ -317,7 +317,7 @@ async function load() {
     ram_min:   parseInt(document.getElementById('f-ram-min').value)   || 0,
     ram_max:   parseInt(document.getElementById('f-ram-max').value)   || 12288,
     sort_by:   'payg_monthly',
-    top:       200,
+    top:       1000,
   });
   try {
     const resp = await fetch(`${API}?${params}`);
