@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import basket, chat, diagram
+from app.routers import basket, chat, diagram, vm_prices
 
 app = FastAPI(title="Azure VM Pricing Bot", version="1.0.0")
 
@@ -44,6 +44,7 @@ app.mount("/static", StaticFiles(directory=str(_BASE_DIR / "static")), name="sta
 app.include_router(chat.router, prefix="/api")
 app.include_router(basket.router, prefix="/api/basket")
 app.include_router(diagram.router, prefix="/api/diagram")
+app.include_router(vm_prices.router, prefix="/api/vm-prices")
 
 
 @app.get("/")
