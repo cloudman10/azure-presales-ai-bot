@@ -656,7 +656,28 @@ Separate Azure AI Search index **`vm-sku-prices`** — distinct from the advisor
 4. Builds one Linux doc + one Windows doc per deployable x64 SKU (Arm64 SKUs: Linux only)
 5. Uploads via `merge_or_upload_documents`; runs cleanup to remove any stale docs
 
-**Current index:** ~1,975 docs — 1,036 Linux + 939 Windows, australiaeast only. Run is manual; no scheduled refresh yet.
+**Current index:** ~2,226 docs — 1,154 Linux + 1,072 Windows (137 quota-required SKUs / 251 docs), australiaeast only. Run is manual; no scheduled refresh yet.
+
+### Deployability Source of Truth = Azure Portal (IMPORTANT RULE)
+
+**The grid must match what the Azure portal shows in "Select a VM size", not the Azure Pricing Calculator.**
+
+The Azure Pricing Calculator is subscription-agnostic and shows a global catalogue. The portal is subscription-specific and reflects what can actually be deployed (immediately or after quota request). Our grid targets portal accuracy.
+
+**Three tiers of SKU status — matching the portal:**
+
+| Portal display | ARM state | Grid display |
+|----------------|-----------|--------------|
+| Available (green tick) | In ARM, no LOCATION restriction | Normal row, no badge |
+| Size not available — Request quota | In ARM, LOCATION restriction, `reasonCode=NOT_AVAILABLE_FOR_SUBSCRIPTION` | Row with orange **Quota** badge |
+| Not shown | Absent from ARM entirely | Excluded — not shown |
+
+**Critical: both "quota-required" and "hard-unavailable" use the same `reasonCode = NOT_AVAILABLE_FOR_SUBSCRIPTION`.** The distinguishing signal is not the reason code but **presence in ARM**: if `resource_skus.list()` returns the SKU (even with restrictions), it is quota-requestable and must appear in the grid. If ARM does not return the SKU at all, it is genuinely unavailable (wrong hardware, retired, or not offered in the region).
+
+**`fetch_deployable_arm_skus()` returns three sets:**
+- `in_arm_skus` — all SKUs present in ARM; filter specs to this set (excludes only SKUs absent from ARM)
+- `quota_required_skus` — subset with LOCATION restriction; these get `quota_required=True` in the index
+- `arm64_skus` — subset with `CpuArchitectureType=Arm64`; Windows doc skipped for these
 
 ### Read API
 
@@ -667,12 +688,12 @@ GET /api/vm-prices/sku/{sku_name}   — all pricing tiers for a single SKU (both
 
 Filter params: `region`, `os` (Linux/Windows), `vcpus_min/max` (1–512), `ram_min/max` (0–12288 GiB), `sort_by`, `top` (max 200).
 
-Returns: `sku_name`, `vcpus`, `ram_gb`, `series`, `architecture`, `payg_hourly`, `payg_monthly`, `spot_hourly`, `sp_1yr_monthly`, `sp_3yr_monthly`, `ri_1yr_monthly`, `ri_3yr_monthly`, `price_updated_at`.
+Returns: `sku_name`, `vcpus`, `ram_gb`, `series`, `architecture`, `quota_required`, `payg_hourly`, `payg_monthly`, `spot_hourly`, `sp_1yr_monthly`, `sp_3yr_monthly`, `ri_1yr_monthly`, `ri_3yr_monthly`, `price_updated_at`.
 
 ### Accuracy Disciplines (hard-won)
 
-**1 — Deployability gate (ARM LOCATION restriction filter)**
-Only SKUs that are ARM-deployable for this subscription in the region are indexed. The ARM `resource_skus.list()` API is called during every index run; SKUs with `type=Location, zones=[]` restriction (not available at all) are excluded. This removes SKUs the global Azure Calculator shows but that cannot actually be deployed — e.g. the original B-series (B2ms, B4ms, B8ms, B20ms) are LOCATION-restricted for this subscription in australiaeast. Zone-only restrictions (`type=Zone, zones=['1']`) are kept — the SKU is deployable in other zones.
+**1 — Deployability gate (ARM presence + quota-required flag)**
+`resource_skus.list()` is called on every index run. SKUs absent from ARM are excluded (genuinely unavailable — wrong hardware or retired for this region). SKUs present in ARM with a LOCATION restriction are included but flagged `quota_required=True` — the portal shows these as "Request quota" and they ARE deployable once quota is granted. Zone-only restrictions (`type=Zone, zones=['1']`) are kept unrestricted — the SKU is deployable in other zones. Example: old B-series (B2ms, B4ms, B8ms, B20ms) are LOCATION-restricted for this subscription in australiaeast → shown with orange Quota badge. B2ts_v2 has only a Zone restriction → shown normally (fully deployable).
 
 **2 — Architecture-aware (Arm64 / Windows)**
 Arm64 SKUs (naming convention: `pls`, `ps`, `pds`, `plds`, `pts` sub-series — e.g. Bpsv2, Dps_v5/v6, Eps_v5/v6 families) are Linux-only. Standard Windows images are x86-64. The Retail Prices API returns Windows prices for Arm64 SKUs speculatively, but no Windows ARM64 images exist in australiaeast — the portal correctly hides them. The indexer skips the Windows doc for all Arm64 SKUs (`CpuArchitectureType=Arm64` capability). The `/compare` UI shows a purple **Arm64** badge next to Arm64 SKUs in the Linux grid so users know they need an ARM64 image (e.g. Ubuntu Arm64), not a standard x86 image.
@@ -685,7 +706,7 @@ Spot prices: Linux only (no Windows Spot market). Savings Plan rates: embedded i
 
 ### Subscription-Specificity Note
 
-**Deployability is subscription-specific.** The gate reflects which SKUs *this subscription* can deploy in the region. A different subscription (e.g. MSDN, EA, Pay-As-You-Go) may have different access. The grid is more accurate than the generic Azure Calculator for this subscription, but "deployable" is relative to the subscription used to build the index. The index must be re-run if the subscription or region quota changes.
+**Deployability is subscription-specific.** The gate reflects which SKUs *this subscription* can deploy in the region. A different subscription (e.g. MSDN, EA, Pay-As-You-Go) may have different ARM restrictions and different quota allocations — `in_arm_skus` and `quota_required_skus` will differ. The grid is more accurate than the generic Azure Calculator for this subscription, but "deployable" is relative to the subscription used to build the index. Re-run the indexer if subscription quota changes.
 
 ### Known TODOs (parked)
 
@@ -693,7 +714,8 @@ Spot prices: Linux only (no Windows Spot market). Savings Plan rates: embedded i
 - Additional regions beyond australiaeast (REGION constant in the script)
 - Add-to-Basket from the grid (wire into the existing quote basket)
 - CSV export
-- Architecture filter in the UI (e.g. show Arm64 / x64 toggle)
+- Architecture filter in the UI (Arm64 / x64 toggle)
+- Quota filter (show/hide quota-required SKUs)
 
 ---
 
