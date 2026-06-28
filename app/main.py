@@ -71,6 +71,14 @@ async def architect1() -> FileResponse:
     )
 
 
+@app.get("/compare")
+async def compare() -> FileResponse:
+    return FileResponse(
+        str(_BASE_DIR / "static" / "compare.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}

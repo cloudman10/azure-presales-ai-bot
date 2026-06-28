@@ -41,7 +41,7 @@ async def search_prices(
     vcpus_max: int = Query(128,             le=512),
     ram_min:   int = Query(0,               ge=0),
     sort_by:   str = Query("payg_monthly",  description="Field to sort ascending"),
-    top:       int = Query(20,              ge=1, le=100),
+    top:       int = Query(20,              ge=1, le=200),
 ):
     """
     Query VM prices from vm-sku-prices index. Returns specs + all pricing tiers.
