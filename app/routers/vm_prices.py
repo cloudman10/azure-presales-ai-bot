@@ -1,10 +1,11 @@
 """
 app/routers/vm_prices.py
 
-Stage 1 data layer: query vm-sku-prices index.
-
-GET /api/vm-prices/search?region=australiaeast&os=Linux&vcpus_min=4&vcpus_max=8
-GET /api/vm-prices/sku/{sku_name}   — all pricing tiers for one SKU
+VM price endpoints:
+  GET /api/vm-prices/search       — pre-indexed query (australiaeast)
+  GET /api/vm-prices/sku/{name}   — single SKU lookup (indexed)
+  GET /api/vm-prices/live         — live per-region fetch (all regions)
+  GET /api/vm-prices/regions      — Azure region catalogue
 """
 
 import logging
@@ -15,6 +16,8 @@ from fastapi.responses import JSONResponse
 
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
+
+from app.services.vm_compare import compare_live as _compare_live, AZURE_REGIONS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,6 +88,46 @@ async def search_prices(
         }
     except Exception as exc:
         logger.exception("vm_prices search failed")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@router.get("/regions")
+async def list_regions() -> list[dict]:
+    """Return the Azure region catalogue for the compare grid dropdown."""
+    return AZURE_REGIONS
+
+
+@router.get("/live")
+async def compare_live_endpoint(
+    region:    str = Query("australiaeast"),
+    os:        str = Query("Windows"),
+    vcpus_min: int = Query(1,     ge=1),
+    vcpus_max: int = Query(512,   le=512),
+    ram_min:   int = Query(0,     ge=0),
+    ram_max:   int = Query(12288, ge=0),
+):
+    """
+    Live per-region VM price comparison.
+    Fetches Retail Prices API + ARM gate on demand; caches 30 min per region.
+    Works for any Azure region — not limited to australiaeast.
+    """
+    try:
+        rows = await _compare_live(
+            region    = region,
+            os_type   = os,
+            vcpus_min = vcpus_min,
+            vcpus_max = vcpus_max,
+            ram_min   = ram_min,
+            ram_max   = ram_max,
+        )
+        return {
+            "count":  len(rows),
+            "region": region,
+            "os":     os,
+            "results": rows,
+        }
+    except Exception as exc:
+        logger.exception("compare_live failed region=%s os=%s", region, os)
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
