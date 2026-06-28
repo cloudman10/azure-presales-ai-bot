@@ -66,21 +66,34 @@ PAGE_LIMIT        = 150          # max pages per bulk fetch (150 × 100 = 15 000
 
 # ── ARM deployability gate ────────────────────────────────────────────────────
 
-def fetch_deployable_arm_skus(region: str) -> tuple[set[str], set[str]]:
+def fetch_deployable_arm_skus(region: str) -> tuple[set[str], set[str], set[str]]:
     """
-    Return (deployable_skus, arm64_skus) for the given region.
+    Return (in_arm_skus, arm64_skus, quota_required_skus) for the given region.
 
-    deployable_skus: VM SKU names with no LOCATION-level subscription restrictions.
-    arm64_skus:      subset of deployable_skus with CpuArchitectureType == Arm64.
-                     These SKUs are Linux-only; standard Windows images are x86-64.
+    in_arm_skus:         All VM SKU names present in ARM for this region.
+                         If ARM returns a SKU (even with restrictions), the Azure portal
+                         shows it as "Size not available — Request quota", meaning it IS
+                         deployable once quota is granted.  SKUs absent from ARM entirely
+                         are genuinely unavailable and should not appear.
+    arm64_skus:          Subset of in_arm_skus with CpuArchitectureType == Arm64.
+                         These are Linux-only — Windows images are x86-64.
+    quota_required_skus: Subset of in_arm_skus with a LOCATION-level restriction
+                         (reasonCode = NOT_AVAILABLE_FOR_SUBSCRIPTION, zones=[]).
+                         Index these docs with quota_required=True so the grid can badge
+                         them.  Zone-only restrictions are NOT quota-required — those SKUs
+                         are fully deployable in other zones.
+
+    Key distinction (both use the same ARM reasonCode NOT_AVAILABLE_FOR_SUBSCRIPTION):
+      - LOCATION restriction, zones=[] → quota-required (still in ARM, portal shows it)
+      - SKU completely absent from ARM  → hard unavailable (never show)
 
     Uses AzureCliCredential (works locally with 'az login').
     Falls back to ClientSecretCredential if CLI is not available.
-    Returns (set(), set()) on any failure; callers skip the filters in that case.
+    Returns (set(), set(), set()) on failure; callers skip filters in that case.
     """
     if not SUBSCRIPTION_ID:
         log.warning("AZURE_SUBSCRIPTION_ID not set — skipping ARM deployability filter")
-        return set(), set()
+        return set(), set(), set()
 
     from azure.mgmt.compute import ComputeManagementClient
 
@@ -101,42 +114,46 @@ def fetch_deployable_arm_skus(region: str) -> tuple[set[str], set[str]]:
 
     if credential is None:
         log.warning("No ARM credential available — skipping deployability filter")
-        return set(), set()
+        return set(), set(), set()
 
     try:
         compute = ComputeManagementClient(credential, SUBSCRIPTION_ID)
         all_skus = list(compute.resource_skus.list(filter=f"location eq '{region}'"))
 
-        def _location_restricted(sku) -> bool:
-            # Exclude only if there is a LOCATION-level restriction (not just zone-level).
-            # Zone restrictions (e.g. zones=['1']) mean the SKU can't go in that zone,
-            # but it is still deployable in other zones or without zone affinity.
-            # Location restrictions (zones=[]) mean it's unavailable in the region at all.
+        def _has_location_restriction(sku) -> bool:
+            # True if the SKU has a LOCATION-level restriction with empty zones list.
+            # This means quota must be requested before deployment.
+            # Zone-only restrictions (zones=['1']) = deployable in other zones — not quota-required.
             for r in (sku.restrictions or []):
                 zones = (r.restriction_info.zones if r.restriction_info else []) or []
                 if str(r.type).upper().endswith("LOCATION") and not zones:
                     return True
             return False
 
-        deployable: set[str] = set()
-        arm64:      set[str] = set()
+        in_arm:         set[str] = set()
+        arm64:          set[str] = set()
+        quota_required: set[str] = set()
 
         for s in all_skus:
             if s.resource_type != "virtualMachines":
                 continue
-            if _location_restricted(s):
-                continue
-            deployable.add(s.name)
+            in_arm.add(s.name)
             caps = {c.name: c.value for c in (s.capabilities or [])}
             if caps.get("CpuArchitectureType", "").lower() == "arm64":
                 arm64.add(s.name)
+            if _has_location_restriction(s):
+                quota_required.add(s.name)
 
-        log.info("ARM deployable SKUs for %s: %d (%d are Arm64/Linux-only)",
-                 region, len(deployable), len(arm64))
-        return deployable, arm64
+        deployable = in_arm - quota_required
+        log.info("ARM SKUs for %s: %d total — %d deployable, %d quota-required, %d Arm64",
+                 region, len(in_arm), len(deployable), len(quota_required), len(arm64))
+        if quota_required:
+            sample = sorted(quota_required)[:8]
+            log.info("  Quota-required sample: %s", sample)
+        return in_arm, arm64, quota_required
     except Exception as e:
         log.warning("ARM SKU fetch failed — skipping deployability filter: %s", e)
-        return set(), set()
+        return set(), set(), set()
 
 
 def cleanup_arm64_windows_docs(arm64_skus: set[str], region: str) -> int:
@@ -222,6 +239,7 @@ def _index_def() -> SearchIndex:
             simple("temp_storage_gb", F.Int32,        sortable=True),
             simple("series",          F.String,       facetable=True),
             simple("architecture",     F.String,       facetable=True),
+            simple("quota_required",  F.Boolean),
             simple("retired",         F.Boolean),
             simple("payg_hourly",     F.Double,       sortable=True),
             simple("payg_monthly",    F.Double,       sortable=True),
@@ -421,17 +439,22 @@ def build_docs(
     prices: dict[str, dict],
     updated_at: str,
     arm64_skus: set[str] = frozenset(),
+    quota_required_skus: set[str] = frozenset(),
 ) -> list[dict]:
     docs:         list[dict] = []
     no_linux      = 0
     no_windows    = 0
     arm64_skipped = 0
+    quota_count   = 0
 
     for s in specs:
-        sku     = s["sku_name"]
+        sku      = s["sku_name"]
         is_arm64 = sku in arm64_skus
-        p       = prices.get(sku, {})
-        base    = {
+        is_quota = sku in quota_required_skus
+        if is_quota:
+            quota_count += 1
+        p        = prices.get(sku, {})
+        base     = {
             "sku_name":        sku,
             "region":          REGION,
             "vcpus":           s.get("vcpus") or 0,
@@ -439,6 +462,7 @@ def build_docs(
             "temp_storage_gb": s.get("temp_storage_gb") or 0,
             "series":          s.get("series") or "?",
             "architecture":    "Arm64" if is_arm64 else "x64",
+            "quota_required":  is_quota,
             "retired":         False,
             "price_updated_at": updated_at,
         }
@@ -500,12 +524,14 @@ def build_docs(
     linux_count   = sum(1 for d in docs if d["os"] == "Linux")
     windows_count = sum(1 for d in docs if d["os"] == "Windows")
     log.info("Built %d documents: %d Linux, %d Windows", len(docs), linux_count, windows_count)
+    if quota_count:
+        log.info("  Quota-required SKUs (badged in grid): %d", quota_count)
     if arm64_skipped:
-        log.info("  Arm64 SKUs (Windows doc skipped): %d", arm64_skipped)
+        log.info("  Arm64 SKUs (Windows doc skipped):     %d", arm64_skipped)
     if no_linux:
-        log.info("  SKUs with no Linux PAYG price:    %d", no_linux)
+        log.info("  SKUs with no Linux PAYG price:        %d", no_linux)
     if no_windows:
-        log.info("  SKUs with no Windows PAYG price:  %d", no_windows)
+        log.info("  SKUs with no Windows PAYG price:      %d", no_windows)
     return docs
 
 
@@ -544,23 +570,31 @@ async def _main() -> None:
         log.error("No active SKUs in '%s' — run index_vm_skus.py first", SPECS_INDEX)
         return
 
-    # ARM deployability gate: exclude restricted / phantom SKUs
-    # Also returns arm64_skus — Arm64 SKUs are deployable but Linux-only (no Windows images).
-    deployable, arm64_skus = fetch_deployable_arm_skus(REGION)
-    if deployable:
+    # ARM gate — returns all SKUs known to ARM for this region:
+    #   in_arm_skus:         index all of these (includes quota-required)
+    #   arm64_skus:          skip Windows doc for these (Linux-only architecture)
+    #   quota_required_skus: mark with quota_required=True (portal: "Request quota")
+    # SKUs absent from ARM entirely are genuinely unavailable and excluded below.
+    in_arm_skus, arm64_skus, quota_required_skus = fetch_deployable_arm_skus(REGION)
+    if in_arm_skus:
         before = len(specs)
-        specs  = [s for s in specs if s["sku_name"] in deployable]
+        specs  = [s for s in specs if s["sku_name"] in in_arm_skus]
+        excluded = before - len(specs)
         log.info(
-            "ARM deployability filter: %d → %d specs (%d excluded as restricted/phantom)",
-            before, len(specs), before - len(specs),
+            "ARM filter: %d → %d specs (%d absent from ARM — genuinely unavailable)",
+            before, len(specs), excluded,
         )
         log.info("Arm64 SKUs (Linux-only, Windows doc skipped): %d", len(arm64_skus))
+        log.info("Quota-required SKUs (deployable after quota request): %d",
+                 len(quota_required_skus))
     else:
-        log.warning("ARM deployability filter skipped — indexing all specs (may include phantoms)")
+        log.warning("ARM filter skipped — indexing all specs (may include phantoms)")
 
     prices     = await fetch_all_prices()
     updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    docs       = build_docs(specs, prices, updated_at, arm64_skus=arm64_skus)
+    docs       = build_docs(specs, prices, updated_at,
+                            arm64_skus=arm64_skus,
+                            quota_required_skus=quota_required_skus)
 
     if not docs:
         log.error("No documents built — pricing fetch may have failed")
@@ -568,10 +602,10 @@ async def _main() -> None:
 
     upload(docs)
 
-    # Remove previously-indexed docs for SKUs that are now excluded
-    if deployable:
-        cleanup_phantom_docs(deployable, REGION)
-    # Remove stale Windows docs for Arm64 SKUs (normal phantom cleanup won't catch these)
+    # Remove docs for SKUs no longer in ARM (genuinely unavailable)
+    if in_arm_skus:
+        cleanup_phantom_docs(in_arm_skus, REGION)
+    # Remove stale Windows docs for Arm64 SKUs (phantom cleanup won't catch these)
     if arm64_skus:
         cleanup_arm64_windows_docs(arm64_skus, REGION)
     log.info("=" * 60)
