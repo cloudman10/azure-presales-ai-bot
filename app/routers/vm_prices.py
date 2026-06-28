@@ -40,6 +40,7 @@ async def search_prices(
     vcpus_min: int = Query(1,               ge=1),
     vcpus_max: int = Query(128,             le=512),
     ram_min:   int = Query(0,               ge=0),
+    ram_max:   int = Query(12288,           ge=0),
     sort_by:   str = Query("payg_monthly",  description="Field to sort ascending"),
     top:       int = Query(20,              ge=1, le=200),
 ):
@@ -57,6 +58,8 @@ async def search_prices(
         )
         if ram_min > 0:
             odata += f" and ram_gb ge {ram_min}"
+        if ram_max < 12288:
+            odata += f" and ram_gb le {ram_max}"
 
         results = _client().search(
             search_text="*",

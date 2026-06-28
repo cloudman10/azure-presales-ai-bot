@@ -53,14 +53,104 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-SEARCH_ENDPOINT = os.environ["AZURE_SEARCH_ENDPOINT"]
-SEARCH_API_KEY  = os.environ["AZURE_SEARCH_API_KEY"]
-SPECS_INDEX     = "vm-skus"
-PRICES_INDEX    = "vm-sku-prices"
-REGION          = "australiaeast"
-HOURS           = 730          # hours per month
-BATCH           = 100          # upload batch size
-PAGE_LIMIT      = 150          # max pages per bulk fetch (150 × 100 = 15 000 items)
+SEARCH_ENDPOINT   = os.environ["AZURE_SEARCH_ENDPOINT"]
+SEARCH_API_KEY    = os.environ["AZURE_SEARCH_API_KEY"]
+SUBSCRIPTION_ID   = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+SPECS_INDEX       = "vm-skus"
+PRICES_INDEX      = "vm-sku-prices"
+REGION            = "australiaeast"
+HOURS             = 730          # hours per month
+BATCH             = 100          # upload batch size
+PAGE_LIMIT        = 150          # max pages per bulk fetch (150 × 100 = 15 000 items)
+
+
+# ── ARM deployability gate ────────────────────────────────────────────────────
+
+def fetch_deployable_arm_skus(region: str) -> set[str]:
+    """
+    Return the set of VM SKU names actually deployable in this region —
+    i.e. present in ARM Compute AND have no subscription-level restrictions.
+
+    Uses AzureCliCredential (works locally with 'az login').
+    Falls back to ClientSecretCredential if CLI is not available.
+    Returns empty set on any failure; callers must skip the filter in that case.
+    """
+    if not SUBSCRIPTION_ID:
+        log.warning("AZURE_SUBSCRIPTION_ID not set — skipping ARM deployability filter")
+        return set()
+
+    from azure.mgmt.compute import ComputeManagementClient
+
+    credential = None
+    try:
+        from azure.identity import AzureCliCredential
+        credential = AzureCliCredential()
+    except Exception:
+        pass
+
+    if credential is None:
+        tenant = os.environ.get("AZURE_TENANT_ID", "")
+        client = os.environ.get("AZURE_CLIENT_ID", "")
+        secret = os.environ.get("AZURE_CLIENT_SECRET", "")
+        if tenant and client and secret:
+            from azure.identity import ClientSecretCredential
+            credential = ClientSecretCredential(tenant, client, secret)
+
+    if credential is None:
+        log.warning("No ARM credential available — skipping deployability filter")
+        return set()
+
+    try:
+        compute = ComputeManagementClient(credential, SUBSCRIPTION_ID)
+        all_skus = list(compute.resource_skus.list(filter=f"location eq '{region}'"))
+
+        def _location_restricted(sku) -> bool:
+            # Exclude only if there is a LOCATION-level restriction (not just zone-level).
+            # Zone restrictions (e.g. zones=['1']) mean the SKU can't go in that zone,
+            # but it is still deployable in other zones or without zone affinity.
+            # Location restrictions (zones=[]) mean it's unavailable in the region at all.
+            for r in (sku.restrictions or []):
+                zones = (r.restriction_info.zones if r.restriction_info else []) or []
+                if str(r.type).upper().endswith("LOCATION") and not zones:
+                    return True
+            return False
+
+        deployable = {
+            s.name for s in all_skus
+            if s.resource_type == "virtualMachines" and not _location_restricted(s)
+        }
+        log.info("ARM deployable SKUs (no location restrictions) for %s: %d", region, len(deployable))
+        return deployable
+    except Exception as e:
+        log.warning("ARM SKU fetch failed — skipping deployability filter: %s", e)
+        return set()
+
+
+def cleanup_phantom_docs(deployable_skus: set[str], region: str) -> int:
+    """
+    Delete documents from the price index whose sku_name is NOT in deployable_skus.
+    These are restricted or phantom SKUs that should not appear in the comparison grid.
+    Returns number of documents deleted.
+    """
+    client = SearchClient(SEARCH_ENDPOINT, PRICES_INDEX, AzureKeyCredential(SEARCH_API_KEY))
+    results = client.search(
+        search_text="*",
+        filter=f"region eq '{region}'",
+        select=["id", "sku_name"],
+        top=5000,
+    )
+    phantoms = [dict(r) for r in results if r["sku_name"] not in deployable_skus]
+    if not phantoms:
+        log.info("Cleanup: no phantom docs found — index is clean")
+        return 0
+    log.info("Cleanup: deleting %d phantom docs (restricted/non-deployable SKUs)...", len(phantoms))
+    sample = sorted({d["sku_name"] for d in phantoms})[:10]
+    log.info("  Sample phantom SKUs: %s", sample)
+    delete_keys = [{"id": d["id"]} for d in phantoms]
+    for i in range(0, len(delete_keys), BATCH):
+        client.delete_documents(documents=delete_keys[i : i + BATCH])
+    log.info("Cleanup: deleted %d documents", len(phantoms))
+    return len(phantoms)
 
 
 # ── Index definition ──────────────────────────────────────────────────────────
@@ -391,6 +481,18 @@ async def _main() -> None:
         log.error("No active SKUs in '%s' — run index_vm_skus.py first", SPECS_INDEX)
         return
 
+    # ARM deployability gate: exclude restricted / phantom SKUs
+    deployable = fetch_deployable_arm_skus(REGION)
+    if deployable:
+        before = len(specs)
+        specs  = [s for s in specs if s["sku_name"] in deployable]
+        log.info(
+            "ARM deployability filter: %d → %d specs (%d excluded as restricted/phantom)",
+            before, len(specs), before - len(specs),
+        )
+    else:
+        log.warning("ARM deployability filter skipped — indexing all specs (may include phantoms)")
+
     prices     = await fetch_all_prices()
     updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     docs       = build_docs(specs, prices, updated_at)
@@ -400,6 +502,10 @@ async def _main() -> None:
         return
 
     upload(docs)
+
+    # Remove any previously-indexed docs for SKUs that are now excluded
+    if deployable:
+        cleanup_phantom_docs(deployable, REGION)
     log.info("=" * 60)
     log.info("Done in %.1fs", time.monotonic() - t0)
     log.info("=" * 60)

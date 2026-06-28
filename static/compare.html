@@ -120,8 +120,8 @@ td.col-price.has-val{color:#1A1A2E}
   <div class="fg">
     <label>OS</label>
     <select id="f-os">
+      <option value="Windows" selected>Windows</option>
       <option value="Linux">Linux</option>
-      <option value="Windows">Windows</option>
     </select>
   </div>
   <div class="fg">
@@ -133,8 +133,12 @@ td.col-price.has-val{color:#1A1A2E}
     </div>
   </div>
   <div class="fg">
-    <label>RAM min (GiB)</label>
-    <input type="number" id="f-ram-min" value="0" min="0" max="12288">
+    <label>RAM (GiB)</label>
+    <div class="range-row">
+      <input type="number" id="f-ram-min" value="0" min="0" max="12288" placeholder="min">
+      <span>–</span>
+      <input type="number" id="f-ram-max" value="12288" min="0" max="12288" placeholder="max">
+    </div>
   </div>
   <div class="fg">
     <label>Search name / series</label>
@@ -302,6 +306,7 @@ async function load() {
     vcpus_min: parseInt(document.getElementById('f-vcpus-min').value) || 1,
     vcpus_max: parseInt(document.getElementById('f-vcpus-max').value) || 512,
     ram_min:   parseInt(document.getElementById('f-ram-min').value)   || 0,
+    ram_max:   parseInt(document.getElementById('f-ram-max').value)   || 12288,
     sort_by:   'payg_monthly',
     top:       200,
   });
@@ -343,6 +348,7 @@ document.getElementById('f-os').addEventListener('change',     () => load());
 document.getElementById('f-vcpus-min').addEventListener('input', () => scheduleLoad(500));
 document.getElementById('f-vcpus-max').addEventListener('input', () => scheduleLoad(500));
 document.getElementById('f-ram-min').addEventListener('input',   () => scheduleLoad(500));
+document.getElementById('f-ram-max').addEventListener('input',   () => scheduleLoad(500));
 // Name search is client-side only — no API refetch needed
 document.getElementById('f-search').addEventListener('input', () => {
   clearTimeout(_fetchTimer);
@@ -351,12 +357,13 @@ document.getElementById('f-search').addEventListener('input', () => {
 
 // Reset button
 document.getElementById('reset-btn').addEventListener('click', () => {
-  document.getElementById('f-region').value   = 'australiaeast';
-  document.getElementById('f-os').value       = 'Linux';
+  document.getElementById('f-region').value    = 'australiaeast';
+  document.getElementById('f-os').value        = 'Windows';
   document.getElementById('f-vcpus-min').value = '1';
   document.getElementById('f-vcpus-max').value = '128';
-  document.getElementById('f-ram-min').value  = '0';
-  document.getElementById('f-search').value   = '';
+  document.getElementById('f-ram-min').value   = '0';
+  document.getElementById('f-ram-max').value   = '12288';
+  document.getElementById('f-search').value    = '';
   _sort = {col:'payg_monthly', asc:true};
   load();
 });
