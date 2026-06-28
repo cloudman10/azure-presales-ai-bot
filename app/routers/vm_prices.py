@@ -68,7 +68,7 @@ async def search_prices(
             top=top,
             select=[
                 "sku_name", "region", "os", "vcpus", "ram_gb", "temp_storage_gb",
-                "series", "payg_hourly", "payg_monthly",
+                "series", "architecture", "payg_hourly", "payg_monthly",
                 "sp_1yr_monthly", "sp_3yr_monthly",
                 "ri_1yr_monthly", "ri_3yr_monthly",
                 "spot_hourly", "price_updated_at",

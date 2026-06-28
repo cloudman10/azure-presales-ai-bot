@@ -66,18 +66,21 @@ PAGE_LIMIT        = 150          # max pages per bulk fetch (150 × 100 = 15 000
 
 # ── ARM deployability gate ────────────────────────────────────────────────────
 
-def fetch_deployable_arm_skus(region: str) -> set[str]:
+def fetch_deployable_arm_skus(region: str) -> tuple[set[str], set[str]]:
     """
-    Return the set of VM SKU names actually deployable in this region —
-    i.e. present in ARM Compute AND have no subscription-level restrictions.
+    Return (deployable_skus, arm64_skus) for the given region.
+
+    deployable_skus: VM SKU names with no LOCATION-level subscription restrictions.
+    arm64_skus:      subset of deployable_skus with CpuArchitectureType == Arm64.
+                     These SKUs are Linux-only; standard Windows images are x86-64.
 
     Uses AzureCliCredential (works locally with 'az login').
     Falls back to ClientSecretCredential if CLI is not available.
-    Returns empty set on any failure; callers must skip the filter in that case.
+    Returns (set(), set()) on any failure; callers skip the filters in that case.
     """
     if not SUBSCRIPTION_ID:
         log.warning("AZURE_SUBSCRIPTION_ID not set — skipping ARM deployability filter")
-        return set()
+        return set(), set()
 
     from azure.mgmt.compute import ComputeManagementClient
 
@@ -98,7 +101,7 @@ def fetch_deployable_arm_skus(region: str) -> set[str]:
 
     if credential is None:
         log.warning("No ARM credential available — skipping deployability filter")
-        return set()
+        return set(), set()
 
     try:
         compute = ComputeManagementClient(credential, SUBSCRIPTION_ID)
@@ -115,15 +118,55 @@ def fetch_deployable_arm_skus(region: str) -> set[str]:
                     return True
             return False
 
-        deployable = {
-            s.name for s in all_skus
-            if s.resource_type == "virtualMachines" and not _location_restricted(s)
-        }
-        log.info("ARM deployable SKUs (no location restrictions) for %s: %d", region, len(deployable))
-        return deployable
+        deployable: set[str] = set()
+        arm64:      set[str] = set()
+
+        for s in all_skus:
+            if s.resource_type != "virtualMachines":
+                continue
+            if _location_restricted(s):
+                continue
+            deployable.add(s.name)
+            caps = {c.name: c.value for c in (s.capabilities or [])}
+            if caps.get("CpuArchitectureType", "").lower() == "arm64":
+                arm64.add(s.name)
+
+        log.info("ARM deployable SKUs for %s: %d (%d are Arm64/Linux-only)",
+                 region, len(deployable), len(arm64))
+        return deployable, arm64
     except Exception as e:
         log.warning("ARM SKU fetch failed — skipping deployability filter: %s", e)
-        return set()
+        return set(), set()
+
+
+def cleanup_arm64_windows_docs(arm64_skus: set[str], region: str) -> int:
+    """
+    Delete Windows index docs for Arm64 SKUs.
+    Arm64 SKUs are deployable but Linux-only; no Windows images exist for them.
+    The normal phantom cleanup won't catch these because the SKUs ARE in the
+    deployable set — they just must not have Windows docs.
+    """
+    if not arm64_skus:
+        return 0
+    client = SearchClient(SEARCH_ENDPOINT, PRICES_INDEX, AzureKeyCredential(SEARCH_API_KEY))
+    results = client.search(
+        search_text="*",
+        filter=f"region eq '{region}' and os eq 'Windows'",
+        select=["id", "sku_name"],
+        top=5000,
+    )
+    rows = list(results)
+    to_delete = [{"id": r["id"]} for r in rows if r["sku_name"] in arm64_skus]
+    if not to_delete:
+        log.info("Arm64 Windows cleanup: no stale docs found — index is clean")
+        return 0
+    skus_found = sorted({r["sku_name"] for r in rows if r["sku_name"] in arm64_skus})
+    log.info("Arm64 Windows cleanup: deleting %d stale Windows docs: %s",
+             len(to_delete), skus_found)
+    for i in range(0, len(to_delete), BATCH):
+        client.delete_documents(documents=to_delete[i : i + BATCH])
+    log.info("Arm64 Windows cleanup: done")
+    return len(to_delete)
 
 
 def cleanup_phantom_docs(deployable_skus: set[str], region: str) -> int:
@@ -178,6 +221,7 @@ def _index_def() -> SearchIndex:
             simple("ram_gb",          F.Int32,        sortable=True),
             simple("temp_storage_gb", F.Int32,        sortable=True),
             simple("series",          F.String,       facetable=True),
+            simple("architecture",     F.String,       facetable=True),
             simple("retired",         F.Boolean),
             simple("payg_hourly",     F.Double,       sortable=True),
             simple("payg_monthly",    F.Double,       sortable=True),
@@ -199,7 +243,9 @@ def ensure_index() -> None:
         idx.create_index(_index_def())
         log.info("Index created.")
     else:
-        log.info("Index '%s' already exists — will upsert documents.", PRICES_INDEX)
+        log.info("Updating schema for '%s' (adding new fields if any) ...", PRICES_INDEX)
+        idx.create_or_update_index(_index_def())
+        log.info("Schema up to date — will upsert documents.")
 
 
 # ── Read active SKU specs from existing vm-skus index ─────────────────────────
@@ -370,21 +416,29 @@ async def fetch_all_prices() -> dict[str, dict]:
 
 # ── Build documents ───────────────────────────────────────────────────────────
 
-def build_docs(specs: list[dict], prices: dict[str, dict], updated_at: str) -> list[dict]:
-    docs:       list[dict] = []
-    no_linux    = 0
-    no_windows  = 0
+def build_docs(
+    specs: list[dict],
+    prices: dict[str, dict],
+    updated_at: str,
+    arm64_skus: set[str] = frozenset(),
+) -> list[dict]:
+    docs:         list[dict] = []
+    no_linux      = 0
+    no_windows    = 0
+    arm64_skipped = 0
 
     for s in specs:
-        sku  = s["sku_name"]
-        p    = prices.get(sku, {})
-        base = {
+        sku     = s["sku_name"]
+        is_arm64 = sku in arm64_skus
+        p       = prices.get(sku, {})
+        base    = {
             "sku_name":        sku,
             "region":          REGION,
             "vcpus":           s.get("vcpus") or 0,
             "ram_gb":          s.get("ram_gb") or 0,
             "temp_storage_gb": s.get("temp_storage_gb") or 0,
             "series":          s.get("series") or "?",
+            "architecture":    "Arm64" if is_arm64 else "x64",
             "retired":         False,
             "price_updated_at": updated_at,
         }
@@ -412,6 +466,13 @@ def build_docs(specs: list[dict], prices: dict[str, dict], updated_at: str) -> l
             no_linux += 1
 
         # Windows document
+        # Arm64 SKUs are Linux-only: no Windows images exist for Ampere/Arm64 VMs
+        # in australiaeast. The Retail Prices API returns Windows prices speculatively,
+        # but the portal correctly hides these SKUs from the Windows size selector.
+        if is_arm64:
+            arm64_skipped += 1
+            continue
+
         # RI rates: Azure publishes Linux-only RI items; Windows uses the same
         # infrastructure rate via AHUB. No separate Windows RI items in API.
         wp = p.get("windows_payg")
@@ -439,10 +500,12 @@ def build_docs(specs: list[dict], prices: dict[str, dict], updated_at: str) -> l
     linux_count   = sum(1 for d in docs if d["os"] == "Linux")
     windows_count = sum(1 for d in docs if d["os"] == "Windows")
     log.info("Built %d documents: %d Linux, %d Windows", len(docs), linux_count, windows_count)
+    if arm64_skipped:
+        log.info("  Arm64 SKUs (Windows doc skipped): %d", arm64_skipped)
     if no_linux:
-        log.info("  SKUs with no Linux PAYG price:   %d", no_linux)
+        log.info("  SKUs with no Linux PAYG price:    %d", no_linux)
     if no_windows:
-        log.info("  SKUs with no Windows PAYG price: %d", no_windows)
+        log.info("  SKUs with no Windows PAYG price:  %d", no_windows)
     return docs
 
 
@@ -482,7 +545,8 @@ async def _main() -> None:
         return
 
     # ARM deployability gate: exclude restricted / phantom SKUs
-    deployable = fetch_deployable_arm_skus(REGION)
+    # Also returns arm64_skus — Arm64 SKUs are deployable but Linux-only (no Windows images).
+    deployable, arm64_skus = fetch_deployable_arm_skus(REGION)
     if deployable:
         before = len(specs)
         specs  = [s for s in specs if s["sku_name"] in deployable]
@@ -490,12 +554,13 @@ async def _main() -> None:
             "ARM deployability filter: %d → %d specs (%d excluded as restricted/phantom)",
             before, len(specs), before - len(specs),
         )
+        log.info("Arm64 SKUs (Linux-only, Windows doc skipped): %d", len(arm64_skus))
     else:
         log.warning("ARM deployability filter skipped — indexing all specs (may include phantoms)")
 
     prices     = await fetch_all_prices()
     updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    docs       = build_docs(specs, prices, updated_at)
+    docs       = build_docs(specs, prices, updated_at, arm64_skus=arm64_skus)
 
     if not docs:
         log.error("No documents built — pricing fetch may have failed")
@@ -503,9 +568,12 @@ async def _main() -> None:
 
     upload(docs)
 
-    # Remove any previously-indexed docs for SKUs that are now excluded
+    # Remove previously-indexed docs for SKUs that are now excluded
     if deployable:
         cleanup_phantom_docs(deployable, REGION)
+    # Remove stale Windows docs for Arm64 SKUs (normal phantom cleanup won't catch these)
+    if arm64_skus:
+        cleanup_arm64_windows_docs(arm64_skus, REGION)
     log.info("=" * 60)
     log.info("Done in %.1fs", time.monotonic() - t0)
     log.info("=" * 60)

@@ -70,6 +70,7 @@ tbody td{padding:8px 12px;vertical-align:middle}
 .bg-x{background:#FEE2E2;color:#991B1B}
 .bg-z{background:#F3F4F6;color:#4B5563}
 .sku-name{font-weight:500;color:#1A1A2E;font-variant-numeric:tabular-nums}
+.arch-badge{font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;background:#EDE9FE;color:#5B21B6;letter-spacing:.3px;flex-shrink:0;white-space:nowrap}
 
 /* spec columns */
 td.col-vcpu,td.col-ram{text-align:right;font-variant-numeric:tabular-nums;color:#555}
@@ -226,11 +227,15 @@ function render() {
 
   const frags = rows.map((r, ri) => {
     const displayName = r.sku_name.replace(/^Standard_/,'');
+    const archBadge = r.architecture === 'Arm64'
+      ? '<span class="arch-badge">Arm64</span>'
+      : '';
     const cells = [
       // Name
       `<td><div class="col-name-cell">
         <span class="series-badge ${badgeCls(r.series)}">${r.series||'?'}</span>
         <span class="sku-name" title="${r.sku_name}">${displayName}</span>
+        ${archBadge}
       </div></td>`,
       // vCPU
       `<td class="col-vcpu${sortIdx===1?' col-sorted':''}">${r.vcpus}</td>`,
