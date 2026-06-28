@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>HyperXen.ai — VM Price Compare</title>
+<style>
+/* ── reset ───────────────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:100dvh;display:flex;flex-direction:column;overflow:hidden;max-width:1440px;margin:0 auto}
+
+/* ── header ──────────────────────────────────────────────────────────────── */
+.header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid #E5E9ED;flex-shrink:0}
+.logo{width:32px;height:32px;border-radius:8px;background:#0078D4;color:#fff;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.header-text h1{font-size:15px;font-weight:600;color:#1A1A2E}
+.header-text p{font-size:11px;color:#8B95A2;margin-top:1px}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.nav-btn{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid #E5E9ED;background:#fff;color:#555;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap;line-height:1;text-decoration:none}
+.nav-btn:hover{border-color:#0078D4;color:#0078D4;background:#F0F7FF}
+
+/* ── filter bar ──────────────────────────────────────────────────────────── */
+.filter-bar{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px 20px;padding:12px 20px;background:#fff;border-bottom:1px solid #E5E9ED;flex-shrink:0}
+.fg{display:flex;flex-direction:column;gap:4px;min-width:0}
+.fg label{font-size:11px;font-weight:600;color:#5A7A9A;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.fg select,.fg input[type=number],.fg input[type=text]{height:32px;border:1px solid #D1D5DB;border-radius:8px;padding:0 10px;font-size:13px;color:#1A1A2E;background:#fff;outline:none;transition:border-color .15s}
+.fg select{cursor:pointer;padding-right:24px;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='%238B95A2' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}
+.fg select:focus,.fg input:focus{border-color:#0078D4}
+.fg input[type=number]{width:70px}
+.range-row{display:flex;align-items:center;gap:6px}
+.range-row span{font-size:12px;color:#8B95A2;flex-shrink:0}
+.fg input[type=text]{width:160px}
+.reset-btn{height:32px;padding:0 14px;border-radius:8px;border:1px solid #E5E9ED;background:#fff;color:#666;font-size:13px;cursor:pointer;white-space:nowrap;transition:all .15s;align-self:flex-end}
+.reset-btn:hover{border-color:#D32F2F;color:#D32F2F;background:#FEF2F2}
+
+/* ── status bar ──────────────────────────────────────────────────────────── */
+.status-bar{display:flex;align-items:center;justify-content:space-between;padding:7px 20px;flex-shrink:0}
+.status-count{font-size:13px;color:#555}
+.status-count strong{color:#1A1A2E}
+.status-fresh{font-size:11px;color:#8B95A2}
+
+/* ── table scroll area ───────────────────────────────────────────────────── */
+.table-scroll{flex:1;overflow:auto;padding:0 20px 20px;min-height:0}
+.table-scroll::-webkit-scrollbar{width:5px;height:5px}
+.table-scroll::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px}
+
+/* ── table ───────────────────────────────────────────────────────────────── */
+table{border-collapse:collapse;width:100%;min-width:860px;font-size:13px}
+thead th{position:sticky;top:0;z-index:5;background:#F0F4F8;padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:#5A7A9A;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;cursor:pointer;user-select:none;border-bottom:1px solid #D1D5DB}
+thead th:hover{background:#E8EDF3;color:#0078D4}
+thead th.sort-asc,thead th.sort-desc{background:#E8F0FE;color:#0078D4}
+.sort-icon{font-size:11px;margin-left:4px;opacity:.5}
+thead th.sort-asc .sort-icon,thead th.sort-desc .sort-icon{opacity:1}
+thead th.col-price,thead th.col-vcpu,thead th.col-ram{text-align:right}
+
+tbody tr{background:#fff;border-bottom:1px solid #EEF2F7;transition:background .1s}
+tbody tr:hover{background:#F8FBFF}
+tbody td{padding:8px 12px;vertical-align:middle}
+
+/* name column */
+.col-name-cell{display:flex;align-items:center;gap:8px;min-width:160px}
+.series-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;flex-shrink:0;letter-spacing:.3px;text-transform:uppercase}
+.bg-b{background:#FEF3C7;color:#92400E}
+.bg-d{background:#DBEAFE;color:#1E40AF}
+.bg-e{background:#EDE9FE;color:#5B21B6}
+.bg-f{background:#D1FAE5;color:#065F46}
+.bg-n{background:#FFE4E6;color:#9F1239}
+.bg-m{background:#F3E8FF;color:#6B21A8}
+.bg-l{background:#CCFBF1;color:#0F766E}
+.bg-h{background:#E0F2FE;color:#075985}
+.bg-x{background:#FEE2E2;color:#991B1B}
+.bg-z{background:#F3F4F6;color:#4B5563}
+.sku-name{font-weight:500;color:#1A1A2E;font-variant-numeric:tabular-nums}
+.arch-badge{font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;background:#EDE9FE;color:#5B21B6;letter-spacing:.3px;flex-shrink:0;white-space:nowrap}
+
+/* spec columns */
+td.col-vcpu,td.col-ram{text-align:right;font-variant-numeric:tabular-nums;color:#555}
+
+/* price columns */
+td.col-price{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+td.col-price.has-val{color:#1A1A2E}
+.null-dash{color:#CBD5E1;font-weight:400}
+
+/* sorted column highlight */
+.col-sorted{background:#FAFCFF}
+
+/* loading / empty state */
+.state-row td{text-align:center;padding:40px;color:#8B95A2;font-size:14px}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid #D1D5DB;border-top-color:#0078D4;border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-msg{color:#D32F2F}
+
+/* ── responsive ──────────────────────────────────────────────────────────── */
+@media(max-width:768px){
+  .header-text p{display:none}
+  .filter-bar{gap:10px 14px}
+  .fg input[type=text]{width:130px}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">H</div>
+  <div class="header-text">
+    <h1>HyperXen.ai — VM Price Compare</h1>
+    <p>Filter and compare Azure VM pricing across all commitment terms</p>
+  </div>
+  <div class="header-right">
+    <a href="/" class="nav-btn">VM Advisor</a>
+    <a href="/architect" class="nav-btn">Architecture</a>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <div class="fg">
+    <label>Region</label>
+    <select id="f-region">
+      <option value="australiaeast">Australia East</option>
+    </select>
+  </div>
+  <div class="fg">
+    <label>OS</label>
+    <select id="f-os">
+      <option value="Windows" selected>Windows</option>
+      <option value="Linux">Linux</option>
+    </select>
+  </div>
+  <div class="fg">
+    <label>vCPUs</label>
+    <div class="range-row">
+      <input type="number" id="f-vcpus-min" value="1" min="1" max="512">
+      <span>–</span>
+      <input type="number" id="f-vcpus-max" value="128" min="1" max="512">
+    </div>
+  </div>
+  <div class="fg">
+    <label>RAM (GiB)</label>
+    <div class="range-row">
+      <input type="number" id="f-ram-min" value="0" min="0" max="12288" placeholder="min">
+      <span>–</span>
+      <input type="number" id="f-ram-max" value="12288" min="0" max="12288" placeholder="max">
+    </div>
+  </div>
+  <div class="fg">
+    <label>Search name / series</label>
+    <input type="text" id="f-search" placeholder="e.g. D4s, Bs, v5…">
+  </div>
+  <button class="reset-btn" id="reset-btn">Reset</button>
+</div>
+
+<div class="status-bar">
+  <span class="status-count" id="status-count"><span class="spinner"></span>Loading…</span>
+  <span class="status-fresh" id="status-fresh"></span>
+</div>
+
+<div class="table-scroll">
+  <table id="price-table">
+    <thead>
+      <tr>
+        <th data-col="sku_name">VM Name<span class="sort-icon">⇅</span></th>
+        <th data-col="vcpus" class="col-vcpu">vCPU<span class="sort-icon">⇅</span></th>
+        <th data-col="ram_gb" class="col-ram">RAM<span class="sort-icon">⇅</span></th>
+        <th data-col="payg_hourly" class="col-price">PAYG/hr<span class="sort-icon">⇅</span></th>
+        <th data-col="payg_monthly" class="col-price">PAYG/mo<span class="sort-icon">⇅</span></th>
+        <th data-col="spot_hourly" class="col-price">Spot/hr<span class="sort-icon">⇅</span></th>
+        <th data-col="sp_1yr_monthly" class="col-price">SP 1yr/mo<span class="sort-icon">⇅</span></th>
+        <th data-col="sp_3yr_monthly" class="col-price">SP 3yr/mo<span class="sort-icon">⇅</span></th>
+        <th data-col="ri_1yr_monthly" class="col-price">RI 1yr/mo<span class="sort-icon">⇅</span></th>
+        <th data-col="ri_3yr_monthly" class="col-price">RI 3yr/mo<span class="sort-icon">⇅</span></th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const API = '/api/vm-prices/search';
+
+let _all  = [];        // raw API results
+let _sort = {col:'payg_monthly', asc:true};
+let _fetchTimer = null;
+
+// ── price formatting ──────────────────────────────────────────────────────
+
+function fmtPrice(val, dec) {
+  if (val === null || val === undefined) return '<span class="null-dash">—</span>';
+  return '$' + Number(val).toFixed(dec);
+}
+
+// ── series badge colour ───────────────────────────────────────────────────
+
+function badgeCls(series) {
+  const map = {B:'b',D:'d',E:'e',F:'f',N:'n',M:'m',L:'l',H:'h',X:'x'};
+  return 'bg-' + (map[(series||'').toUpperCase()] || 'z');
+}
+
+// ── render table from cached data ─────────────────────────────────────────
+
+function render() {
+  const q = document.getElementById('f-search').value.trim().toLowerCase();
+  let rows = q
+    ? _all.filter(r => r.sku_name.toLowerCase().includes(q))
+    : _all.slice();
+
+  // Sort
+  const {col, asc} = _sort;
+  rows.sort((a, b) => {
+    let av = a[col], bv = b[col];
+    // Nulls always last regardless of direction
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'string') return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+    return asc ? av - bv : bv - av;
+  });
+
+  // Highlight sorted column index
+  const ths = document.querySelectorAll('#price-table thead th');
+  const sortIdx = [...ths].findIndex(th => th.dataset.col === col);
+
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr class="state-row"><td colspan="10">No VMs matched — try adjusting the filters.</td></tr>';
+    updateStatus(0);
+    return;
+  }
+
+  const frags = rows.map((r, ri) => {
+    const displayName = r.sku_name.replace(/^Standard_/,'');
+    const archBadge = r.architecture === 'Arm64'
+      ? '<span class="arch-badge">Arm64</span>'
+      : '';
+    const cells = [
+      // Name
+      `<td><div class="col-name-cell">
+        <span class="series-badge ${badgeCls(r.series)}">${r.series||'?'}</span>
+        <span class="sku-name" title="${r.sku_name}">${displayName}</span>
+        ${archBadge}
+      </div></td>`,
+      // vCPU
+      `<td class="col-vcpu${sortIdx===1?' col-sorted':''}">${r.vcpus}</td>`,
+      // RAM
+      `<td class="col-ram${sortIdx===2?' col-sorted':''}">${r.ram_gb} GB</td>`,
+      // Prices
+      fmtTd(r.payg_hourly,   4, sortIdx===3),
+      fmtTd(r.payg_monthly,  2, sortIdx===4),
+      fmtTd(r.spot_hourly,   4, sortIdx===5),
+      fmtTd(r.sp_1yr_monthly,2, sortIdx===6),
+      fmtTd(r.sp_3yr_monthly,2, sortIdx===7),
+      fmtTd(r.ri_1yr_monthly,2, sortIdx===8),
+      fmtTd(r.ri_3yr_monthly,2, sortIdx===9),
+    ];
+    return `<tr>${cells.join('')}</tr>`;
+  });
+
+  tbody.innerHTML = frags.join('');
+  updateStatus(rows.length);
+
+  // Update sort indicators on headers
+  ths.forEach((th, i) => {
+    th.classList.remove('sort-asc','sort-desc');
+    const si = th.querySelector('.sort-icon');
+    if (th.dataset.col === col) {
+      th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+      if (si) si.textContent = asc ? '↑' : '↓';
+    } else {
+      if (si) si.textContent = '⇅';
+    }
+  });
+}
+
+function fmtTd(val, dec, sorted) {
+  const cls = 'col-price' + (sorted?' col-sorted':'') + (val!=null?' has-val':'');
+  return `<td class="${cls}">${fmtPrice(val, dec)}</td>`;
+}
+
+// ── status ────────────────────────────────────────────────────────────────
+
+function updateStatus(shown) {
+  const el = document.getElementById('status-count');
+  const total = _all.length;
+  const q     = document.getElementById('f-search').value.trim();
+  let txt;
+  if (!total) {
+    txt = 'No results';
+  } else if (q && shown < total) {
+    txt = `<strong>${shown}</strong> of <strong>${total}</strong> VMs`;
+  } else {
+    txt = `<strong>${shown}</strong> VM${shown!==1?'s':''} matched` + (total>=200?' (top 200)':'');
+  }
+  el.innerHTML = txt;
+}
+
+function setFreshness(results) {
+  const el = document.getElementById('status-fresh');
+  if (!results.length) { el.textContent=''; return; }
+  const raw = results[0].price_updated_at;
+  if (!raw) { el.textContent=''; return; }
+  const d = new Date(raw);
+  const ds = d.toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
+  el.textContent = `Prices updated ${ds}`;
+}
+
+// ── fetch ─────────────────────────────────────────────────────────────────
+
+async function load() {
+  setLoading(true);
+  const params = new URLSearchParams({
+    region:    document.getElementById('f-region').value,
+    os:        document.getElementById('f-os').value,
+    vcpus_min: parseInt(document.getElementById('f-vcpus-min').value) || 1,
+    vcpus_max: parseInt(document.getElementById('f-vcpus-max').value) || 512,
+    ram_min:   parseInt(document.getElementById('f-ram-min').value)   || 0,
+    ram_max:   parseInt(document.getElementById('f-ram-max').value)   || 12288,
+    sort_by:   'payg_monthly',
+    top:       200,
+  });
+  try {
+    const resp = await fetch(`${API}?${params}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    _all = data.results || [];
+    setFreshness(_all);
+    // Reset to PAYG/mo sort on new filter fetch so order is predictable
+    // (only reset if user hasn't explicitly sorted yet)
+    render();
+  } catch(e) {
+    document.getElementById('tbody').innerHTML =
+      `<tr class="state-row"><td colspan="10"><span class="error-msg">Error: ${e.message}</span></td></tr>`;
+    document.getElementById('status-count').textContent = 'Error loading data';
+  } finally {
+    setLoading(false);
+  }
+}
+
+function setLoading(on) {
+  const el = document.getElementById('status-count');
+  if (on) el.innerHTML = '<span class="spinner"></span>Loading…';
+}
+
+// ── debounce helpers ──────────────────────────────────────────────────────
+
+function scheduleLoad(ms) {
+  clearTimeout(_fetchTimer);
+  _fetchTimer = setTimeout(load, ms);
+}
+
+// ── event wiring ──────────────────────────────────────────────────────────
+
+// Filter bar — immediate refetch on select change, debounced on number input
+document.getElementById('f-region').addEventListener('change', () => load());
+document.getElementById('f-os').addEventListener('change',     () => load());
+document.getElementById('f-vcpus-min').addEventListener('input', () => scheduleLoad(500));
+document.getElementById('f-vcpus-max').addEventListener('input', () => scheduleLoad(500));
+document.getElementById('f-ram-min').addEventListener('input',   () => scheduleLoad(500));
+document.getElementById('f-ram-max').addEventListener('input',   () => scheduleLoad(500));
+// Name search is client-side only — no API refetch needed
+document.getElementById('f-search').addEventListener('input', () => {
+  clearTimeout(_fetchTimer);
+  render();
+});
+
+// Reset button
+document.getElementById('reset-btn').addEventListener('click', () => {
+  document.getElementById('f-region').value    = 'australiaeast';
+  document.getElementById('f-os').value        = 'Windows';
+  document.getElementById('f-vcpus-min').value = '1';
+  document.getElementById('f-vcpus-max').value = '128';
+  document.getElementById('f-ram-min').value   = '0';
+  document.getElementById('f-ram-max').value   = '12288';
+  document.getElementById('f-search').value    = '';
+  _sort = {col:'payg_monthly', asc:true};
+  load();
+});
+
+// Column header click — sort
+document.querySelectorAll('#price-table thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (!col) return;
+    if (_sort.col === col) {
+      _sort.asc = !_sort.asc;
+    } else {
+      _sort = {col, asc: true};
+    }
+    render();
+  });
+});
+
+// ── init ──────────────────────────────────────────────────────────────────
+load();
+</script>
+</body>
+</html>

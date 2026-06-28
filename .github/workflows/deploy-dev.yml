@@ -15,13 +15,22 @@ jobs:
       - name: Create deployment zip
         run: zip -r deploy.zip app static requirements.txt startup.sh
 
-      - name: Deploy to Azure Web App (Dev)
-        uses: azure/webapps-deploy@v3
-        timeout-minutes: 20
-        with:
-          app-name: hyperxen-pricing-bot-dev
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_DEV }}
-          package: deploy.zip
+      - name: Deploy via Kudu zipdeploy (triggers Oryx rebuild)
+        run: |
+          CREDS=$(python3 -c "
+          import xml.etree.ElementTree as ET, os
+          root = ET.fromstring(os.environ['PUBLISH_PROFILE'])
+          p = next(x for x in root.findall('publishProfile') if 'MSDeploy' in x.get('publishMethod',''))
+          print(p.get('userName') + ':' + p.get('userPWD'))
+          ")
+          curl -sf -X POST \
+            "https://hyperxen-pricing-bot-dev.scm.azurewebsites.net/api/zipdeploy?isAsync=false" \
+            -u "${CREDS}" \
+            -H "Content-Type: application/zip" \
+            --data-binary @deploy.zip
+          echo "zipdeploy complete"
+        env:
+          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_DEV }}
 
       - name: Sync startup.sh and restart app
         run: |

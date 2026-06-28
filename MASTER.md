@@ -5,19 +5,19 @@
 
 ---
 
-## Current Status (2026-06-24) — v2.0.0
+## Current Status (2026-06-28) — v2.1.0
 
-### Last Known-Good State (2026-06-24)
-- Commit: 3c41f95 (main) — tag: **v-arch-svg-1.0**
-- Status: dev healthy. Solution Architecture Designer fully deployed and verified (14/14 section checks, 82,775-byte SVG, ERP migration scenario end-to-end). Pricing bot unchanged and operational.
+### Last Known-Good State (2026-06-28)
+- Commit: TBD (main) — tag: **compare-prices-1.0**
+- Status: dev healthy. Compare Azure Prices tool fully deployed and validated (subscription-accurate SKU list, Arm64 gate, architecture badges, RAM min/max filter, Windows default). Pricing bot and Solution Architecture Designer unchanged and operational.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard 3c41f95
+  git reset --hard <hash>
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
-- Previous stable baseline (pricing bot only, pre-architect): commit `3550e67`.
+- Previous stable baseline (Solution Architecture Designer, pre-compare): tag `v-arch-svg-1.0`, commit `3c41f95`.
 
 | Item | Status |
 |------|--------|
@@ -25,7 +25,8 @@
 | Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
 | Dev App | ✅ Live and healthy — https://hyperxen-pricing-bot-dev.azurewebsites.net |
 | LLM — GPT-4o via Azure AI Foundry (all paths) | ✅ Verified working |
-| Azure AI Search | ✅ Indexed (1185 active SKUs, re-indexed 2026-06-20) |
+| Azure AI Search (vm-skus) | ✅ Indexed (1185 active SKUs, re-indexed 2026-06-20) |
+| Azure AI Search (vm-sku-prices) | ✅ Indexed (1,975 docs: 1,036 Linux + 939 Windows, australiaeast) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
 | Dev Environment | ✅ Live — https://dev.hyperxen.com |
@@ -508,6 +509,8 @@ azure-presales-ai-bot/
 - Alt-region advisor pick fix — `_picks.sku_region_displays[]` per option; frontend prices each option in its own source region (fixes "pricing fetch failed" on `[Available in Australia East]` alt-region fills)
 - Advisor deployability gate — `fetch_deployable_skus()` cross-checks ARM Compute SKUs; candidates absent from ARM filtered before scoring; ARM data cached 1 hour and shared with `fetch_temp_storage_gb` / `vm_supports_premium`; ARM + Prices API fetched concurrently via `asyncio.gather`
 - AI Search index refreshed (2026-06-20) — 1,185 SKUs incl. Easv6 variants; indexer switched to `DefaultAzureCredential` (CLI locally, Managed Identity in prod)
+- VM Price Compare (`/compare`) — filterable/sortable table of all deployable australiaeast SKUs; region, OS, vCPU range, RAM range filters; all pricing tiers (PAYG, Spot, SP 1/3yr, RI 1/3yr); default OS=Windows; result count + price freshness; purple "Arm64" badge on Linux Arm64 SKUs
+- Compare deployability gate — `index_vm_prices.py` applies ARM LOCATION-restriction filter (141 location-restricted SKUs excluded) plus Arm64/OS compatibility gate (Arm64 SKUs are Linux-only in the grid; Windows images are x86-64; 9 phantom Windows Arm64 docs removed); index: 1,975 docs (1,036 Linux + 939 Windows); `architecture` field (Arm64/x64) on every doc; portal-accurate results
 - Per-VM pricing term selection — radio in each term's own header (PAYG hero, 1/3-Yr SP, 1/3-Yr RI, PAYG+HB, 1/3-Yr RI+HB for Windows); PAYG default; radio click selects without expanding breakdown; SP/RI show total monthly in header; +HB rows collapsible with Compute + License $0 (AHB) + Total; basket and export show term label per line; +HB footnote in export; storage undiscounted regardless of term
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
 - Modern SKU preference — v4/v5/v6 ranked above v1/v2; Promo/Basic excluded
@@ -631,6 +634,66 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 - **Tracks:** all HTTP requests, response times, failures, dependencies (Azure AI Search, Prices API calls)
 - **Note:** Live Metrics not supported with OpenTelemetry SDK — use Search and Performance tabs instead
 - **Cold start warning:** B1 instance takes 75–211s on cold start due to OpenTelemetry outbound connections. Upgrade to S1 for Always On if needed.
+
+---
+
+---
+
+## Compare Azure Prices
+
+Added in v2.1 (2026-06-28, tag `compare-prices-1.0`). A filterable, sortable VM price comparison grid — the "Holori-style" table that lets users compare every Azure VM SKU across all pricing tiers for a region in one view.
+
+### Purpose
+
+Route `/compare`. Sibling tool to the VM pricing engine (chat advisor). Where the advisor recommends 3 VMs for a scenario, the Compare tool lets users browse and filter the full catalogue — useful for cost benchmarking, pre-qualification, and quote building. All price columns visible simultaneously: PAYG, Spot, SP 1/3yr, RI 1/3yr.
+
+### Data Layer
+
+Separate Azure AI Search index **`vm-sku-prices`** — distinct from the advisor's `vm-skus` index. Populated by `scripts/index_vm_prices.py`, which:
+1. Reads active SKU specs from `vm-skus` (vcpus, ram_gb, series)
+2. Applies ARM deployability gate (see Accuracy section below)
+3. Bulk-fetches all PAYG+Spot and Reservation prices from the Azure Retail Prices API for the region
+4. Builds one Linux doc + one Windows doc per deployable x64 SKU (Arm64 SKUs: Linux only)
+5. Uploads via `merge_or_upload_documents`; runs cleanup to remove any stale docs
+
+**Current index:** ~1,975 docs — 1,036 Linux + 939 Windows, australiaeast only. Run is manual; no scheduled refresh yet.
+
+### Read API
+
+```
+GET /api/vm-prices/search?region=australiaeast&os=Windows&vcpus_min=4&vcpus_max=8&ram_min=0&ram_max=32&sort_by=payg_monthly&top=200
+GET /api/vm-prices/sku/{sku_name}   — all pricing tiers for a single SKU (both OS)
+```
+
+Filter params: `region`, `os` (Linux/Windows), `vcpus_min/max` (1–512), `ram_min/max` (0–12288 GiB), `sort_by`, `top` (max 200).
+
+Returns: `sku_name`, `vcpus`, `ram_gb`, `series`, `architecture`, `payg_hourly`, `payg_monthly`, `spot_hourly`, `sp_1yr_monthly`, `sp_3yr_monthly`, `ri_1yr_monthly`, `ri_3yr_monthly`, `price_updated_at`.
+
+### Accuracy Disciplines (hard-won)
+
+**1 — Deployability gate (ARM LOCATION restriction filter)**
+Only SKUs that are ARM-deployable for this subscription in the region are indexed. The ARM `resource_skus.list()` API is called during every index run; SKUs with `type=Location, zones=[]` restriction (not available at all) are excluded. This removes SKUs the global Azure Calculator shows but that cannot actually be deployed — e.g. the original B-series (B2ms, B4ms, B8ms, B20ms) are LOCATION-restricted for this subscription in australiaeast. Zone-only restrictions (`type=Zone, zones=['1']`) are kept — the SKU is deployable in other zones.
+
+**2 — Architecture-aware (Arm64 / Windows)**
+Arm64 SKUs (naming convention: `pls`, `ps`, `pds`, `plds`, `pts` sub-series — e.g. Bpsv2, Dps_v5/v6, Eps_v5/v6 families) are Linux-only. Standard Windows images are x86-64. The Retail Prices API returns Windows prices for Arm64 SKUs speculatively, but no Windows ARM64 images exist in australiaeast — the portal correctly hides them. The indexer skips the Windows doc for all Arm64 SKUs (`CpuArchitectureType=Arm64` capability). The `/compare` UI shows a purple **Arm64** badge next to Arm64 SKUs in the Linux grid so users know they need an ARM64 image (e.g. Ubuntu Arm64), not a standard x86 image.
+
+**3 — RI price formula**
+The Retail Prices API `retailPrice` for Reservation items is the **total term commitment** (e.g. $1,297 for a 1-year RI) — NOT an hourly rate, despite `unitOfMeasure = "1 Hour"`. Monthly RI = `retail / 12` (1yr) or `retail / 36` (3yr).
+
+**4 — Spot and SP**
+Spot prices: Linux only (no Windows Spot market). Savings Plan rates: embedded in the Linux PAYG item's `savingsPlan[]` field (1 Year / 3 Year). Windows uses the same SP/RI infrastructure rates as Linux via AHB (Azure Hybrid Benefit). Nulls rendered as `—` in the grid.
+
+### Subscription-Specificity Note
+
+**Deployability is subscription-specific.** The gate reflects which SKUs *this subscription* can deploy in the region. A different subscription (e.g. MSDN, EA, Pay-As-You-Go) may have different access. The grid is more accurate than the generic Azure Calculator for this subscription, but "deployable" is relative to the subscription used to build the index. The index must be re-run if the subscription or region quota changes.
+
+### Known TODOs (parked)
+
+- Scheduled daily refresh (currently manual: `python scripts/index_vm_prices.py`)
+- Additional regions beyond australiaeast (REGION constant in the script)
+- Add-to-Basket from the grid (wire into the existing quote basket)
+- CSV export
+- Architecture filter in the UI (e.g. show Arm64 / x64 toggle)
 
 ---
 
