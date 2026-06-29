@@ -7,13 +7,13 @@
 
 ## Current Status (2026-06-28) — v2.1.0
 
-### Last Known-Good State (2026-06-28)
-- Commit: `bc27f52` (main) — tag: **compare-prices-1.0**
-- Status: dev healthy. Compare Azure Prices tool fully deployed and validated (subscription-accurate SKU list, Arm64 gate, architecture badges, RAM min/max filter, Windows default). Pricing bot and Solution Architecture Designer unchanged and operational.
+### Last Known-Good State (2026-06-29)
+- Commit: `ad2c152` (main) — tag: **compare-prices-2.0**
+- Status: dev and prod healthy. Compare Azure Prices tool fully deployed: live-fetch per region, dynamic region discovery (~59 regions), Cloud Services pricing fix, reliable deploy via azure/webapps-deploy@v3. Pricing bot and Solution Architecture Designer unchanged and operational.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard bc27f52
+  git reset --hard ad2c152
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
@@ -578,6 +578,15 @@ Future hardening option: a custom Docker image with Graphviz baked in (`FROM mcr
 **Self-healing fallback for `az webapp restart`.**
 `az webapp restart` kills the container process and clears ephemeral `/tmp/`. The Oryx-built `antenv` (normally in `/tmp/<hash>/antenv/`) is gone, so the standard gunicorn launch path breaks. `startup.sh` detects this and falls back to re-extracting `/home/site/wwwroot/output.tar.zst` into persistent `/home/site/oryx-build/`. Re-extraction only runs when `output.tar.zst` is newer than the last extract (~2–4 min for 242 MB uncompressed); subsequent restarts reuse the existing `/home/site/oryx-build/antenv` directly (fast path, <1s).
 
+**CRITICAL: Linux App Service requires `azure/webapps-deploy@v3` for reliable code reload (commit `ad2c152`).**
+Raw Kudu zipdeploy (`POST /api/zipdeploy`) triggers an Oryx recycle that does NOT reliably reload Python modules in the running Linux App Service container. Symptom: GHA reports "Deployment successful" (HTTP 200) but the live app still serves old code.
+
+Root cause: on Linux App Service, the Kudu SCM container and the main app container are separate processes. `DELETE /api/processes/0` (previously used as a post-deploy restart step) kills a Kudu process, not the gunicorn app process — and `|| true` hid the failure silently in GHA logs.
+
+**Fix:** Use `azure/webapps-deploy@v3` in both dev and prod GHA workflows. This action performs a proper full container restart. Both workflows (`deploy-dev.yml` and `deploy-prod.yml`) now use this action.
+
+If stale-code symptoms recur after a deploy, check the GHA "Deploy to Azure Web App" step first. Manual unblock (full restart): `az webapp stop --resource-group rg-hyperxen-app-dev --name <app-name>` then `az webapp start ...`.
+
 ---
 
 ### Bicep Infrastructure
@@ -641,15 +650,66 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 
 ## Compare Azure Prices
 
-Added in v2.1 (2026-06-28, tag `compare-prices-1.0`). A filterable, sortable VM price comparison grid — the "Holori-style" table that lets users compare every Azure VM SKU across all pricing tiers for a region in one view.
+Added in v2.1 (2026-06-28, tag `compare-prices-2.0`). A filterable, sortable VM price comparison grid — the "Holori-style" table that lets users compare every Azure VM SKU across all pricing tiers for a region in one view.
 
 ### Purpose
 
 Route `/compare`. Sibling tool to the VM pricing engine (chat advisor). Where the advisor recommends 3 VMs for a scenario, the Compare tool lets users browse and filter the full catalogue — useful for cost benchmarking, pre-qualification, and quote building. All price columns visible simultaneously: PAYG, Spot, SP 1/3yr, RI 1/3yr.
 
-### Data Layer
+### Architecture — Live-Fetch per Region
 
-Separate Azure AI Search index **`vm-sku-prices`** — distinct from the advisor's `vm-skus` index. Populated by `scripts/index_vm_prices.py`, which:
+The Compare grid uses **live per-region pricing fetched on demand** — NOT a pre-indexed snapshot.
+
+On region select (or page load), the frontend calls `GET /api/vm-prices/live?region=...&os=...`. The backend:
+1. Calls `_fetch_retail_prices(region)` — paginates the Azure Retail Prices API for all PAYG + Reservation items in the region
+2. Calls `_get_arm_skus_for_region(region)` — fetches ARM Compute SKUs for the deployability gate (1h cache)
+3. Builds one row per deployable SKU: PAYG, Spot, SP 1/3yr, SP 3/3yr, RI 1/3yr, RI 3/3yr columns
+4. Caches result per region for 30 minutes (asyncio.Lock per region prevents concurrent fetch storms)
+
+**Why live-fetch:** Indexing is per-region, manual, and goes stale. Live-fetch means every region is always current — no index runner, no stale prices, no missing regions. The 30-min per-region cache means typical user sessions hit cache on second query.
+
+The pre-indexed `GET /api/vm-prices/search` endpoint (australiaeast only) still exists and is served by the `vm-sku-prices` Azure AI Search index maintained separately.
+
+### Regions — Dynamic Discovery (~59, 24h Cache)
+
+The region dropdown is **auto-discovered from the Azure Retail Prices API** — not a hardcoded list.
+
+On first call to `GET /api/vm-prices/regions` (or after 24h TTL), the backend:
+1. Probes the Retail Prices API for `Standard_D4s_v5` Consumption items with no region filter
+2. Paginates all results; collects unique `armRegionName` values
+3. Excludes sovereign/specialty prefixes: `usgov*`, `jioindia*`, `deloscloud*`
+4. Unions discovered codes with `_REGION_META` (59-entry dict) — belt-and-suspenders so known regions never silently drop if probe misses them
+5. Builds `{code, city, label, geographyGroup}` list sorted by geography then label
+6. Caches result for 24 hours (double-check asyncio.Lock)
+
+**Result: ~59 commercial Azure regions.** The list is self-maintaining — when Azure adds a new commercial region with VM pricing, it appears in the dropdown within 24 hours. Dead regions (taiwannorth, saudiarabianorth — zero VM pricing in Retail API) are excluded automatically. Unknown new regions get auto-labels from the code (e.g. `finlandeast` → "Finland East") via `_label_from_code()`.
+
+Key functions in `app/services/vm_compare.py`:
+- `_REGION_META` — 59-entry dict `code → (city, geographyGroup)` for known regions with city-level friendly names
+- `_probe_retail_regions()` — async, paginates Retail API, returns `set[str]` of discovered codes
+- `get_region_list()` — 24h-cached async function; falls back to `_REGION_META` on probe failure
+
+**Before this fix (prior to commit `919abff`):** Region list was a hardcoded 54-entry `AZURE_REGIONS` Python list. Seven commercial regions were missing (including `indonesiacentral`); two dead regions (taiwannorth, saudiarabianorth) were listed but returned empty grids.
+
+### Pricing Accuracy Fix — Cloud Services Contamination (commit `37a6190`)
+
+**Root cause:** The Azure Retail Prices API returns two categories of items for the same `armSkuName` (e.g. `Standard_B16als_v2`), both with `serviceName = "Virtual Machines"`:
+- `productName = "Virtual Machines X Family"` — correct VM price
+- `productName = "X Family Cloud Services"` — Cloud Services pricing (inflated; equals Windows PAYG regardless of OS)
+
+In some regions (e.g. koreacentral), Cloud Services items appear **first** in the API response. A first-match parser silently picks the wrong (inflated) price.
+
+**Fix in `_parse_prices` (`app/services/vm_compare.py`):** Both the consumption loop and the reservation loop guard with:
+```python
+if not product.startswith("Virtual Machines"):
+    continue
+```
+
+Applies to every region — Cloud Services items are always wrong regardless of response ordering. Verified: koreacentral `B16als_v2` Linux corrected from `$0.737/hr` → `$0.663/hr`; australiaeast was also contaminated (Cloud Services items appeared after VM items there, so the bug was silent but present).
+
+### Data Layer — Pre-indexed Search (australiaeast only)
+
+Separate Azure AI Search index **`vm-sku-prices`** — distinct from the advisor's `vm-skus` index. Serves `GET /api/vm-prices/search`. Populated by `scripts/index_vm_prices.py`, which:
 1. Reads active SKU specs from `vm-skus` (vcpus, ram_gb, series)
 2. Applies ARM deployability gate (see Accuracy section below)
 3. Bulk-fetches all PAYG+Spot and Reservation prices from the Azure Retail Prices API for the region
@@ -710,8 +770,7 @@ Spot prices: Linux only (no Windows Spot market). Savings Plan rates: embedded i
 
 ### Known TODOs (parked)
 
-- Scheduled daily refresh (currently manual: `python scripts/index_vm_prices.py`)
-- Additional regions beyond australiaeast (REGION constant in the script)
+- Scheduled daily refresh of `vm-sku-prices` index (currently manual: `python scripts/index_vm_prices.py`)
 - Add-to-Basket from the grid (wire into the existing quote basket)
 - CSV export
 - Architecture filter in the UI (Arm64 / x64 toggle)
