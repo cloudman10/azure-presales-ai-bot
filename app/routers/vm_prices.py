@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 
-from app.services.vm_compare import compare_live as _compare_live, AZURE_REGIONS
+from app.services.vm_compare import compare_live as _compare_live, get_region_list as _get_region_list
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -93,8 +93,8 @@ async def search_prices(
 
 @router.get("/regions")
 async def list_regions() -> list[dict]:
-    """Return the Azure region catalogue for the compare grid dropdown."""
-    return AZURE_REGIONS
+    """Return commercial Azure regions with VM pricing. Cached 24 h, auto-discovered."""
+    return await _get_region_list()
 
 
 @router.get("/live")

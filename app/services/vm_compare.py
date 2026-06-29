@@ -331,68 +331,252 @@ async def compare_live(
     return rows
 
 
-# ── Azure region catalogue ────────────────────────────────────────────────────
+# ── Azure region catalogue — dynamic discovery ───────────────────────────────
+#
+# The region list is built at runtime by probing the Azure Retail Prices API
+# for all armRegionName values that have VM Consumption pricing.  Results are
+# cached for 24 h so repeated calls are free.  A _REGION_META lookup table
+# supplies friendly city names and geography groupings; regions discovered by
+# the probe but absent from that table still appear, auto-labelled from their
+# code.  Sovereign/specialty clouds (usgov*, jioindia*, deloscloud*) are
+# excluded.  No manual list editing is needed when Azure adds or removes
+# commercial regions.
 
-AZURE_REGIONS: list[dict] = [
+_REGION_TTL = 86400  # 24 h
+
+_region_cache_state: tuple[float, list[dict]] | None = None
+_region_lock_obj:    asyncio.Lock | None = None
+
+
+def _get_region_lock() -> asyncio.Lock:
+    global _region_lock_obj
+    if _region_lock_obj is None:
+        _region_lock_obj = asyncio.Lock()
+    return _region_lock_obj
+
+
+# Sovereign / specialty cloud prefixes — never shown in the dropdown.
+_EXCLUDE_PREFIXES = ("usgov", "jioindia", "deloscloud")
+
+# Probe SKU: Standard_D4s_v5 is available in every commercial Azure region.
+# Its paginated result set (~4 pages) yields all armRegionName values.
+_PROBE_SKU = "Standard_D4s_v5"
+
+# Friendly metadata for all known commercial regions.
+# New regions discovered by the probe but absent here appear auto-labelled
+# from their code (see _label_from_code).  Omitting a code here never hides
+# it from the dropdown — only the sovereign exclusion list does that.
+# Dead regions (taiwannorth, saudiarabianorth) are intentionally absent:
+# they have no VM pricing in the Retail API so the probe never returns them.
+_REGION_META: dict[str, tuple[str, str]] = {  # code -> (city, geographyGroup)
     # United States
-    {"code": "eastus",           "city": "Virginia",           "label": "East US (Virginia)",             "geographyGroup": "United States"},
-    {"code": "eastus2",          "city": "Virginia",           "label": "East US 2 (Virginia)",           "geographyGroup": "United States"},
-    {"code": "westus",           "city": "California",         "label": "West US (California)",           "geographyGroup": "United States"},
-    {"code": "westus2",          "city": "Washington",         "label": "West US 2 (Washington)",         "geographyGroup": "United States"},
-    {"code": "westus3",          "city": "Arizona",            "label": "West US 3 (Arizona)",            "geographyGroup": "United States"},
-    {"code": "centralus",        "city": "Iowa",               "label": "Central US (Iowa)",              "geographyGroup": "United States"},
-    {"code": "northcentralus",   "city": "Illinois",           "label": "North Central US (Illinois)",    "geographyGroup": "United States"},
-    {"code": "southcentralus",   "city": "Texas",              "label": "South Central US (Texas)",       "geographyGroup": "United States"},
-    {"code": "westcentralus",    "city": "Wyoming",            "label": "West Central US (Wyoming)",      "geographyGroup": "United States"},
+    "eastus":             ("Virginia",        "United States"),
+    "eastus2":            ("Virginia",        "United States"),
+    "westus":             ("California",      "United States"),
+    "westus2":            ("Washington",      "United States"),
+    "westus3":            ("Arizona",         "United States"),
+    "centralus":          ("Iowa",            "United States"),
+    "northcentralus":     ("Illinois",        "United States"),
+    "southcentralus":     ("Texas",           "United States"),
+    "westcentralus":      ("Wyoming",         "United States"),
     # Canada
-    {"code": "canadacentral",    "city": "Toronto",            "label": "Canada Central (Toronto)",       "geographyGroup": "Canada"},
-    {"code": "canadaeast",       "city": "Quebec City",        "label": "Canada East (Quebec City)",      "geographyGroup": "Canada"},
+    "canadacentral":      ("Toronto",         "Canada"),
+    "canadaeast":         ("Quebec City",     "Canada"),
     # South America
-    {"code": "brazilsouth",      "city": "São Paulo",          "label": "Brazil South (São Paulo)",       "geographyGroup": "South America"},
-    {"code": "brazilsoutheast",  "city": "Rio de Janeiro",     "label": "Brazil Southeast (Rio de Janeiro)", "geographyGroup": "South America"},
-    {"code": "mexicocentral",    "city": "Querétaro",          "label": "Mexico Central (Querétaro)",     "geographyGroup": "South America"},
+    "brazilsouth":        ("São Paulo",       "South America"),
+    "brazilsoutheast":    ("Rio de Janeiro",  "South America"),
+    "mexicocentral":      ("Querétaro",       "South America"),
+    "chilecentral":       ("Santiago",        "South America"),
     # Europe
-    {"code": "northeurope",      "city": "Dublin",             "label": "North Europe (Dublin)",          "geographyGroup": "Europe"},
-    {"code": "westeurope",       "city": "Amsterdam",          "label": "West Europe (Amsterdam)",        "geographyGroup": "Europe"},
-    {"code": "uksouth",          "city": "London",             "label": "UK South (London)",              "geographyGroup": "Europe"},
-    {"code": "ukwest",           "city": "Cardiff",            "label": "UK West (Cardiff)",              "geographyGroup": "Europe"},
-    {"code": "germanywestcentral","city": "Frankfurt",         "label": "Germany West Central (Frankfurt)","geographyGroup": "Europe"},
-    {"code": "germanynorth",     "city": "Berlin",             "label": "Germany North (Berlin)",         "geographyGroup": "Europe"},
-    {"code": "swedencentral",    "city": "Gävle",              "label": "Sweden Central (Gävle)",         "geographyGroup": "Europe"},
-    {"code": "francecentral",    "city": "Paris",              "label": "France Central (Paris)",         "geographyGroup": "Europe"},
-    {"code": "francesouth",      "city": "Marseille",          "label": "France South (Marseille)",       "geographyGroup": "Europe"},
-    {"code": "switzerlandnorth", "city": "Zurich",             "label": "Switzerland North (Zurich)",     "geographyGroup": "Europe"},
-    {"code": "switzerlandwest",  "city": "Geneva",             "label": "Switzerland West (Geneva)",      "geographyGroup": "Europe"},
-    {"code": "norwayeast",       "city": "Oslo",               "label": "Norway East (Oslo)",             "geographyGroup": "Europe"},
-    {"code": "norwaywest",       "city": "Stavanger",          "label": "Norway West (Stavanger)",        "geographyGroup": "Europe"},
-    {"code": "polandcentral",    "city": "Warsaw",             "label": "Poland Central (Warsaw)",        "geographyGroup": "Europe"},
-    {"code": "italynorth",       "city": "Milan",              "label": "Italy North (Milan)",            "geographyGroup": "Europe"},
-    {"code": "spaincentral",     "city": "Madrid",             "label": "Spain Central (Madrid)",         "geographyGroup": "Europe"},
-    {"code": "austriaeast",      "city": "Vienna",             "label": "Austria East (Vienna)",          "geographyGroup": "Europe"},
+    "northeurope":        ("Dublin",          "Europe"),
+    "westeurope":         ("Amsterdam",       "Europe"),
+    "uksouth":            ("London",          "Europe"),
+    "ukwest":             ("Cardiff",         "Europe"),
+    "germanywestcentral": ("Frankfurt",       "Europe"),
+    "germanynorth":       ("Berlin",          "Europe"),
+    "swedencentral":      ("Gävle",           "Europe"),
+    "swedensouth":        ("Malmö",           "Europe"),
+    "francecentral":      ("Paris",           "Europe"),
+    "francesouth":        ("Marseille",       "Europe"),
+    "switzerlandnorth":   ("Zurich",          "Europe"),
+    "switzerlandwest":    ("Geneva",          "Europe"),
+    "norwayeast":         ("Oslo",            "Europe"),
+    "norwaywest":         ("Stavanger",       "Europe"),
+    "polandcentral":      ("Warsaw",          "Europe"),
+    "italynorth":         ("Milan",           "Europe"),
+    "spaincentral":       ("Madrid",          "Europe"),
+    "austriaeast":        ("Vienna",          "Europe"),
+    "belgiumcentral":     ("Brussels",        "Europe"),
+    "denmarkeast":        ("Copenhagen",      "Europe"),
     # Asia Pacific
-    {"code": "australiaeast",    "city": "Sydney",             "label": "Australia East (Sydney)",        "geographyGroup": "Asia Pacific"},
-    {"code": "australiasoutheast","city": "Melbourne",         "label": "Australia Southeast (Melbourne)","geographyGroup": "Asia Pacific"},
-    {"code": "australiacentral", "city": "Canberra",           "label": "Australia Central (Canberra)",   "geographyGroup": "Asia Pacific"},
-    {"code": "australiacentral2","city": "Canberra",           "label": "Australia Central 2 (Canberra)", "geographyGroup": "Asia Pacific"},
-    {"code": "japaneast",        "city": "Tokyo",              "label": "Japan East (Tokyo)",             "geographyGroup": "Asia Pacific"},
-    {"code": "japanwest",        "city": "Osaka",              "label": "Japan West (Osaka)",             "geographyGroup": "Asia Pacific"},
-    {"code": "koreacentral",     "city": "Seoul",              "label": "Korea Central (Seoul)",          "geographyGroup": "Asia Pacific"},
-    {"code": "koreasouth",       "city": "Busan",              "label": "Korea South (Busan)",            "geographyGroup": "Asia Pacific"},
-    {"code": "eastasia",         "city": "Hong Kong",          "label": "East Asia (Hong Kong)",          "geographyGroup": "Asia Pacific"},
-    {"code": "southeastasia",    "city": "Singapore",          "label": "Southeast Asia (Singapore)",     "geographyGroup": "Asia Pacific"},
-    {"code": "centralindia",     "city": "Pune",               "label": "Central India (Pune)",           "geographyGroup": "Asia Pacific"},
-    {"code": "southindia",       "city": "Chennai",            "label": "South India (Chennai)",          "geographyGroup": "Asia Pacific"},
-    {"code": "westindia",        "city": "Mumbai",             "label": "West India (Mumbai)",            "geographyGroup": "Asia Pacific"},
-    {"code": "newzealandnorth",  "city": "Auckland",           "label": "New Zealand North (Auckland)",   "geographyGroup": "Asia Pacific"},
-    {"code": "taiwannorth",      "city": "Taipei",             "label": "Taiwan North (Taipei)",          "geographyGroup": "Asia Pacific"},
-    {"code": "malaysiawest",     "city": "Kuala Lumpur",       "label": "Malaysia West (Kuala Lumpur)",   "geographyGroup": "Asia Pacific"},
+    "australiaeast":      ("Sydney",          "Asia Pacific"),
+    "australiasoutheast": ("Melbourne",       "Asia Pacific"),
+    "australiacentral":   ("Canberra",        "Asia Pacific"),
+    "australiacentral2":  ("Canberra",        "Asia Pacific"),
+    "japaneast":          ("Tokyo",           "Asia Pacific"),
+    "japanwest":          ("Osaka",           "Asia Pacific"),
+    "koreacentral":       ("Seoul",           "Asia Pacific"),
+    "koreasouth":         ("Busan",           "Asia Pacific"),
+    "eastasia":           ("Hong Kong",       "Asia Pacific"),
+    "southeastasia":      ("Singapore",       "Asia Pacific"),
+    "centralindia":       ("Pune",            "Asia Pacific"),
+    "southindia":         ("Chennai",         "Asia Pacific"),
+    "westindia":          ("Mumbai",          "Asia Pacific"),
+    "indiasouthcentral":  ("Hyderabad",       "Asia Pacific"),
+    "newzealandnorth":    ("Auckland",        "Asia Pacific"),
+    "indonesiacentral":   ("Jakarta",         "Asia Pacific"),
+    "malaysiawest":       ("Kuala Lumpur",    "Asia Pacific"),
     # Middle East
-    {"code": "uaenorth",         "city": "Dubai",              "label": "UAE North (Dubai)",              "geographyGroup": "Middle East"},
-    {"code": "uaecentral",       "city": "Abu Dhabi",          "label": "UAE Central (Abu Dhabi)",        "geographyGroup": "Middle East"},
-    {"code": "qatarcentral",     "city": "Doha",               "label": "Qatar Central (Doha)",           "geographyGroup": "Middle East"},
-    {"code": "israelcentral",    "city": "Tel Aviv",           "label": "Israel Central (Tel Aviv)",      "geographyGroup": "Middle East"},
-    {"code": "saudiarabianorth", "city": "Riyadh",             "label": "Saudi Arabia North (Riyadh)",    "geographyGroup": "Middle East"},
+    "uaenorth":           ("Dubai",           "Middle East"),
+    "uaecentral":         ("Abu Dhabi",       "Middle East"),
+    "qatarcentral":       ("Doha",            "Middle East"),
+    "israelcentral":      ("Tel Aviv",        "Middle East"),
+    "israelnorthwest":    ("Haifa",           "Middle East"),
     # Africa
-    {"code": "southafricanorth", "city": "Johannesburg",       "label": "South Africa North (Johannesburg)", "geographyGroup": "Africa"},
-    {"code": "southafricawest",  "city": "Cape Town",          "label": "South Africa West (Cape Town)",  "geographyGroup": "Africa"},
+    "southafricanorth":   ("Johannesburg",    "Africa"),
+    "southafricawest":    ("Cape Town",       "Africa"),
+}
+
+_GEO_ORDER = [
+    "United States", "Canada", "South America", "Europe",
+    "Asia Pacific", "Middle East", "Africa",
 ]
+
+# Geographic suffix tokens — compound forms must precede their components.
+_GEO_SUFFIXES: dict[str, str] = {
+    "northcentral": "North Central",
+    "southcentral": "South Central",
+    "westcentral":  "West Central",
+    "northeast":    "Northeast",
+    "northwest":    "Northwest",
+    "southeast":    "Southeast",
+    "southwest":    "Southwest",
+    "north":        "North",
+    "south":        "South",
+    "east":         "East",
+    "west":         "West",
+    "central":      "Central",
+}
+
+
+def _label_from_code(code: str) -> str:
+    """Derive a display label for region codes not in _REGION_META.
+    'finlandeast' -> 'Finland East', 'indiasouthcentral' -> 'India South Central'."""
+    m = re.search(r"\d+$", code)
+    num, rest = (m.group(), code[: m.start()]) if m else ("", code)
+    geo = ""
+    for suffix in _GEO_SUFFIXES:           # compound suffixes tried first
+        if rest.endswith(suffix) and len(rest) > len(suffix):
+            geo, rest = suffix, rest[: -len(suffix)]
+            break
+    parts = (
+        ([rest.upper() if rest in ("us", "uk", "uae") else rest.capitalize()] if rest else [])
+        + ([_GEO_SUFFIXES[geo]] if geo else [])
+        + ([num] if num else [])
+    )
+    return " ".join(parts) if parts else code.capitalize()
+
+
+def _guess_geo(code: str) -> str:
+    """Return a geographyGroup for region codes absent from _REGION_META."""
+    _MAP: list[tuple[str, tuple[str, ...]]] = [
+        ("United States",  ("eastus", "westus", "centralus", "northcentralus",
+                            "southcentralus", "westcentralus")),
+        ("Canada",         ("canada",)),
+        ("South America",  ("brazil", "chile", "mexico", "colombia", "peru", "argentina")),
+        ("Europe",         ("northeurope", "westeurope", "uk", "france", "germany",
+                            "sweden", "switzer", "norway", "poland", "italy", "spain",
+                            "austria", "belgium", "denmark", "finland", "greece",
+                            "ireland", "portugal", "romania")),
+        ("Asia Pacific",   ("australia", "japan", "korea", "eastasia", "southeastasia",
+                            "india", "newzealand", "indonesia", "malaysia", "taiwan",
+                            "thailand", "philippines", "vietnam", "singapore")),
+        ("Middle East",    ("uae", "qatar", "israel", "saudi", "oman",
+                            "bahrain", "jordan", "kuwait")),
+        ("Africa",         ("southafrica", "nigeria", "egypt", "kenya", "ghana")),
+    ]
+    for group, prefixes in _MAP:
+        if any(code.startswith(p) for p in prefixes):
+            return group
+    return "Other"
+
+
+async def _probe_retail_regions() -> set[str]:
+    """Paginate the Retail API for _PROBE_SKU to discover all commercial regions."""
+    odata = (
+        f"serviceName eq 'Virtual Machines' "
+        f"and armSkuName eq '{_PROBE_SKU}' "
+        f"and priceType eq 'Consumption'"
+    )
+    found: set[str] = set()
+    next_url: str | None = PRICING_API_BASE
+    params: dict | None  = {"api-version": PRICING_API_VERSION, "$filter": odata}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while next_url:
+            resp = await _get_with_retry(client, next_url, params=params,
+                                         headers={"Accept": "application/json"})
+            data = resp.json()
+            for it in (data.get("Items") or []):
+                code = it.get("armRegionName", "")
+                prod = it.get("productName", "")
+                if (code
+                        and prod.startswith("Virtual Machines")
+                        and not any(code.startswith(ex) for ex in _EXCLUDE_PREFIXES)):
+                    found.add(code)
+            next_url = data.get("NextPageLink")
+            params   = None
+
+    log.info("Region probe: discovered %d commercial regions", len(found))
+    return found
+
+
+def _build_region_list(codes: set[str]) -> list[dict]:
+    rows: list[dict] = []
+    for code in codes:
+        meta = _REGION_META.get(code)
+        city, geo = meta if meta else ("", _guess_geo(code))
+        base  = _label_from_code(code)
+        label = f"{base} ({city})" if city else base
+        rows.append({"code": code, "city": city, "label": label, "geographyGroup": geo})
+    rows.sort(key=lambda r: (
+        _GEO_ORDER.index(r["geographyGroup"]) if r["geographyGroup"] in _GEO_ORDER else 99,
+        r["label"],
+    ))
+    return rows
+
+
+async def get_region_list() -> list[dict]:
+    """
+    Return [{code, city, label, geographyGroup}] for all commercial Azure regions
+    that have VM pricing.  Cached 24 h; falls back to _REGION_META on probe failure.
+
+    Discovery logic:
+      union(probe_results, _REGION_META.keys()) — so known regions are never lost
+      if the probe misses them, and new regions appear automatically once the probe
+      finds them (next cache refresh, at most 24 h after GA).
+    """
+    global _region_cache_state
+    cached = _region_cache_state
+    if cached and time.monotonic() - cached[0] < _REGION_TTL:
+        return cached[1]
+
+    async with _get_region_lock():
+        cached = _region_cache_state
+        if cached and time.monotonic() - cached[0] < _REGION_TTL:
+            return cached[1]
+
+        try:
+            discovered = await _probe_retail_regions()
+            # Belt-and-suspenders: union with known regions so probe gaps
+            # never silently drop a region from the dropdown.
+            all_codes  = discovered | set(_REGION_META)
+            result     = _build_region_list(all_codes)
+        except Exception:
+            log.exception("Region probe failed; serving stale/fallback list")
+            result = (cached[1] if cached
+                      else _build_region_list(set(_REGION_META)))
+
+        _region_cache_state = (time.monotonic(), result)
+        log.info("Region list ready: %d regions", len(result))
+        return result
