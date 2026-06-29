@@ -158,6 +158,8 @@ def _parse_prices(consumption: list[dict], reservation: list[dict]) -> dict[str,
         retail = it.get("retailPrice", 0.0)
         if not arm or not retail:
             continue
+        if not product.startswith("Virtual Machines"):
+            continue
         is_win  = "Windows" in product
         is_spot = "Spot" in sku_n
         is_low  = "Low Priority" in sku_n
@@ -186,6 +188,9 @@ def _parse_prices(consumption: list[dict], reservation: list[dict]) -> dict[str,
         arm    = it.get("armSkuName", "").strip()
         retail = it.get("retailPrice", 0.0)
         if not arm or not retail:
+            continue
+        product = it.get("productName", "")
+        if not product.startswith("Virtual Machines"):
             continue
         term   = it.get("reservationTerm", "") or it.get("skuName", "")
         is_1yr = "1 Year" in term
