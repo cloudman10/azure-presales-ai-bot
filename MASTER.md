@@ -5,19 +5,20 @@
 
 ---
 
-## Current Status (2026-06-28) — v2.1.0
+## Current Status (2026-07-04) — v2.2.0
 
-### Last Known-Good State (2026-06-29)
-- Commit: `ad2c152` (main) — tag: **compare-prices-2.0**
-- Status: dev and prod healthy. Compare Azure Prices tool fully deployed: live-fetch per region, dynamic region discovery (~59 regions), Cloud Services pricing fix, reliable deploy via azure/webapps-deploy@v3. Pricing bot and Solution Architecture Designer unchanged and operational.
+### Last Known-Good State (2026-07-04)
+- Commit: `7559fc4` (main) — tag: **portal-restructure-1.0**
+- Status: dev and prod healthy. Portal restructure complete: pricing engine moved to `/pricing`, `/compare` and `/architect` unchanged, `/architect1` spike deleted, `/` intentionally 404 pending domain cutover. All three tools verified live on both apps.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard ad2c152
+  git reset --hard 7559fc4
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
-- Previous stable baseline (Solution Architecture Designer, pre-compare): tag `v-arch-svg-1.0`, commit `3c41f95`.
+- Previous stable baseline (Compare Azure Prices v2.0, pre-restructure): tag `compare-prices-2.0`, commit `ad2c152`.
+- Previous stable baseline (Solution Architecture Designer): tag `v-arch-svg-1.0`, commit `3c41f95`.
 
 | Item | Status |
 |------|--------|
@@ -34,6 +35,37 @@
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+---
+
+### Portal Restructure (2026-07-04) — tag `portal-restructure-1.0` — COMPLETE
+
+**Current routes (commit `7559fc4`, both dev and prod):**
+
+| Route | What | Status |
+|-------|------|--------|
+| `/pricing` | Azure VM Pricing Engine — moved from `/` | ✅ 200 |
+| `/compare` | Azure VM Price Compare | ✅ 200 |
+| `/architect` | Azure Solution Architecture Designer | ✅ 200 |
+| `/` | No handler — intentional 404 pending domain cutover | ⏳ 301 after cutover |
+| `/architect1` | draw.io spike — route + `static/architect1.html` deleted | ✅ Gone |
+
+**Target domain architecture (in progress):**
+- `hyperxen.ai` → Replit portal (dashboard/launcher — public face, unchanged for now)
+- `tools.hyperxen.ai` → Azure App Service (`/pricing`, `/compare`, `/architect`) + `GET /` → 301 to `hyperxen.ai`
+- `hyperxen.com` → Freed for a separate corporate portal later
+- Dev: moving off `dev.hyperxen.com` → a `*.hyperxen.ai` subdomain (TBD)
+
+**Remaining steps to complete the portal cutover (in order):**
+1. DNS + cert: create `tools.hyperxen.ai` CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net`; bind Azure managed cert on the App Service custom domain
+2. Add `GET /` → `301` to `https://hyperxen.ai` on the Azure app (deploy after cert bound)
+3. Replit: update `BACKEND_URL` secret → `https://tools.hyperxen.ai` (after steps 1+2 verified live)
+4. Dev subdomain: bind a `*.hyperxen.ai` subdomain for dev (replaces `dev.hyperxen.com`)
+
+**Cherry-pick lesson (2026-07-04):**
+The `dev` branch carries stale docs — `MASTER.md` on dev was several commits behind `main` (compare-prices-1.0 era). A straight `git merge dev → main` would have silently regressed MASTER.md. Fix: cherry-pick structural code commits from dev (`git cherry-pick <sha>`), never straight-merge dev → main when MASTER.md has diverged. Going forward: after any main-only MASTER.md commit, also push an equivalent update to dev to keep branches in sync.
+
+---
 
 ### Multi-VM Quote Basket (2026-06-14) — COMPLETE
 
