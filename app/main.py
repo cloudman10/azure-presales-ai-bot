@@ -47,8 +47,8 @@ app.include_router(diagram.router, prefix="/api/diagram")
 app.include_router(vm_prices.router, prefix="/api/vm-prices")
 
 
-@app.get("/")
-async def root() -> FileResponse:
+@app.get("/pricing")
+async def pricing() -> FileResponse:
     return FileResponse(
         str(_BASE_DIR / "static" / "index.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
@@ -62,13 +62,6 @@ async def architect() -> FileResponse:
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
-
-@app.get("/architect1")
-async def architect1() -> FileResponse:
-    return FileResponse(
-        str(_BASE_DIR / "static" / "architect1.html"),
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-    )
 
 
 @app.get("/compare")
