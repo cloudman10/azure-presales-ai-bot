@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-07-04) — v2.2.0
+## Current Status (2026-07-05) — v2.2.0
 
 ### Last Known-Good State (2026-07-04)
 - Commit: `7559fc4` (main) — tag: **portal-restructure-1.0**
@@ -25,6 +25,7 @@
 | Frontend (Replit UI) | ✅ Live |
 | Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
 | Dev App | ✅ Live and healthy — https://hyperxen-pricing-bot-dev.azurewebsites.net |
+| tools.hyperxen.ai | ⏳ DNS + hostname bound; ⛔ managed cert blocked (pending-expired Azure bug — retrying daily) |
 | LLM — GPT-4o via Azure AI Foundry (all paths) | ✅ Verified working |
 | Azure AI Search (vm-skus) | ✅ Indexed (1185 active SKUs, re-indexed 2026-06-20) |
 | Azure AI Search (vm-sku-prices) | ✅ Indexed (1,975 docs: 1,036 Linux + 939 Windows, australiaeast) |
@@ -56,11 +57,24 @@ Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/wel
 - `hyperxen.com` → Freed for a separate corporate portal later
 - Dev: moving off `dev.hyperxen.com` → a `*.hyperxen.ai` subdomain (TBD)
 
-**Remaining steps to complete the portal cutover (in order):**
-1. DNS + cert: create `tools.hyperxen.ai` CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net`; bind Azure managed cert on the App Service custom domain
-2. Add `GET /` → `301` to `https://hyperxen.ai` on the Azure app (deploy after cert bound)
-3. Replit: update `BACKEND_URL` secret → `https://tools.hyperxen.ai` (after steps 1+2 verified live)
-4. Dev subdomain: bind a `*.hyperxen.ai` subdomain for dev (replaces `dev.hyperxen.com`)
+**Domain Cutover Status (2026-07-05):**
+
+| Step | What | State |
+|------|------|-------|
+| DNS | `tools.hyperxen.ai` CNAME → prod app; `asuid.tools` TXT verified green in Azure (HostPapa) | ✅ Done |
+| Custom domain bind | `tools.hyperxen.ai` hostname bound + verified on prod app (`hyperxen-pricing-bot-db5hmngq3woxa`); `hostNameType: Verified` | ✅ Done |
+| Managed cert | Azure managed cert — repeated "Pending managed certificate failed / Pending certificate expired" errors via CLI + portal | ⛔ Blocked |
+| SNI SSL bind | Cert not yet issued; `sslState: Disabled`, thumbprint null | ⏳ Waiting on cert |
+
+**Managed cert issue:** Same class of Azure bug as `dev.hyperxen.com`. Domain validation passes green every time; issuance stalls on Azure's side. Hostname bind confirmed clean (no pending-conflict). Resolution: retry portal "Add" once daily, or open Azure support ticket.
+
+**Remaining cutover steps — all pending the cert (in order):**
+1. ⛔ `tools.hyperxen.ai` managed cert issued + bound (SNI SSL) — **BLOCKED, waiting**
+2. ⏳ Verify `https://tools.hyperxen.ai/pricing`, `/compare`, `/architect` load over HTTPS
+3. ⏳ Flip `hyperxen.ai` → Replit in HostPapa (make it Replit's primary domain)
+4. ⏳ Azure prod: add `GET /` → 301 redirect to `https://hyperxen.ai` — **SAFE ONLY after step 3**, or the redirect loops
+5. ⏳ Replit: update tile links + `BACKEND_URL` → `https://tools.hyperxen.ai/...`
+6. 🔜 Later: move dev off `dev.hyperxen.com` onto a `*.hyperxen.ai` subdomain
 
 **Cherry-pick lesson (2026-07-04):**
 The `dev` branch carries stale docs — `MASTER.md` on dev was several commits behind `main` (compare-prices-1.0 era). A straight `git merge dev → main` would have silently regressed MASTER.md. Fix: cherry-pick structural code commits from dev (`git cherry-pick <sha>`), never straight-merge dev → main when MASTER.md has diverged. Going forward: after any main-only MASTER.md commit, also push an equivalent update to dev to keep branches in sync.
@@ -245,6 +259,7 @@ All session state (conversation history, advisor picks, quote basket) lives in a
 | hyperxen.ai | ✅ Live — A record → `20.211.64.31`, Azure managed cert bound (thumbprint `AA7A318E`, expires 2026-12-06), `httpsOnly: true` |
 | www.hyperxen.ai | CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net` |
 | hyperxen.com | Unchanged, still pointing to prod app |
+| tools.hyperxen.ai | ✅ CNAME + TXT verified in Azure; custom domain bound on prod app; ⛔ managed cert blocked (pending-expired bug); `sslState: Disabled` |
 | dev.hyperxen.com | ✅ Live on self-signed cert by design (thumbprint `66CB417763C7…`, expires 2027-05-02). Azure managed cert abandoned — see note below. |
 
 ### Dev SSL — Resolved by Decision (2026-06-07)
@@ -438,6 +453,8 @@ To switch back to prod: change `BACKEND_URL` value back to `https://hyperxen-pri
 |--------|------|-------|
 | dev | CNAME | hyperxen-pricing-bot-dev.azurewebsites.net |
 | asuid.dev | TXT | ED0F428CFF97A626A727B50EAF889D67CBF0603A47C6F2DA6F104CB5E278BC52 |
+| tools | CNAME | hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
+| asuid.tools | TXT | ED0F428CFF97A626A727B50EAF889D67CBF0603A47C6F2DA6F104CB5E278BC52 |
 
 ---
 
