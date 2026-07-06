@@ -737,7 +737,7 @@ function addMsg(role, text, type){
     if(isPricing){
       // Split on the inter-block separator produced by _show_full_pricing()
       // so that "all" replies render as separate cards rather than one garbled block.
-      const blocks = text.split(/\n\n---\n\n/).filter(s => s.includes('=== Azure VM Pricing Estimate ==='));
+      const blocks = text.split(/\n\n-{3,}\n\n/).filter(s => s.includes('=== Azure VM Pricing Estimate ==='));
       const cards  = blocks.map(blk => buildCard(blk)).filter(c => c !== null);
 
       if(cards.length){
