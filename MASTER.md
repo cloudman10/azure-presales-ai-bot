@@ -5,15 +5,15 @@
 
 ---
 
-## Current Status (2026-07-06) — v2.3.0
+## Current Status (2026-07-06) — v2.4.0
 
 ### Last Known-Good State (2026-07-06)
-- Commit: `a80b158` (main) — tag: **portal-cutover-1.0**
-- Status: Portal cutover complete. `hyperxen.ai` → Replit portal (primary public face). `tools.hyperxen.ai` → Azure prod, HTTPS live, serving `/pricing`, `/compare`, `/architect`. Root `/` → 301 to `https://hyperxen.ai`. All tools verified live.
+- Commit: `ca8c0b3` (main) — multi-SKU pricing fix complete, live on prod
+- Status: All systems operational. Multi-SKU pricing live — one request prices N SKUs, renders N independent cards. Portal cutover complete. `hyperxen.ai` → Replit portal. `tools.hyperxen.ai` → Azure prod, HTTPS, serving `/pricing`, `/compare`, `/architect`. Root `/` → 301 to `https://hyperxen.ai`.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard a80b158
+  git reset --hard ca8c0b3
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
@@ -77,6 +77,29 @@ Confirmed: `dev.hyperxen.ai` cert issued cleanly with no retries once the CAA re
 
 **Cherry-pick lesson (2026-07-04):**
 The `dev` branch carries stale docs — `MASTER.md` on dev was several commits behind `main`. A straight `git merge dev → main` would have silently regressed MASTER.md. Fix: cherry-pick structural code commits from dev (`git cherry-pick <sha>`), never straight-merge dev → main when MASTER.md has diverged.
+
+---
+
+### Multi-SKU Pricing Fix (2026-07-06) — COMPLETE
+
+The pricing engine now handles multiple VM SKUs in a single request. Example: "price D4als_v6, E4as_v6, and B4als_v2 for Melbourne" returns prices for all three and renders one independent card per SKU. Previously the engine only priced the first SKU and asked which to do next.
+
+**Three-commit fix, all cherry-picked to prod (`tools.hyperxen.ai/pricing`, HTTP 200):**
+
+| Commit | File | What it does |
+|--------|------|-------------|
+| `af8637d` | `pricing_agent.py` | Multi-SKU loop: `_parse_fetch_marker` normalises LLM output to a `skus` list; `run()` dispatches `asyncio.gather` over all SKUs concurrently; blocks joined with a 48-dash separator |
+| `b8b03ed` | `pricing_agent.py` | SYSTEM_PROMPT: `skus` array is now the **sole** schema (scalar `"sku"` key removed); added `CRITICAL` rule to price ALL named SKUs; added explicit one-SKU and two-SKU examples |
+| `ca8c0b3` | `static/index.html` | Frontend split regex changed from `/\n\n---\n\n/` (3 dashes) to `/\n\n-{3,}\n\n/` (3+ dashes) — was preventing N-card render by never matching the 48-dash separator |
+
+**Bug had three distinct layers — each fix revealed the next:**
+1. **Prompt schema conflict:** Two competing schemas in SYSTEM_PROMPT (`"sku"` scalar first, `"skus"` array second). GPT-4o anchored on the scalar it saw most — always emitting one SKU. Fix: remove scalar entirely, make `"skus"` array the only form with a `CRITICAL: price ALL of them` rule.
+2. **Backend loop missing:** Once the LLM emitted `"skus":[...]`, the parser and `run()` had no multi-item iteration. Fix: `_parse_fetch_marker` normalises to `skus` list; `asyncio.gather` over all SKUs; `_format_pricing` called once per SKU with `per_params = {**fetch_params, "sku": sku}`.
+3. **Frontend separator mismatch:** Backend joined blocks with `"-" * 48`; frontend split on `/\n\n---\n\n/` (3 dashes) — never matched, so all blocks arrived as one unsplit string, rendering as one merged card. Fix: generalise regex to `/\n\n-{3,}\n\n/`.
+
+**KEY LESSON:** Test the full request→render path when fixing multi-step features. A prompt fix, a backend loop fix, and a frontend parser fix were each invisible in isolation — only the full path exposed each layer. If you only test one layer (e.g. backend logs), the next bug hides until runtime.
+
+**Parked follow-up:** Current multi-SKU output is independent stacked cards (correct, readable). A true side-by-side comparison view (columns per SKU, rows per pricing tier) would be more useful for direct cost comparison — deferred.
 
 ---
 
@@ -529,6 +552,7 @@ azure-presales-ai-bot/
 ## What's Built and Working
 
 - FastAPI chat API (`/api/chat`) with Azure OpenAI GPT-4o (all LLM paths — pricing flow + conversation fallback both route through Azure AI Foundry)
+- Multi-SKU pricing — a single request names any number of VM SKUs; backend prices all concurrently via `asyncio.gather`; frontend renders one independent card per SKU (separator regex fix + `"skus"` array as sole prompt schema)
 - Multi-turn conversation: collects SKU, region, OS before fetching pricing
 - PAYG, 1-Year/3-Year RI, Savings Plan, and Azure Hybrid Benefit pricing
 - SKU Normalizer Agent — handles constrained vCPU normalization (e.g. `e42adsv5` → `Standard_E4-2ads_v5`)
