@@ -5,25 +5,27 @@
 
 ---
 
-## Current Status (2026-06-28) — v2.1.0
+## Current Status (2026-07-05) — v2.2.0
 
-### Last Known-Good State (2026-06-28)
-- Commit: `bc27f52` (main) — tag: **compare-prices-1.0**
-- Status: dev healthy. Compare Azure Prices tool fully deployed and validated (subscription-accurate SKU list, Arm64 gate, architecture badges, RAM min/max filter, Windows default). Pricing bot and Solution Architecture Designer unchanged and operational.
+### Last Known-Good State (2026-07-04)
+- Commit: `7559fc4` (main) — tag: **portal-restructure-1.0**
+- Status: dev and prod healthy. Portal restructure complete: pricing engine moved to `/pricing`, `/compare` and `/architect` unchanged, `/architect1` spike deleted, `/` intentionally 404 pending domain cutover. All three tools verified live on both apps.
 - Rollback if a future deploy breaks the app:
   ```bash
   git checkout main
-  git reset --hard bc27f52
+  git reset --hard 7559fc4
   git push origin main --force
   ```
   (or safer: `git revert <bad-commit> --no-edit && git push origin main`)
-- Previous stable baseline (Solution Architecture Designer, pre-compare): tag `v-arch-svg-1.0`, commit `3c41f95`.
+- Previous stable baseline (Compare Azure Prices v2.0, pre-restructure): tag `compare-prices-2.0`, commit `ad2c152`.
+- Previous stable baseline (Solution Architecture Designer): tag `v-arch-svg-1.0`, commit `3c41f95`.
 
 | Item | Status |
 |------|--------|
 | Frontend (Replit UI) | ✅ Live |
 | Backend (Azure App Service) | ✅ Live — https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
 | Dev App | ✅ Live and healthy — https://hyperxen-pricing-bot-dev.azurewebsites.net |
+| tools.hyperxen.ai | ⏳ DNS + hostname bound; ⛔ managed cert blocked (pending-expired Azure bug — retrying daily) |
 | LLM — GPT-4o via Azure AI Foundry (all paths) | ✅ Verified working |
 | Azure AI Search (vm-skus) | ✅ Indexed (1185 active SKUs, re-indexed 2026-06-20) |
 | Azure AI Search (vm-sku-prices) | ✅ Indexed (1,975 docs: 1,036 Linux + 939 Windows, australiaeast) |
@@ -34,6 +36,50 @@
 
 ### All systems operational
 Test: `curl https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net/api/welcome`
+
+---
+
+### Portal Restructure (2026-07-04) — tag `portal-restructure-1.0` — COMPLETE
+
+**Current routes (commit `7559fc4`, both dev and prod):**
+
+| Route | What | Status |
+|-------|------|--------|
+| `/pricing` | Azure VM Pricing Engine — moved from `/` | ✅ 200 |
+| `/compare` | Azure VM Price Compare | ✅ 200 |
+| `/architect` | Azure Solution Architecture Designer | ✅ 200 |
+| `/` | No handler — intentional 404 pending domain cutover | ⏳ 301 after cutover |
+| `/architect1` | draw.io spike — route + `static/architect1.html` deleted | ✅ Gone |
+
+**Target domain architecture (in progress):**
+- `hyperxen.ai` → Replit portal (dashboard/launcher — public face, unchanged for now)
+- `tools.hyperxen.ai` → Azure App Service (`/pricing`, `/compare`, `/architect`) + `GET /` → 301 to `hyperxen.ai`
+- `hyperxen.com` → Freed for a separate corporate portal later
+- Dev: moving off `dev.hyperxen.com` → a `*.hyperxen.ai` subdomain (TBD)
+
+**Domain Cutover Status (2026-07-05):**
+
+| Step | What | State |
+|------|------|-------|
+| DNS | `tools.hyperxen.ai` CNAME → prod app; `asuid.tools` TXT verified green in Azure (HostPapa) | ✅ Done |
+| Custom domain bind | `tools.hyperxen.ai` hostname bound + verified on prod app (`hyperxen-pricing-bot-db5hmngq3woxa`); `hostNameType: Verified` | ✅ Done |
+| Managed cert | Azure managed cert — repeated "Pending managed certificate failed / Pending certificate expired" errors via CLI + portal | ⛔ Blocked |
+| SNI SSL bind | Cert not yet issued; `sslState: Disabled`, thumbprint null | ⏳ Waiting on cert |
+
+**Managed cert issue:** Same class of Azure bug as `dev.hyperxen.com`. Domain validation passes green every time; issuance stalls on Azure's side. Hostname bind confirmed clean (no pending-conflict). Resolution: retry portal "Add" once daily, or open Azure support ticket.
+
+**Remaining cutover steps — all pending the cert (in order):**
+1. ⛔ `tools.hyperxen.ai` managed cert issued + bound (SNI SSL) — **BLOCKED, waiting**
+2. ⏳ Verify `https://tools.hyperxen.ai/pricing`, `/compare`, `/architect` load over HTTPS
+3. ⏳ Flip `hyperxen.ai` → Replit in HostPapa (make it Replit's primary domain)
+4. ⏳ Azure prod: add `GET /` → 301 redirect to `https://hyperxen.ai` — **SAFE ONLY after step 3**, or the redirect loops
+5. ⏳ Replit: update tile links + `BACKEND_URL` → `https://tools.hyperxen.ai/...`
+6. 🔜 Later: move dev off `dev.hyperxen.com` onto a `*.hyperxen.ai` subdomain
+
+**Cherry-pick lesson (2026-07-04):**
+The `dev` branch carries stale docs — `MASTER.md` on dev was several commits behind `main` (compare-prices-1.0 era). A straight `git merge dev → main` would have silently regressed MASTER.md. Fix: cherry-pick structural code commits from dev (`git cherry-pick <sha>`), never straight-merge dev → main when MASTER.md has diverged. Going forward: after any main-only MASTER.md commit, also push an equivalent update to dev to keep branches in sync.
+
+---
 
 ### Multi-VM Quote Basket (2026-06-14) — COMPLETE
 
@@ -213,6 +259,7 @@ All session state (conversation history, advisor picks, quote basket) lives in a
 | hyperxen.ai | ✅ Live — A record → `20.211.64.31`, Azure managed cert bound (thumbprint `AA7A318E`, expires 2026-12-06), `httpsOnly: true` |
 | www.hyperxen.ai | CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net` |
 | hyperxen.com | Unchanged, still pointing to prod app |
+| tools.hyperxen.ai | ✅ CNAME + TXT verified in Azure; custom domain bound on prod app; ⛔ managed cert blocked (pending-expired bug); `sslState: Disabled` |
 | dev.hyperxen.com | ✅ Live on self-signed cert by design (thumbprint `66CB417763C7…`, expires 2027-05-02). Azure managed cert abandoned — see note below. |
 
 ### Dev SSL — Resolved by Decision (2026-06-07)
@@ -406,6 +453,8 @@ To switch back to prod: change `BACKEND_URL` value back to `https://hyperxen-pri
 |--------|------|-------|
 | dev | CNAME | hyperxen-pricing-bot-dev.azurewebsites.net |
 | asuid.dev | TXT | ED0F428CFF97A626A727B50EAF889D67CBF0603A47C6F2DA6F104CB5E278BC52 |
+| tools | CNAME | hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net |
+| asuid.tools | TXT | ED0F428CFF97A626A727B50EAF889D67CBF0603A47C6F2DA6F104CB5E278BC52 |
 
 ---
 
@@ -578,6 +627,15 @@ Future hardening option: a custom Docker image with Graphviz baked in (`FROM mcr
 **Self-healing fallback for `az webapp restart`.**
 `az webapp restart` kills the container process and clears ephemeral `/tmp/`. The Oryx-built `antenv` (normally in `/tmp/<hash>/antenv/`) is gone, so the standard gunicorn launch path breaks. `startup.sh` detects this and falls back to re-extracting `/home/site/wwwroot/output.tar.zst` into persistent `/home/site/oryx-build/`. Re-extraction only runs when `output.tar.zst` is newer than the last extract (~2–4 min for 242 MB uncompressed); subsequent restarts reuse the existing `/home/site/oryx-build/antenv` directly (fast path, <1s).
 
+**CRITICAL: Linux App Service requires `azure/webapps-deploy@v3` for reliable code reload (commit `ad2c152`).**
+Raw Kudu zipdeploy (`POST /api/zipdeploy`) triggers an Oryx recycle that does NOT reliably reload Python modules in the running Linux App Service container. Symptom: GHA reports "Deployment successful" (HTTP 200) but the live app still serves old code.
+
+Root cause: on Linux App Service, the Kudu SCM container and the main app container are separate processes. `DELETE /api/processes/0` (previously used as a post-deploy restart step) kills a Kudu process, not the gunicorn app process — and `|| true` hid the failure silently in GHA logs.
+
+**Fix:** Use `azure/webapps-deploy@v3` in both dev and prod GHA workflows. This action performs a proper full container restart. Both workflows (`deploy-dev.yml` and `deploy-prod.yml`) now use this action.
+
+If stale-code symptoms recur after a deploy, check the GHA "Deploy to Azure Web App" step first. Manual unblock (full restart): `az webapp stop --resource-group rg-hyperxen-app-dev --name <app-name>` then `az webapp start ...`.
+
 ---
 
 ### Bicep Infrastructure
@@ -641,15 +699,66 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 
 ## Compare Azure Prices
 
-Added in v2.1 (2026-06-28, tag `compare-prices-1.0`). A filterable, sortable VM price comparison grid — the "Holori-style" table that lets users compare every Azure VM SKU across all pricing tiers for a region in one view.
+Added in v2.1 (2026-06-28, tag `compare-prices-2.0`). A filterable, sortable VM price comparison grid — the "Holori-style" table that lets users compare every Azure VM SKU across all pricing tiers for a region in one view.
 
 ### Purpose
 
 Route `/compare`. Sibling tool to the VM pricing engine (chat advisor). Where the advisor recommends 3 VMs for a scenario, the Compare tool lets users browse and filter the full catalogue — useful for cost benchmarking, pre-qualification, and quote building. All price columns visible simultaneously: PAYG, Spot, SP 1/3yr, RI 1/3yr.
 
-### Data Layer
+### Architecture — Live-Fetch per Region
 
-Separate Azure AI Search index **`vm-sku-prices`** — distinct from the advisor's `vm-skus` index. Populated by `scripts/index_vm_prices.py`, which:
+The Compare grid uses **live per-region pricing fetched on demand** — NOT a pre-indexed snapshot.
+
+On region select (or page load), the frontend calls `GET /api/vm-prices/live?region=...&os=...`. The backend:
+1. Calls `_fetch_retail_prices(region)` — paginates the Azure Retail Prices API for all PAYG + Reservation items in the region
+2. Calls `_get_arm_skus_for_region(region)` — fetches ARM Compute SKUs for the deployability gate (1h cache)
+3. Builds one row per deployable SKU: PAYG, Spot, SP 1/3yr, SP 3/3yr, RI 1/3yr, RI 3/3yr columns
+4. Caches result per region for 30 minutes (asyncio.Lock per region prevents concurrent fetch storms)
+
+**Why live-fetch:** Indexing is per-region, manual, and goes stale. Live-fetch means every region is always current — no index runner, no stale prices, no missing regions. The 30-min per-region cache means typical user sessions hit cache on second query.
+
+The pre-indexed `GET /api/vm-prices/search` endpoint (australiaeast only) still exists and is served by the `vm-sku-prices` Azure AI Search index maintained separately.
+
+### Regions — Dynamic Discovery (~59, 24h Cache)
+
+The region dropdown is **auto-discovered from the Azure Retail Prices API** — not a hardcoded list.
+
+On first call to `GET /api/vm-prices/regions` (or after 24h TTL), the backend:
+1. Probes the Retail Prices API for `Standard_D4s_v5` Consumption items with no region filter
+2. Paginates all results; collects unique `armRegionName` values
+3. Excludes sovereign/specialty prefixes: `usgov*`, `jioindia*`, `deloscloud*`
+4. Unions discovered codes with `_REGION_META` (59-entry dict) — belt-and-suspenders so known regions never silently drop if probe misses them
+5. Builds `{code, city, label, geographyGroup}` list sorted by geography then label
+6. Caches result for 24 hours (double-check asyncio.Lock)
+
+**Result: ~59 commercial Azure regions.** The list is self-maintaining — when Azure adds a new commercial region with VM pricing, it appears in the dropdown within 24 hours. Dead regions (taiwannorth, saudiarabianorth — zero VM pricing in Retail API) are excluded automatically. Unknown new regions get auto-labels from the code (e.g. `finlandeast` → "Finland East") via `_label_from_code()`.
+
+Key functions in `app/services/vm_compare.py`:
+- `_REGION_META` — 59-entry dict `code → (city, geographyGroup)` for known regions with city-level friendly names
+- `_probe_retail_regions()` — async, paginates Retail API, returns `set[str]` of discovered codes
+- `get_region_list()` — 24h-cached async function; falls back to `_REGION_META` on probe failure
+
+**Before this fix (prior to commit `919abff`):** Region list was a hardcoded 54-entry `AZURE_REGIONS` Python list. Seven commercial regions were missing (including `indonesiacentral`); two dead regions (taiwannorth, saudiarabianorth) were listed but returned empty grids.
+
+### Pricing Accuracy Fix — Cloud Services Contamination (commit `37a6190`)
+
+**Root cause:** The Azure Retail Prices API returns two categories of items for the same `armSkuName` (e.g. `Standard_B16als_v2`), both with `serviceName = "Virtual Machines"`:
+- `productName = "Virtual Machines X Family"` — correct VM price
+- `productName = "X Family Cloud Services"` — Cloud Services pricing (inflated; equals Windows PAYG regardless of OS)
+
+In some regions (e.g. koreacentral), Cloud Services items appear **first** in the API response. A first-match parser silently picks the wrong (inflated) price.
+
+**Fix in `_parse_prices` (`app/services/vm_compare.py`):** Both the consumption loop and the reservation loop guard with:
+```python
+if not product.startswith("Virtual Machines"):
+    continue
+```
+
+Applies to every region — Cloud Services items are always wrong regardless of response ordering. Verified: koreacentral `B16als_v2` Linux corrected from `$0.737/hr` → `$0.663/hr`; australiaeast was also contaminated (Cloud Services items appeared after VM items there, so the bug was silent but present).
+
+### Data Layer — Pre-indexed Search (australiaeast only)
+
+Separate Azure AI Search index **`vm-sku-prices`** — distinct from the advisor's `vm-skus` index. Serves `GET /api/vm-prices/search`. Populated by `scripts/index_vm_prices.py`, which:
 1. Reads active SKU specs from `vm-skus` (vcpus, ram_gb, series)
 2. Applies ARM deployability gate (see Accuracy section below)
 3. Bulk-fetches all PAYG+Spot and Reservation prices from the Azure Retail Prices API for the region
@@ -710,8 +819,7 @@ Spot prices: Linux only (no Windows Spot market). Savings Plan rates: embedded i
 
 ### Known TODOs (parked)
 
-- Scheduled daily refresh (currently manual: `python scripts/index_vm_prices.py`)
-- Additional regions beyond australiaeast (REGION constant in the script)
+- Scheduled daily refresh of `vm-sku-prices` index (currently manual: `python scripts/index_vm_prices.py`)
 - Add-to-Basket from the grid (wire into the existing quote basket)
 - CSV export
 - Architecture filter in the UI (Arm64 / x64 toggle)
