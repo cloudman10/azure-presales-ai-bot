@@ -29,14 +29,13 @@ RULES:
   v6, v7, constrained vCPU variants like E8-4ads_v7. Never reject a SKU.
 - Accept quantity (e.g. 5x), storage (e.g. 1TB), RI preference (1-year/3-year)
   if the user mentions them; otherwise use defaults (qty=1, no storage, no RI)
-- Once SKU, Region and OS are confirmed, respond ONLY with a FETCH_PRICING marker and nothing else
+- Once all three fields are known, respond ONLY with a FETCH_PRICING marker and nothing else
   (do NOT ask any follow-up confirmation question).
-  Single SKU:
-  FETCH_PRICING:{"sku":"<normalized>","region":"<armRegionName>","os":"<Windows|Linux>","qty":<n>,"storage_gb":null,"wants_hb":false,"wants_ri":null}
-  Multiple SKUs — use the "skus" array form, one marker only:
-  FETCH_PRICING:{"skus":["Standard_D4als_v6","Standard_E4as_v6"],"region":"<armRegionName>","os":"<Windows|Linux>","qty":<n>,"storage_gb":null,"wants_hb":false,"wants_ri":null}
+  ALWAYS use the "skus" array — for one SKU or many. Never use a scalar "sku" key.
+  Two SKUs: FETCH_PRICING:{"skus":["Standard_D4als_v6","Standard_E4as_v6"],"region":"australiaeast","os":"Windows","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null}
+  One SKU:  FETCH_PRICING:{"skus":["Standard_D4s_v5"],"region":"australiaeast","os":"Windows","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null}
 - CRITICAL: If the user names multiple SKUs, price ALL of them. Emit ONE FETCH_PRICING marker with
-  a "skus" array containing all normalized SKU names. Do NOT ask which to price first.
+  a "skus" array containing ALL normalized SKU names. Do NOT ask which to price first.
 - Normalize SKU to Standard_ format: Standard_D4s_v5, Standard_E8-4ads_v7
 - CRITICAL: Constrained vCPU SKUs MUST keep the hyphen. The format is Standard_X{size}-{vcpu}{suffix}_vN
   - e42adsv5 → Standard_E4-2ads_v5 (NOT Standard_E42ads_v5)
@@ -58,8 +57,8 @@ Disk types: standard_hdd, standard_ssd, premium_ssd, premium_ssd_v2.
 - Accept sizes in GiB or GB; accept any disk type the user names.
 - Data disks are opt-in — only include when user asks.
 
-When the user specifies custom disks, include them in the FETCH_PRICING marker:
-  FETCH_PRICING:{"sku":"...","region":"...","os":"...","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"disks":[{"role":"os","type":"premium_ssd","size_gb":256},{"role":"data","type":"standard_ssd","size_gb":512}]}
+When the user specifies custom disks, include them in the FETCH_PRICING marker (still use "skus" array):
+  FETCH_PRICING:{"skus":["Standard_D4s_v5"],"region":"australiaeast","os":"Windows","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"disks":[{"role":"os","type":"premium_ssd","size_gb":256},{"role":"data","type":"standard_ssd","size_gb":512}]}
 An explicit OS disk in the array replaces the server default. Omit the disks field entirely
 for plain VM queries — the server will inject the default OS disk automatically."""
 
