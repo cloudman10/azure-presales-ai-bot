@@ -33,7 +33,7 @@
 | Azure AI Search (vm-sku-prices) | ✅ Indexed (1,975 docs: 1,036 Linux + 939 Windows, australiaeast) |
 | CORS middleware | ✅ Added |
 | Git repo | ✅ Public — https://github.com/cloudman10/azure-presales-ai-bot |
-| Dev Environment | ✅ Live — https://dev.hyperxen.com |
+| Dev Environment | ✅ Live — https://dev.hyperxen.ai (App Service managed cert, SNI SSL) |
 | CI/CD Pipeline | ✅ GitHub Actions — auto deploy on push to dev and main |
 
 ### All systems operational
@@ -57,7 +57,7 @@ Test: `curl https://tools.hyperxen.ai/api/welcome`
 - `hyperxen.ai` → Replit portal (primary public face; A record → `34.111.179.208`; old Azure A record `20.211.64.31` removed)
 - `tools.hyperxen.ai` → Azure App Service (`/pricing`, `/compare`, `/architect`); HTTPS (App Service managed cert); `GET /` → 301 to `https://hyperxen.ai`
 - `hyperxen.com` → Freed; still pointing to prod app but no longer the primary domain; future: separate corporate portal
-- Dev: still on `dev.hyperxen.com`; moving to a `*.hyperxen.ai` subdomain is parked (see below)
+- `dev.hyperxen.ai` → Azure dev app (`hyperxen-pricing-bot-dev`); HTTPS (App Service managed cert); `dev.hyperxen.com` retired
 
 **Replit portal wired to new domain:**
 - `BACKEND_URL` = `https://tools.hyperxen.ai`
@@ -67,10 +67,13 @@ Test: `curl https://tools.hyperxen.ai/api/welcome`
 **KEY LESSON — CAA records blocked Azure managed cert issuance (2026-07-06):**
 The `tools.hyperxen.ai` managed cert repeatedly hit "Pending managed certificate failed / Pending certificate expired" even though domain validation passed green every time. Root cause: **CAA records on `hyperxen.ai` did not authorize DigiCert**, and Azure App Service managed certs are DigiCert-issued. Fix: add CAA record `0 issue "digicert.com"` at HostPapa. This immediately unblocked cert issuance.
 
-This is almost certainly the same root cause as the `dev.hyperxen.com` cert that was abandoned. Apply the same CAA fix there when moving dev to a `*.hyperxen.ai` subdomain.
+Confirmed: `dev.hyperxen.ai` cert issued cleanly with no retries once the CAA record was in place — the root `hyperxen.ai` CAA record is inherited by all subdomains, so `dev.hyperxen.ai` got the DigiCert authorization automatically. This closes the original `dev.hyperxen.com` cert mystery: that domain sits under `hyperxen.com`, which had no CAA record authorizing DigiCert.
 
-**Remaining / parked:**
-- Move dev off `dev.hyperxen.com` → a `*.hyperxen.ai` subdomain; add `0 issue "digicert.com"` CAA record first; update `BACKEND_URL_DEV` accordingly.
+**Dev migration — COMPLETE (2026-07-06):**
+- `dev.hyperxen.ai` live, HTTPS, App Service managed cert (SNI SSL)
+- Routes verified: `/`, `/pricing`, `/compare`, `/architect` all correct over HTTPS
+- `dev.hyperxen.com` custom domain binding removed from dev app; domain retired
+- `BACKEND_URL_DEV` updated to `https://dev.hyperxen.ai` in Replit, republished
 
 **Cherry-pick lesson (2026-07-04):**
 The `dev` branch carries stale docs — `MASTER.md` on dev was several commits behind `main`. A straight `git merge dev → main` would have silently regressed MASTER.md. Fix: cherry-pick structural code commits from dev (`git cherry-pick <sha>`), never straight-merge dev → main when MASTER.md has diverged.
@@ -256,10 +259,11 @@ All session state (conversation history, advisor picks, quote basket) lives in a
 | www.hyperxen.ai | CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net` (may need updating to Replit later) |
 | tools.hyperxen.ai | ✅ Live — Azure prod app; CNAME → prod app; App Service managed cert (SNI SSL); HTTPS serving `/pricing`, `/compare`, `/architect` |
 | hyperxen.com | Freed — still pointing to prod app but no longer primary. Future: separate corporate portal. |
-| dev.hyperxen.com | ✅ Live on self-signed cert by design (thumbprint `66CB417763C7…`, expires 2027-05-02). Real managed cert parked — apply CAA fix first (see lesson above). |
+| dev.hyperxen.ai | ✅ Live — Azure dev app; CNAME → dev app; App Service managed cert (SNI SSL); `dev.hyperxen.com` retired |
+| dev.hyperxen.com | ✅ Retired — custom domain binding removed from dev app (2026-07-06). DNS records can be cleaned up from hyperxen.com zone. |
 
-### Dev SSL — Resolved by Decision (2026-06-07) — CAA root cause identified (2026-07-06)
-Dev stays on self-signed for now. Azure managed cert was attempted 2026-06-07 but never materialised. Root cause was **missing CAA record authorizing DigiCert** (same bug as `tools.hyperxen.ai`). When dev moves to a `*.hyperxen.ai` subdomain, add `0 issue "digicert.com"` CAA record at HostPapa first, then `az webapp config ssl create` should succeed. Existing self-signed cert (thumbprint `66CB417763C7…`, expires 2027-05-02) remains bound and working in the meantime.
+### Dev SSL — App Service managed cert (2026-07-06)
+Dev now runs on `dev.hyperxen.ai` with an Azure App Service managed cert (SNI SSL) — same as prod. Cert issued cleanly because the root `hyperxen.ai` CAA record (`0 issue "digicert.com"`) is inherited by all subdomains. The old self-signed cert on `dev.hyperxen.com` is no longer bound; that custom domain binding was removed. The `dev.hyperxen.com` DNS records (under `hyperxen.com` zone at HostPapa) can be cleaned up at any time — they serve no purpose.
 
 ---
 
@@ -412,33 +416,25 @@ Azure App Service (dev)     Azure App Service (prod)
 | Environment | App Service | URL | Branch |
 |------------|-------------|-----|--------|
 | Production | hyperxen-pricing-bot-db5hmngq3woxa | https://tools.hyperxen.ai | main |
-| Dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.com | dev |
+| Dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.ai | dev |
 
 ## Dev SSL Certificate
-- **Type:** Self-signed (Azure managed cert kept failing due to duplicate pending operations)
-- **Thumbprint:** `66CB417763C7318ABD21763171CC5ABE2D447C6B`
-- **Expires:** 2027-05-02
-- **To rotate:** regenerate `dev-hyperxen.pfx` with openssl, upload via `az webapp config ssl upload`, rebind with `az webapp config ssl bind`
-- **Password:** stored securely (do not commit to repo)
-
-### Why self-signed instead of Azure managed cert
-Azure managed cert (Let's Encrypt via App Service) failed repeatedly due to:
-1. Excessive CLI polling created too many pending operations on the subscription
-2. Each failed attempt created a 2-hour lock that blocked the next attempt
-3. Azure throttled the subscription with 429 Too Many Requests after repeated retries
-
-Solution: Upload a self-signed PFX cert directly — bypasses Azure's provisioning entirely.
-For future dev environments, skip managed cert and go straight to self-signed.
+- **Type:** App Service managed cert (SNI SSL) — same as prod
+- **Domain:** `dev.hyperxen.ai`
+- **Issued:** 2026-07-06 (issued cleanly on first attempt; no retries needed)
+- **Why it worked:** root `hyperxen.ai` CAA record (`0 issue "digicert.com"`) is inherited by all `*.hyperxen.ai` subdomains — DigiCert authorized automatically
+- **To rotate:** cert auto-renews via App Service managed cert; no manual action needed
+- **Old self-signed cert** (`dev.hyperxen.com`, thumbprint `66CB417763C7…`, expires 2027-05-02): no longer bound; retired with `dev.hyperxen.com`
 
 ## Replit Frontend Environment Variables
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
 | BACKEND_URL | https://tools.hyperxen.ai | Production backend (updated 2026-07-06) |
-| BACKEND_URL_DEV | https://dev.hyperxen.com | Dev backend |
+| BACKEND_URL_DEV | https://dev.hyperxen.ai | Dev backend (updated 2026-07-06) |
 
 Backend URL is read from `process.env.BACKEND_URL` in `server/routes.ts` line 8.
-To switch to dev: change `BACKEND_URL` value to `https://dev.hyperxen.com` in Replit Secrets.
+To switch to dev: change `BACKEND_URL` value to `https://dev.hyperxen.ai` in Replit Secrets.
 To switch back to prod: change `BACKEND_URL` value back to `https://tools.hyperxen.ai`
 
 ---
