@@ -29,9 +29,14 @@ RULES:
   v6, v7, constrained vCPU variants like E8-4ads_v7. Never reject a SKU.
 - Accept quantity (e.g. 5x), storage (e.g. 1TB), RI preference (1-year/3-year)
   if the user mentions them; otherwise use defaults (qty=1, no storage, no RI)
-- Once SKU, Region and OS are confirmed, respond ONLY with this exact JSON and nothing else
-  (do NOT ask any follow-up confirmation question):
+- Once SKU, Region and OS are confirmed, respond ONLY with a FETCH_PRICING marker and nothing else
+  (do NOT ask any follow-up confirmation question).
+  Single SKU:
   FETCH_PRICING:{"sku":"<normalized>","region":"<armRegionName>","os":"<Windows|Linux>","qty":<n>,"storage_gb":null,"wants_hb":false,"wants_ri":null}
+  Multiple SKUs — use the "skus" array form, one marker only:
+  FETCH_PRICING:{"skus":["Standard_D4als_v6","Standard_E4as_v6"],"region":"<armRegionName>","os":"<Windows|Linux>","qty":<n>,"storage_gb":null,"wants_hb":false,"wants_ri":null}
+- CRITICAL: If the user names multiple SKUs, price ALL of them. Emit ONE FETCH_PRICING marker with
+  a "skus" array containing all normalized SKU names. Do NOT ask which to price first.
 - Normalize SKU to Standard_ format: Standard_D4s_v5, Standard_E8-4ads_v7
 - CRITICAL: Constrained vCPU SKUs MUST keep the hyphen. The format is Standard_X{size}-{vcpu}{suffix}_vN
   - e42adsv5 → Standard_E4-2ads_v5 (NOT Standard_E42ads_v5)
@@ -223,6 +228,8 @@ def _extract_known_context(messages: list[dict]) -> dict:
 def _parse_fetch_marker(text: str) -> dict | None:
     """Extract and parse the FETCH_PRICING JSON marker.
     Uses balanced-brace counting so nested objects (e.g. disks array) parse correctly.
+    Normalises 'sku' (scalar) and 'skus' (list) to a uniform 'skus' list so callers
+    never need to branch on which form the LLM chose.
     """
     start = text.find("FETCH_PRICING:")
     if start == -1:
@@ -238,9 +245,19 @@ def _parse_fetch_marker(text: str) -> dict | None:
             depth -= 1
             if depth == 0:
                 try:
-                    return json.loads(text[brace_start : i + 1])
+                    params = json.loads(text[brace_start : i + 1])
                 except json.JSONDecodeError:
                     return None
+                # Normalise to a uniform list under "skus".
+                if "skus" in params:
+                    if not isinstance(params["skus"], list):
+                        params["skus"] = [params["skus"]]
+                elif "sku" in params:
+                    params["skus"] = [params.pop("sku")]
+                else:
+                    return None
+                params.pop("sku", None)
+                return params
     return None
 
 
@@ -528,28 +545,40 @@ async def run(messages: list[dict]) -> dict:
     logger.info("pricing_agent: parsed marker=%s", fetch_params)
 
     if fetch_params:
+        import asyncio
         from app.utils.sku_normalizer import normalize_sku_name
-        raw_sku = fetch_params.get('sku', '')
-        normalized = normalize_sku_name(raw_sku)
-        if normalized:
-            fetch_params['sku'] = normalized
 
-    if fetch_params:
-        sku        = fetch_params["sku"]
+        fetch_params["skus"] = [
+            normalize_sku_name(s) or s for s in fetch_params["skus"]
+        ]
+
+        sku_list   = fetch_params["skus"]
         region     = fetch_params["region"]
         disks_spec = fetch_params.get("disks") or []
-        logger.info("pricing_agent: FETCH_PRICING sku=%r region=%r os=%r disks=%d",
-                    sku, region, fetch_params.get("os"), len(disks_spec))
-        try:
-            items = await fetch_prices(region, sku)
-        except Exception as e:
-            return {"reply": f"Error reaching Azure Pricing API: {e}", "type": "pricing"}
+        logger.info("pricing_agent: FETCH_PRICING skus=%r region=%r os=%r disks=%d",
+                    sku_list, region, fetch_params.get("os"), len(disks_spec))
 
-        temp_storage_gb                  = await fetch_temp_storage_gb(sku, region)
-        resolved_disks, storage_data     = await resolve_disks(sku, region, disks_spec or None)
-        logger.info("pricing_agent: resolve_disks → %d disks, types=%s",
-                    len(resolved_disks), list(storage_data.get("types", {}).keys()))
-        pricing_text = _format_pricing(fetch_params, items, temp_storage_gb, resolved_disks, storage_data)
+        async def _price_one(sku: str) -> str:
+            per_params = {**fetch_params, "sku": sku}
+            try:
+                items, temp_gb, disk_result = await asyncio.gather(
+                    fetch_prices(region, sku),
+                    fetch_temp_storage_gb(sku, region),
+                    resolve_disks(sku, region, disks_spec or None),
+                )
+                resolved, storage = disk_result
+            except Exception as e:
+                logger.exception("pricing_agent: fetch failed for sku=%r", sku)
+                return (
+                    f"=== Azure VM Pricing Estimate ===\n"
+                    f"VM: {sku}\n"
+                    f"Error fetching pricing: {e}\n"
+                )
+            logger.info("pricing_agent: resolve_disks sku=%r -> %d disks", sku, len(resolved))
+            return _format_pricing(per_params, items, temp_gb, resolved, storage)
+
+        blocks = await asyncio.gather(*[_price_one(s) for s in sku_list])
+        pricing_text = ("\n\n" + "-" * 48 + "\n\n").join(blocks)
         logger.info("pricing_agent: storage in reply: %s", "=== Storage ===" in pricing_text)
         return {"reply": pricing_text, "type": "pricing"}
 
