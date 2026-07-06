@@ -24,7 +24,7 @@ if _ai_connection_string:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.routers import basket, chat, diagram, vm_prices
@@ -45,6 +45,11 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(basket.router, prefix="/api/basket")
 app.include_router(diagram.router, prefix="/api/diagram")
 app.include_router(vm_prices.router, prefix="/api/vm-prices")
+
+
+@app.get("/")
+def root_redirect():
+    return RedirectResponse(url="https://hyperxen.ai", status_code=301)
 
 
 @app.get("/pricing")
