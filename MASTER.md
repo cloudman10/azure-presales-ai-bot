@@ -56,7 +56,7 @@ Test: `curl https://tools.hyperxen.ai/api/welcome`
 **Live domain architecture:**
 - `hyperxen.ai` → Replit portal (primary public face; A record → `34.111.179.208`; old Azure A record `20.211.64.31` removed)
 - `tools.hyperxen.ai` → Azure App Service (`/pricing`, `/compare`, `/architect`); HTTPS (App Service managed cert); `GET /` → 301 to `https://hyperxen.ai`
-- `hyperxen.com` → Freed; still pointing to prod app but no longer the primary domain; future: separate corporate portal
+- `hyperxen.com` → Disconnected from Replit portal (2026-07-07). DNS still pointing at Replit at HostPapa — to be repointed when the separate corporate site is built. No longer serves the product portal. Reserved for the future standalone corporate/parent-company site (separate project).
 - `dev.hyperxen.ai` → Azure dev app (`hyperxen-pricing-bot-dev`); HTTPS (App Service managed cert); `dev.hyperxen.com` retired
 
 **Replit portal wired to new domain:**
@@ -281,7 +281,7 @@ All session state (conversation history, advisor picks, quote basket) lives in a
 | hyperxen.ai | ✅ Live — Replit portal; A record → `34.111.179.208` (Replit); replit-verify TXT. Old Azure A record (`20.211.64.31`) and Azure cert binding removed. |
 | www.hyperxen.ai | CNAME → `hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net` (may need updating to Replit later) |
 | tools.hyperxen.ai | ✅ Live — Azure prod app; CNAME → prod app; App Service managed cert (SNI SSL); HTTPS serving `/pricing`, `/compare`, `/architect` |
-| hyperxen.com | Freed — still pointing to prod app but no longer primary. Future: separate corporate portal. |
+| hyperxen.com | Disconnected from portal (2026-07-07) — removed from Replit app. DNS still pointing at Replit at HostPapa (to be repointed when corporate site is built). No longer serves product portal. Reserved for future corporate/parent-company site. |
 | dev.hyperxen.ai | ✅ Live — Azure dev app; CNAME → dev app; App Service managed cert (SNI SSL); `dev.hyperxen.com` retired |
 | dev.hyperxen.com | ✅ Retired — custom domain binding removed from dev app (2026-07-06). DNS records can be cleaned up from hyperxen.com zone. |
 
@@ -398,7 +398,7 @@ Replit Frontend (HyperXen.ai)
         │                          │
         ▼                          ▼
 Azure App Service (dev)     Azure App Service (prod)
-  https://dev.hyperxen.com    https://hyperxen-pricing-bot-db5hmngq3woxa.azurewebsites.net
+  https://dev.hyperxen.ai     https://tools.hyperxen.ai
   Python 3.11 · FastAPI        Python 3.11 · FastAPI
   B1 Linux                     B1 Linux
         │                          │
@@ -683,8 +683,8 @@ az webapp config appsettings set --resource-group rg-hyperxen-app-dev --name hyp
 
 | Branch | Deploys To | URL |
 |--------|-----------|-----|
-| dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.com |
-| main | hyperxen-pricing-bot-db5hmngq3woxa (production) | https://hyperxen.com |
+| dev | hyperxen-pricing-bot-dev | https://dev.hyperxen.ai |
+| main | hyperxen-pricing-bot-db5hmngq3woxa (production) | https://tools.hyperxen.ai |
 
 Workflow file: `.github/workflows/deploy.yml`
 GitHub Secret: `AZURE_CREDENTIALS` (service principal: `hyperxen-github-actions`, clientId: `51c2f18d-444d-4af8-8129-8ec4b317fb0f`)
@@ -692,9 +692,9 @@ Secret expiry: ~May 2027 — rotate with: `az ad sp credential reset --id 51c2f1
 
 ### Developer Workflow
 1. Make changes locally on `dev` branch
-2. `git push origin dev` → auto deploys to https://dev.hyperxen.com
-3. Test at https://dev.hyperxen.com
-4. When happy → `git checkout main && git merge dev && git push origin main` → auto deploys to production
+2. `git push origin dev` → auto deploys to https://dev.hyperxen.ai
+3. Test at https://dev.hyperxen.ai
+4. When happy → cherry-pick structural commits to main (`git cherry-pick <sha>`), never straight-merge dev → main (MASTER.md diverges). Push main → auto deploys to production at https://tools.hyperxen.ai
 
 ---
 
