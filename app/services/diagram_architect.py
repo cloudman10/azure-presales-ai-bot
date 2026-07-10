@@ -7,6 +7,7 @@ asking ONE clarifying question per turn until it has enough to emit
 a rich High-Level Design (HLD) spec prefixed with ARCHITECTURE_JSON:.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -17,6 +18,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 ARCH_MARKER = "ARCHITECTURE_JSON:"
+DSL_MARKER  = "ARCHITECTURE_DSL:"
+
+_eraser_cache: dict[str, str] = {}
 
 # ── Allowed resource type vocabulary ─────────────────────────────────────────
 # Referenced in the system prompt and used for anti-hallucination guidance.
@@ -96,8 +100,10 @@ Emit ARCHITECTURE_JSON when you know:
   - Any critical compliance or security constraints
 
 === OUTPUT FORMAT ===
-When ready, output ONLY this line -- nothing before, nothing after:
+When ready, emit EXACTLY these two blocks in order -- nothing before, nothing after:
 ARCHITECTURE_JSON: <complete json on a single line>
+ARCHITECTURE_DSL:
+<eraser dsl here -- multiple lines, no code fence, no backticks>
 
 === JSON SCHEMA ===
 {{
@@ -168,13 +174,71 @@ Management zone always includes:
   - NEVER describe Azure features that do not exist
   - NEVER omit the ARCHITECTURE_JSON: prefix -- the line must start with it exactly
 
+=== ERASER DSL RULES ===
+After the ARCHITECTURE_JSON line, immediately emit the Eraser cloud-architecture DSL block:
+ARCHITECTURE_DSL:
+title <same title as JSON, ASCII only>
+direction right
+colorMode pastel
+styleMode shadow
+
+<groups, then connections listed at the end>
+
+Syntax rules:
+- Group (VNet, subnet, or zone boundary): Label {{ member1\n  member2 }}
+- Node inside a group: NodeLabel [icon: <icon-name>]
+  Allowed Azure icon names (use ONLY these exact strings):
+  azure-vm, azure-sql, azure-storage, azure-active-directory, azure-virtual-networks,
+  azure-network-security-groups, azure-app-service, azure-app-gateway, azure-load-balancers,
+  azure-firewall, azure-bastion, azure-vpn-gateway, azure-site-recovery, azure
+  On-premises / generic: server
+  If unsure of an icon, omit [icon: ...] entirely -- never invent or guess an icon name.
+- Connections (after all groups): A > B: "label" | A <> B | A - B
+  Labels that contain spaces MUST be in double quotes.
+- Node/group names with spaces do NOT need quotes.
+- Keep the DSL concise: one node per logical resource, one group per zone/VNet.
+- ASCII only. No code fences or backticks around the DSL.
+
 === EXAMPLE OUTPUT (migration scenario) ===
 ARCHITECTURE_JSON: {{"title":"ERP Migration - Australia East","subtitle":"Lift-and-Shift of 5 Hyper-V VMs to Azure Hub-Spoke Landing Zone","zones":[{{"id":"z_onprem","label":"On-Premises","type":"onprem","resources":[{{"id":"hv1","type":"HyperVHost","name":"Hyper-V Cluster","role":"Hosts 5 VMs"}},{{"id":"op_sql","type":"OnPremVM","name":"SQL Server VM","role":"ERP database"}},{{"id":"op_app","type":"OnPremVM","name":"App Server","role":"ERP application tier"}},{{"id":"op_web","type":"OnPremVM","name":"Web Server","role":"IIS frontend"}},{{"id":"op_dc","type":"OnPremVM","name":"Domain Controller","role":"Active Directory"}},{{"id":"op_file","type":"OnPremVM","name":"File Server","role":"SMB file shares"}}]}},{{"id":"z_hub","label":"Hub VNet - Australia East","type":"hub","resources":[{{"id":"vpngw","type":"VPNGateway","name":"VPN Gateway","role":"Site-to-site VPN to on-prem"}},{{"id":"fw","type":"AzureFirewall","name":"Azure Firewall","role":"N/S and E/W traffic inspection"}},{{"id":"bas","type":"BastionHost","name":"Azure Bastion","role":"Secure RDP/SSH - no public IPs"}},{{"id":"pdns","type":"PrivateDNSZone","name":"Private DNS Zone","role":"Private name resolution"}}]}},{{"id":"z_spoke","label":"Workload Spoke VNet","type":"spoke","resources":[{{"id":"az_sql","type":"VirtualMachine","name":"SQL Server VM","role":"Migrated ERP SQL Server"}},{{"id":"az_app","type":"VirtualMachine","name":"App Server VM","role":"Migrated ERP application tier"}},{{"id":"az_web","type":"VirtualMachine","name":"Web Server VM","role":"Migrated IIS frontend"}},{{"id":"az_dc","type":"VirtualMachine","name":"Domain Controller","role":"Migrated AD DS"}},{{"id":"az_file","type":"VirtualMachine","name":"File Server VM","role":"SMB shares - candidate for Azure Files"}},{{"id":"nsg1","type":"NetworkSecurityGroup","name":"Spoke NSG","role":"Subnet ingress/egress rules"}},{{"id":"rt1","type":"RouteTable","name":"UDR Route Table","role":"Force traffic via Azure Firewall"}}]}},{{"id":"z_shared","label":"Shared Services","type":"shared","resources":[{{"id":"eid","type":"EntraID","name":"Microsoft Entra ID","role":"Hybrid identity via Entra Connect AD sync"}},{{"id":"kv","type":"KeyVault","name":"Azure Key Vault","role":"Secrets, certs, disk encryption keys"}},{{"id":"dfc","type":"DefenderForCloud","name":"Defender for Cloud","role":"Security posture and threat protection"}},{{"id":"pol","type":"AzurePolicy","name":"Azure Policy","role":"Governance - tagging, regions, SKU controls"}}]}},{{"id":"z_mgmt","label":"Management Zone","type":"mgmt","resources":[{{"id":"rsv","type":"RecoveryServicesVault","name":"Recovery Services Vault","role":"VM backup and site recovery"}},{{"id":"law","type":"LogAnalyticsWorkspace","name":"Log Analytics Workspace","role":"Central log aggregation"}},{{"id":"mon","type":"AzureMonitor","name":"Azure Monitor","role":"Metrics, alerts, dashboards"}},{{"id":"um","type":"UpdateManager","name":"Update Manager","role":"Centralised OS patching"}}]}}],"connections":[{{"from":"z_onprem","to":"vpngw","label":"Site-to-site VPN"}},{{"from":"vpngw","to":"z_hub","label":""}},{{"from":"fw","to":"z_spoke","label":"Inspected traffic"}},{{"from":"bas","to":"az_sql","label":"Secure RDP"}},{{"from":"az_web","to":"az_app","label":"App tier call"}},{{"from":"az_app","to":"az_sql","label":"SQL connection"}},{{"from":"az_dc","to":"az_app","label":"AD authentication"}},{{"from":"law","to":"z_spoke","label":"Log collection"}}],"shared_services":[{{"type":"EntraID","name":"Microsoft Entra ID","purpose":"Hybrid identity with on-prem AD sync via Entra Connect"}},{{"type":"KeyVault","name":"Azure Key Vault","purpose":"Secrets, certificates, and disk encryption keys for all workload VMs"}},{{"type":"DefenderForCloud","name":"Defender for Cloud","purpose":"Security posture management and threat protection across all resources"}},{{"type":"AzurePolicy","name":"Azure Policy","purpose":"Governance: enforce tagging standards, allowed regions, and approved VM SKUs"}}],"migration_approach":[{{"step":"1 - Assess","description":"Deploy Azure Migrate appliance on-prem. Discover and assess all 5 VMs for Azure readiness, right-sizing, and cost estimation."}},{{"step":"2 - Prepare Landing Zone","description":"Deploy hub-spoke VNet topology, VPN Gateway, Azure Firewall, Bastion, NSGs, and route tables in Australia East."}},{{"step":"3 - Identity Sync","description":"Deploy Entra Connect to sync on-prem AD to Microsoft Entra ID. Configure hybrid identity before migrating any workloads."}},{{"step":"4 - Replicate","description":"Use Azure Migrate to continuously replicate VM disks to Azure. Start with Domain Controller and SQL Server."}},{{"step":"5 - Test Migration","description":"Perform test migration of each VM into an isolated test VNet. Validate application connectivity, SQL access, and ERP functionality."}},{{"step":"6 - Cutover","description":"Schedule a maintenance window. Perform final delta replication and cutover. Update DNS. Decommission on-prem VMs after validation period."}},{{"step":"7 - Optimise","description":"Right-size VMs based on actual Azure usage metrics. Review Reserved Instance opportunities. Enable auto-shutdown for non-production."}}],"design_principles":["Hub-spoke topology enforces network segmentation and centralises security controls in the hub","All VM access via Azure Bastion - no public IP addresses on any workload VM","Azure Firewall as the single egress point with FQDN filtering and threat intelligence","Hybrid identity maintained via Entra Connect during and after migration","Immutable backups via Recovery Services Vault with soft-delete enabled","Infrastructure-as-Code (Bicep) for all landing zone components for repeatability"],"future_options":["Modernise SQL Server to Azure SQL Managed Instance for automated patching and built-in HA/DR","Replace IIS web tier with Azure App Service or containerise with Container Apps","Migrate SMB file shares to Azure Files with AD integration","Adopt ExpressRoute for higher bandwidth and lower latency than VPN Gateway","Enable Defender for Servers Plan 2 for advanced threat protection, just-in-time VM access, and file integrity monitoring"]}}
+ARCHITECTURE_DSL:
+title ERP Migration - Australia East
+direction right
+colorMode pastel
+styleMode shadow
+
+On-Premises {{
+  Hyper-V Cluster [icon: server]
+  Domain Controller [icon: server]
+}}
+
+Hub VNet - Australia East {{
+  VPN Gateway [icon: azure-vpn-gateway]
+  Azure Firewall [icon: azure-firewall]
+  Azure Bastion [icon: azure-bastion]
+}}
+
+Workload Spoke VNet {{
+  SQL Server VM [icon: azure-vm]
+  App Server VM [icon: azure-vm]
+  Web Server VM [icon: azure-vm]
+}}
+
+Shared Services {{
+  Entra ID [icon: azure-active-directory]
+  Key Vault [icon: azure]
+}}
+
+Hyper-V Cluster > VPN Gateway: "Site-to-Site VPN"
+VPN Gateway > Azure Firewall
+Azure Firewall > Workload Spoke VNet: "Inspected traffic"
+Azure Bastion > SQL Server VM: "Secure RDP"
+Web Server VM > App Server VM
+App Server VM > SQL Server VM
 """
 
 _JSON_RE = re.compile(
     rf"{re.escape(ARCH_MARKER)}\s*(\{{.*\}})",
-    re.DOTALL,
 )
 
 _AP   = chr(39)                      # ASCII apostrophe  U+0027
@@ -203,6 +267,54 @@ def _sanitize(obj):
     return obj
 
 
+def _extract_dsl(text: str) -> str | None:
+    idx = text.find(DSL_MARKER)
+    if idx == -1:
+        return None
+    return text[idx + len(DSL_MARKER):].strip()
+
+
+async def render_with_eraser(dsl: str) -> str | None:
+    api_key = os.environ.get("ERASER_API_KEY", "")
+    if not api_key:
+        return None
+    dsl_hash = hashlib.sha256(dsl.encode()).hexdigest()
+    if dsl_hash in _eraser_cache:
+        logger.info("eraser: cache hit hash=%s", dsl_hash[:12])
+        return _eraser_cache[dsl_hash]
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://app.eraser.io/api/render/elements",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "elements": [
+                        {
+                            "type": "diagram",
+                            "diagramType": "cloud-architecture-diagram",
+                            "code": dsl,
+                        }
+                    ],
+                    "theme": "dark",
+                    "background": True,
+                    "imageQuality": 3,
+                },
+            )
+        if resp.status_code == 200:
+            image_url = resp.json().get("imageUrl")
+            if image_url:
+                _eraser_cache[dsl_hash] = image_url
+                logger.info("eraser: rendered ok hash=%s url=%s", dsl_hash[:12], image_url[:60])
+                return image_url
+        logger.warning("eraser: non-200 status=%s body=%s", resp.status_code, resp.text[:200])
+    except Exception as exc:
+        logger.warning("eraser: render failed: %s", exc)
+    return None
+
+
 async def chat(history: list[dict], message: str) -> dict:
     """
     Single turn of the architecture discovery conversation.
@@ -221,7 +333,11 @@ async def chat(history: list[dict], message: str) -> dict:
         try:
             arch_json = json.loads(match.group(1))
             arch_json = _sanitize(arch_json)
-            return {"type": "architecture", "json": arch_json}
+            result: dict = {"type": "architecture", "json": arch_json}
+            dsl = _extract_dsl(raw)
+            if dsl:
+                result["dsl"] = dsl
+            return result
         except json.JSONDecodeError as exc:
             logger.error("diagram_architect: invalid JSON: %s | raw=%s", exc, raw[:500])
 

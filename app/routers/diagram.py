@@ -109,6 +109,15 @@ async def diagram_chat(body: DiagramChatRequest):
         )
 
     if result.get("type") == "architecture":
+        # ── Eraser render path ────────────────────────────────────────────────
+        dsl = result.pop("dsl", None)
+        if dsl:
+            sessions[f"{body.session_id}_eraser_dsl"] = dsl
+            eraser_url = await diagram_architect.render_with_eraser(dsl)
+            if eraser_url:
+                result["eraser_image_url"] = eraser_url
+
+        # ── Custom SVG renderer (free default / fallback) ─────────────────────
         try:
             from app.services.diagram_renderer_svg import render_architecture_svg
             svg_bytes = await asyncio.to_thread(render_architecture_svg, result["json"])
