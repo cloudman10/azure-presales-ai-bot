@@ -362,6 +362,9 @@ ANTHROPIC_API_KEY=<key>
 - `AZURE_CLIENT_ID` — optional; only needed for SP path
 - `AZURE_CLIENT_SECRET` — optional; only needed for SP path — **⚠ EXPIRY RISK**
 
+**Eraser API (`diagram_architect.py` — dev only):**
+- `ERASER_API_KEY` — Bearer token for `app.eraser.io/api/render/elements`. Set on dev app only. **⚠ ROTATE before prod** — current token was exposed in plaintext; revoke + regenerate in Eraser dashboard.
+
 **Observability:**
 - `APPLICATIONINSIGHTS_CONNECTION_STRING` — Azure Monitor SDK (`configure_azure_monitor()` in `main.py`)
 
@@ -378,6 +381,7 @@ ANTHROPIC_API_KEY=<key>
 | Dev SSL cert | App Service TLS binding | **LOW** — self-signed, expires 2027-05-02. Only affects `dev.hyperxen.com`. | Regenerate PFX with openssl, re-upload and rebind |
 | `AZURE_OPENAI_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Azure AI Foundry portal → Keys |
 | `AZURE_SEARCH_API_KEY` | App Service app settings | **LOW** — no automatic expiry; rotate if compromised | Azure AI Search portal → Keys |
+| `ERASER_API_KEY` | App Service app settings (dev only) | **CRITICAL — ROTATE NOW** — current token was exposed in plaintext during dev session; treat as compromised | Eraser dashboard → API Keys → revoke current → regenerate; set new value on dev; set on prod when promoting Eraser |
 
 ---
 
@@ -578,6 +582,7 @@ azure-presales-ai-bot/
 - Advisor deployability gate — `fetch_deployable_skus()` cross-checks ARM Compute SKUs; candidates absent from ARM filtered before scoring; ARM data cached 1 hour and shared with `fetch_temp_storage_gb` / `vm_supports_premium`; ARM + Prices API fetched concurrently via `asyncio.gather`
 - AI Search index refreshed (2026-06-20) — 1,185 SKUs incl. Easv6 variants; indexer switched to `DefaultAzureCredential` (CLI locally, Managed Identity in prod)
 - VM Price Compare (`/compare`) — filterable/sortable table of all deployable australiaeast SKUs; region, OS, vCPU range, RAM range filters; all pricing tiers (PAYG, Spot, SP 1/3yr, RI 1/3yr); default OS=Windows; result count + price freshness; purple "Arm64" badge on Linux Arm64 SKUs
+- Solution Architecture Designer (`/architect`) — Eraser API integration (dev only, gated on `ERASER_API_KEY`): GPT-4o generates Eraser cloud-architecture DSL (separate focused LLM call); `sanitize_eraser_dsl()` drops connections targeting group names (deterministic guard); `render_with_eraser()` calls `app.eraser.io/api/render/elements`; SHA-256 DSL cache avoids duplicate paid renders; SVG renderer retained as free default/fallback when key unset or Eraser fails; Eraser image displayed in portal UI; download saves PNG via blob fetch; Eraser never visible to user
 - Compare deployability gate — `index_vm_prices.py` applies ARM LOCATION-restriction filter (141 location-restricted SKUs excluded) plus Arm64/OS compatibility gate (Arm64 SKUs are Linux-only in the grid; Windows images are x86-64; 9 phantom Windows Arm64 docs removed); index: 1,975 docs (1,036 Linux + 939 Windows); `architecture` field (Arm64/x64) on every doc; portal-accurate results
 - Per-VM pricing term selection — radio in each term's own header (PAYG hero, 1/3-Yr SP, 1/3-Yr RI, PAYG+HB, 1/3-Yr RI+HB for Windows); PAYG default; radio click selects without expanding breakdown; SP/RI show total monthly in header; +HB rows collapsible with Compute + License $0 (AHB) + Total; basket and export show term label per line; +HB footnote in export; storage undiscounted regardless of term
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
@@ -862,9 +867,15 @@ A pre-sales conversation tool: the user describes a customer scenario (e.g., "5 
 User message → POST /api/diagram/chat
   → diagram_architect.py  (multi-turn GPT-4o discovery)
   → emits ARCHITECTURE_JSON: {...}
-  → diagram_renderer_svg.py  (980px landscape SVG)
-  → svg_b64 in JSON response
-  → architect.html  (inline <img src="data:image/svg+xml;base64,...">)
+  → generate_eraser_dsl()  ← separate GPT-4o call; JSON-in → Eraser DSL-out
+  → sanitize_eraser_dsl()  ← deterministic guard: drop connections targeting group names
+  → render_with_eraser()   ← POST app.eraser.io/api/render/elements  [if ERASER_API_KEY set]
+  │   → eraser_image_url in response
+  └── diagram_renderer_svg.py  (980px landscape SVG — always runs as free default/fallback)
+      → svg_b64 in response
+
+  architect.html: if eraser_image_url non-empty → img.src = eraser_image_url
+                  else                           → img.src = data:image/svg+xml;base64,...
 ```
 
 ### Endpoints
@@ -952,6 +963,49 @@ LLM-generated text can contain C0/C1 control characters (`\x00-\x08`, `\x0b`, `\
 3. Validates the final SVG with `xml.etree.ElementTree.fromstring()` — raises immediately on any violation
 
 Any future LLM text injection into SVG **must** go through `_xt()` (the renderer's text-escape + prohibited-char strip function).
+
+### Eraser API Integration (2026-07-11) — DEV ONLY, prod blocked
+
+Professional cloud-architecture diagrams via the Eraser API, invisibly layered on top of the existing SVG renderer. Gated on `ERASER_API_KEY` — set on dev only, not prod.
+
+**Pipeline (code path):**
+1. `generate_eraser_dsl(arch_json)` — dedicated GPT-4o LLM call (separate from the discovery turn); JSON-in → Eraser cloud-architecture DSL-out. Max 2000 tokens, focused system prompt with verified icon list.
+2. `sanitize_eraser_dsl(dsl)` — deterministic Python guard before Eraser render. Pass 1: parse DSL to collect leaf node names (`[icon: ...]`) and group names (`{`). Pass 2: drop any connection line whose LHS or RHS is a group name or unknown node. Logs each dropped line. Prompt rules alone were not reliable; this guard is deterministic.
+3. `render_with_eraser(dsl)` — `POST https://app.eraser.io/api/render/elements`; body: `{"elements":[{"type":"diagram","diagramType":"cloud-architecture-diagram","code":<dsl>}],"theme":"dark","background":true,"imageQuality":3}`. Returns `imageUrl`. SHA-256 DSL hash cached in-process to avoid duplicate paid renders.
+4. Frontend (`architect.html`): if `eraser_image_url` non-empty → `img.src = eraserImageUrl` (plain HTTPS URL). Download fetches the URL as a blob → saves `<slug>.png`. Falls back to SVG data URI if Eraser key unset or call fails. Eraser branding and `createEraserFileUrl` never shown to user.
+
+**Icon rules (hard-won):**
+Most Eraser Azure icon names are PLURAL: `azure-firewalls`, `azure-bastions`, `azure-key-vaults`, `azure-route-tables`. Exceptions: `azure-virtual-machine` (singular), `azure-virtual-network-gateways` (VPN Gateway). Invalid names render as blank boxes — the DSL system prompt carries the full verified list.
+
+**Blank-box root cause (fixed):** Connections whose endpoints are group/zone names (not leaf nodes) render as blank boxes. Example: `VPN Gateway > Hub VNet - Australia East` — "Hub VNet - Australia East" is a group container, not a node. Fixed by: (a) prompt rule added to system prompt; (b) `sanitize_eraser_dsl()` drops these lines deterministically before the API call.
+
+**Key lessons from build:**
+- Two-call approach is essential: asking GPT-4o to emit both ARCHITECTURE_JSON and ARCHITECTURE_DSL in one response was intermittently unreliable. Separate focused call, JSON-in → DSL-out, is robust.
+- Prompt rules alone do not reliably prevent group-connection bugs. A deterministic backend guard was needed and is now in place.
+- Always wait for GHA green + full app restart before testing after a deploy. Testing stale code (before container restart completes) consumed multiple debug cycles this session.
+- In-memory sessions + single worker: POST hit by `generate_eraser_dsl` stores DSL in `sessions["{sid}_eraser_dsl"]`; a GET on the temp `/dsl/{session_id}` endpoint can hit a different worker in theory, but startup.sh uses `-w 1` so this is safe for dev.
+
+**Cost model (Eraser API):**
+- Starter (usage-based): ~$0.80/render, billed per-100-call block ($80). Each new architecture = 1 render; re-generates on DSL cache miss (new scenario or modified arch).
+- Enterprise: unlimited API renders — quote required before production scale.
+- DSL SHA-256 cache in-process means identical architectures (same session, repeated renders) cost $0 after first call.
+
+**PRODUCTION BLOCKERS — must clear before promoting Eraser to prod:**
+
+| # | Blocker | Action |
+|---|---------|--------|
+| 1 | **ROTATE ERASER_API_KEY** — dev token was exposed in plaintext during dev session; it is compromised. | Revoke in Eraser dashboard → regenerate → set new token on dev AND prod when promoting. |
+| 2 | **Eraser Enterprise pricing** — Starter usage-based is $0.80/render; uncontrolled usage could run up a significant bill. | Get Enterprise quote (unlimited API) OR add render budget/caps before exposing to multi-user prod. |
+| 3 | **Set ERASER_API_KEY on prod app** — key not set on prod today; Eraser path silently skipped. | `az webapp config appsettings set ... --settings ERASER_API_KEY=<new-key>` after rotation. |
+
+**Parked follow-up (not blocking):**
+- Layout polish: occasional loose nodes / box scattering in complex diagrams.
+- True side-by-side multi-diagram comparison (e.g., migration options A vs B).
+
+**Temp debug commits to clean up before prod promotion:**
+- `result["eraser_dsl"] = dsl` in `diagram.py` — returns raw DSL in API response (remove)
+- `GET /api/diagram/dsl/{session_id}` endpoint (remove)
+- `logger.info("ERASER_DSL_CONTENT_START...")` full DSL log line in `diagram_architect.py` (remove)
 
 ### Known Limitations
 
@@ -1044,6 +1098,7 @@ Any future LLM text injection into SVG **must** go through `_xt()` (the renderer
 | `AZURE_SEARCH_ENDPOINT` | `https://hyperxen-search.search.windows.net` |
 | `AZURE_SEARCH_API_KEY` | Azure AI Search admin key |
 | `ANTHROPIC_API_KEY` | Anthropic API key — **not set in App Service** (Anthropic path dormant). Add when switching `LLM_PROVIDER=anthropic`. |
+| `ERASER_API_KEY` | Eraser API bearer token — set on dev only. **⚠ ROTATE NOW** (current token compromised). Set on prod when promoting Eraser. |
 | `ENVIRONMENT` | `dev` / `prod` |
 | `PORT` | `8000` |
 
