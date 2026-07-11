@@ -113,6 +113,7 @@ async def diagram_chat(body: DiagramChatRequest):
         dsl = result.pop("dsl", None)
         if dsl:
             sessions[f"{body.session_id}_eraser_dsl"] = dsl
+            result["_dsl_debug"] = dsl[:500]   # TEMP: remove after DSL verification
             eraser_url = await diagram_architect.render_with_eraser(dsl)
             if eraser_url:
                 result["eraser_image_url"] = eraser_url
