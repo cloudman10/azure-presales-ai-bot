@@ -289,6 +289,7 @@ Rules:
 - VPN Gateway = azure-virtual-network-gateways.
 - On-prem servers / Hyper-V hosts = server (no Azure-specific icon exists).
 - If unsure, use a generic icon, never an invented azure-* name.
+- CRITICAL: Connection endpoints must ALWAYS be leaf node names. NEVER use a group/zone label as a connection endpoint -- connecting to a group name renders as a blank box. If you need to show a flow into a zone, pick the most logical entry-point node inside it. Examples: "to Hub VNet" -> target VPN Gateway or Azure Firewall (whichever is the entry point); "to Production Spoke VNet" -> target the NSG or the first VM; "from Hub VNet" -> source is Azure Firewall or VPN Gateway. Every name on the left and right of > or <> must match a node label defined inside a group, not a group label itself.
 
 Connection labels with spaces must be in double quotes.
 ASCII only.
