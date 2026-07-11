@@ -318,6 +318,7 @@ async def generate_eraser_dsl(arch_json: dict) -> str | None:
         resp.raise_for_status()
         dsl = resp.json()["choices"][0]["message"]["content"].strip()
         logger.info("eraser_dsl: generated len=%d", len(dsl))
+        logger.info("ERASER_DSL_CONTENT_START\n%s\nERASER_DSL_CONTENT_END", dsl)
         return dsl
     except Exception as exc:
         logger.warning("eraser_dsl: generation failed: %s", exc)
