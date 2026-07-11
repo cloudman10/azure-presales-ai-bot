@@ -101,7 +101,7 @@ async def diagram_chat(body: DiagramChatRequest):
     history: list[dict] = sessions[hist_key]
 
     try:
-        result = await diagram_architect.chat(history, body.message)
+        result = await diagram_architect.architect_chat(history, body.message)
     except Exception as exc:
         logger.exception("diagram_chat failed: session=%s", body.session_id)
         return JSONResponse(
