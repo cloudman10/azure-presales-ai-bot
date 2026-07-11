@@ -11,6 +11,7 @@ app/routers/diagram.py
 import asyncio
 import base64
 import logging
+import os
 import shutil
 from typing import Any
 
@@ -109,13 +110,14 @@ async def diagram_chat(body: DiagramChatRequest):
         )
 
     if result.get("type") == "architecture":
-        # ── Eraser render path ────────────────────────────────────────────────
-        dsl = result.pop("dsl", None)
-        if dsl:
-            sessions[f"{body.session_id}_eraser_dsl"] = dsl
-            eraser_url = await diagram_architect.render_with_eraser(dsl)
-            if eraser_url:
-                result["eraser_image_url"] = eraser_url
+        # ── Eraser render path (separate focused LLM call) ────────────────────
+        if os.environ.get("ERASER_API_KEY"):
+            dsl = await diagram_architect.generate_eraser_dsl(result["json"])
+            if dsl:
+                sessions[f"{body.session_id}_eraser_dsl"] = dsl
+                eraser_url = await diagram_architect.render_with_eraser(dsl)
+                if eraser_url:
+                    result["eraser_image_url"] = eraser_url
 
         # ── Custom SVG renderer (free default / fallback) ─────────────────────
         try:
@@ -136,11 +138,6 @@ async def diagram_chat(body: DiagramChatRequest):
 
     return result
 
-
-@router.get("/debug-dsl/{session_id}")
-async def debug_dsl(session_id: str):
-    """TEMP: return stored eraser DSL for a session. Remove after verification."""
-    return {"dsl": sessions.get(f"{session_id}_eraser_dsl")}
 
 
 @router.get("/svg-test")
