@@ -272,12 +272,24 @@ Syntax:
   Source > Target: "label"
   Source <> Target
 
-Allowed Azure icon names -- use ONLY these exact strings:
-  azure-vm, azure-sql, azure-storage, azure-active-directory, azure-virtual-networks,
-  azure-network-security-groups, azure-app-service, azure-app-gateway, azure-load-balancers,
-  azure-firewall, azure-bastion, azure-vpn-gateway, azure-site-recovery, azure
-On-premises / generic: server
-If unsure of an icon, omit [icon: ...] entirely -- never invent a name.
+When emitting ARCHITECTURE_DSL, use ONLY these exact Eraser icon names. Do NOT invent names -- an invalid name renders as a blank box. If a component is not in this list, use a generic icon (server, database, cloud, globe, lock, key, shield) instead of guessing.
+
+Compute: azure-virtual-machine, azure-vm-scale-sets, azure-kubernetes-services, azure-function-apps, azure-app-services, azure-container-instances
+Networking: azure-virtual-networks, azure-subnet, azure-network-security-groups, azure-route-tables, azure-firewalls, azure-application-gateways, azure-load-balancers, azure-virtual-network-gateways, azure-bastions, azure-front-doors, azure-traffic-manager-profiles, azure-dns-zones, azure-dns-private-resolver, azure-private-link, azure-private-endpoints, azure-nat, azure-public-ip-addresses, azure-expressroute-circuits, azure-virtual-wans, azure-network-watcher
+Identity: azure-active-directory, microsoft-entra, azure-managed-identities, azure-ad-b2c, azure-ad-privilege-identity-management
+Data: azure-sql-database, azure-sql-server, azure-sql-managed-instance, azure-cosmos-db, azure-database-postgresql-server, azure-database-mysql-server, azure-cache-redis, azure-data-factory
+Storage: azure-storage-accounts, azure-storage-container, azure-netapp-files, azure-data-lake-storage-gen1
+Security/Mgmt: azure-key-vaults, azure-microsoft-defender-for-cloud, azure-security-center, azure-sentinel, azure-policy, azure-monitor, azure-log-analytics-workspaces, azure-application-insights, azure-recovery-services-vaults, azure-update-management-center, azure-automation-accounts, azure-backup-vault, azure-advisor, azure-blueprints, azure-arc, azure-migrate, azure-cost-management
+Web/Integration: azure-api-management-services, azure-app-configuration, azure-service-bus, azure-event-grid-topics, azure-event-hubs, azure-logic-apps
+On-prem/generic: server, database, cloud, globe, lock, key, shield, users, monitor
+
+Rules:
+- Azure VM = azure-virtual-machine (NOT azure-vm).
+- Firewall = azure-firewalls, Bastion = azure-bastions, Key Vault = azure-key-vaults, Route table = azure-route-tables (these are PLURAL).
+- VPN Gateway = azure-virtual-network-gateways.
+- On-prem servers / Hyper-V hosts = server (no Azure-specific icon exists).
+- If unsure, use a generic icon, never an invented azure-* name.
+
 Connection labels with spaces must be in double quotes.
 ASCII only.
 """
