@@ -110,11 +110,11 @@ async def diagram_chat(body: DiagramChatRequest):
         )
 
     if result.get("type") == "architecture":
-        # ── Eraser render path (separate focused LLM call) ────────────────────
-        if os.environ.get("ERASER_API_KEY"):
-            dsl = await diagram_architect.generate_eraser_dsl(result["json"])
-            if dsl:
-                sessions[f"{body.session_id}_eraser_dsl"] = dsl
+        # ── Eraser DSL generation (always runs; render only if key is set) ────
+        dsl = await diagram_architect.generate_eraser_dsl(result["json"])
+        if dsl:
+            sessions[f"{body.session_id}_eraser_dsl"] = dsl
+            if os.environ.get("ERASER_API_KEY"):
                 eraser_url = await diagram_architect.render_with_eraser(dsl)
                 if eraser_url:
                     result["eraser_image_url"] = eraser_url
@@ -138,6 +138,11 @@ async def diagram_chat(body: DiagramChatRequest):
 
     return result
 
+
+@router.get("/dsl/{session_id}")
+async def get_dsl(session_id: str):
+    """TEMP: return stored Eraser DSL for a session."""
+    return {"session_id": session_id, "dsl": sessions.get(f"{session_id}_eraser_dsl")}
 
 
 @router.get("/svg-test")
