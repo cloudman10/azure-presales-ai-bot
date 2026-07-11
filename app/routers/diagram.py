@@ -137,6 +137,12 @@ async def diagram_chat(body: DiagramChatRequest):
     return result
 
 
+@router.get("/debug-dsl/{session_id}")
+async def debug_dsl(session_id: str):
+    """TEMP: return stored eraser DSL for a session. Remove after verification."""
+    return {"dsl": sessions.get(f"{session_id}_eraser_dsl")}
+
+
 @router.get("/svg-test")
 async def diagram_svg_test():
     """Smoke-test the SVG renderer with a minimal zones payload. Returns JSON."""
