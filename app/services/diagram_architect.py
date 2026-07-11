@@ -173,6 +173,7 @@ Management zone always includes:
   - NEVER reference an id in connections that does not exist in zones[].id or zones[].resources[].id
   - NEVER describe Azure features that do not exist
   - NEVER omit the ARCHITECTURE_JSON: prefix -- the line must start with it exactly
+  - NEVER emit ARCHITECTURE_JSON without IMMEDIATELY following it with ARCHITECTURE_DSL on the very next line
 
 === ERASER DSL RULES ===
 After the ARCHITECTURE_JSON line, immediately emit the Eraser cloud-architecture DSL block:
@@ -359,7 +360,7 @@ async def _call_foundry(history: list[dict]) -> str:
         resp = await client.post(
             url,
             headers={"api-key": api_key, "Content-Type": "application/json"},
-            json={"model": deployment, "messages": messages, "max_tokens": 4096},
+            json={"model": deployment, "messages": messages, "max_tokens": 8192},
         )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
