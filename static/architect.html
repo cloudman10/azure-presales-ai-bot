@@ -165,17 +165,20 @@ function addTyping(){
 }
 
 // ── diagram card builder ──────────────────────────────────────────────────────
-function buildDiagramCard(arch, pngBase64, svgB64){
+function buildDiagramCard(arch, pngBase64, svgB64, eraserImageUrl){
   const card = document.createElement('div');
   card.className = 'arch-card';
 
   // Title is rendered inside the SVG header bar — no separate card header needed.
 
-  // Image — prefer SVG (vector, landscape) over PNG
-  const isVector = !!svgB64;
-  const imgSrc = svgB64
-    ? 'data:image/svg+xml;base64,' + svgB64
-    : 'data:image/png;base64,' + (pngBase64 || '');
+  // Image — prefer Eraser URL, then SVG, then PNG
+  const useEraser = !!(eraserImageUrl && eraserImageUrl.length > 0);
+  const isVector = !useEraser && !!svgB64;
+  const imgSrc = useEraser
+    ? eraserImageUrl
+    : svgB64
+      ? 'data:image/svg+xml;base64,' + svgB64
+      : 'data:image/png;base64,' + (pngBase64 || '');
   const imgWrap = document.createElement('div');
   imgWrap.className = 'arch-img-wrap';
   const img = document.createElement('img');
@@ -190,13 +193,28 @@ function buildDiagramCard(arch, pngBase64, svgB64){
   foot.className = 'arch-foot';
   const dlBtn = document.createElement('button');
   dlBtn.className = 'dl-btn';
-  dlBtn.innerHTML = isVector ? '&#8659; Download SVG' : '&#8659; Download PNG';
-  dlBtn.addEventListener('click', () => {
-    const a = document.createElement('a');
-    a.href = imgSrc;
-    const slug = (arch.title||'architecture').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-    a.download = slug + (isVector ? '.svg' : '.png');
-    a.click();
+  dlBtn.innerHTML = (!useEraser && isVector) ? '&#8659; Download SVG' : '&#8659; Download PNG';
+  const slug = (arch.title||'architecture').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  dlBtn.addEventListener('click', async () => {
+    if (useEraser) {
+      try {
+        const resp = await fetch(eraserImageUrl);
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = slug + '.png';
+        a.click();
+        URL.revokeObjectURL(blobUrl);
+      } catch(_) {
+        window.open(eraserImageUrl, '_blank');
+      }
+    } else {
+      const a = document.createElement('a');
+      a.href = imgSrc;
+      a.download = slug + (isVector ? '.svg' : '.png');
+      a.click();
+    }
   });
   foot.appendChild(dlBtn);
   card.appendChild(foot);
@@ -226,8 +244,8 @@ async function send(){
     document.getElementById('typing')?.remove();
 
     if(d.type === 'architecture'){
-      if(d.svg_b64 || d.png_base64){
-        addMsg('bot', buildDiagramCard(d.json, d.png_base64, d.svg_b64));
+      if(d.svg_b64 || d.png_base64 || d.eraser_image_url){
+        addMsg('bot', buildDiagramCard(d.json, d.png_base64, d.svg_b64, d.eraser_image_url));
       } else {
         // Render failed — still show the JSON as a fallback
         addMsg('bot', 'Architecture complete (diagram render unavailable):\n\n' + JSON.stringify(d.json, null, 2));
