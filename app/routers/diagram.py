@@ -116,6 +116,7 @@ async def diagram_chat(body: DiagramChatRequest):
             sessions[f"{body.session_id}_eraser_dsl"] = dsl
             result["eraser_dsl"] = dsl  # TEMP: return DSL in response for icon verification
             if os.environ.get("ERASER_API_KEY"):
+                dsl = diagram_architect.sanitize_eraser_dsl(dsl)
                 eraser_url = await diagram_architect.render_with_eraser(dsl)
                 if eraser_url:
                     result["eraser_image_url"] = eraser_url

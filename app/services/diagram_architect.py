@@ -212,6 +212,83 @@ def _sanitize(obj):
     return obj
 
 
+def sanitize_eraser_dsl(dsl: str) -> str:
+    """
+    Drop connection lines whose endpoints reference a group name rather than a
+    leaf node.  Groups render as blank boxes when used as connection targets.
+
+    Pass 1: collect node names (lines containing [icon:]) and group names
+            (lines ending with '{', after stripping leading whitespace).
+    Pass 2: for every connection line (contains > or <>) validate both
+            endpoints against the node set; drop the line if either endpoint
+            is unknown or is a group name.
+    """
+    import re
+
+    node_names: set[str] = set()
+    group_names: set[str] = set()
+
+    for raw in dsl.splitlines():
+        line = raw.strip()
+        # Leaf node: "  Node Label [icon: ...]"
+        if "[icon:" in line:
+            name = re.sub(r"\s*\[icon:.*", "", line).strip()
+            if name:
+                node_names.add(name)
+        # Group header: "Group Label {" (possibly preceded by indentation)
+        elif line.endswith("{"):
+            name = line[:-1].strip()
+            if name:
+                group_names.add(name)
+
+    def _extract_endpoints(line: str):
+        # Strip optional ": label" / ': label' suffix then split on <> or >
+        conn = re.sub(r':\s*["\'].*?["\']$', "", line).strip()
+        conn = re.sub(r":\s*\S+$", "", conn).strip()
+        if "<>" in conn:
+            parts = conn.split("<>", 1)
+        elif ">" in conn:
+            parts = conn.split(">", 1)
+        else:
+            return None, None
+        return parts[0].strip(), parts[1].strip()
+
+    out_lines: list[str] = []
+    dropped = 0
+    for raw in dsl.splitlines():
+        stripped = raw.strip()
+        is_conn = (
+            ("<>" in stripped or ">" in stripped)
+            and "[icon:" not in stripped
+            and not stripped.endswith("{")
+            and not stripped.startswith("title")
+            and not stripped.startswith("direction")
+            and not stripped.startswith("colorMode")
+            and not stripped.startswith("styleMode")
+        )
+        if is_conn:
+            lhs, rhs = _extract_endpoints(stripped)
+            if lhs is None:
+                out_lines.append(raw)
+                continue
+            bad_lhs = lhs in group_names or lhs not in node_names
+            bad_rhs = rhs in group_names or rhs not in node_names
+            if bad_lhs or bad_rhs:
+                dropped += 1
+                logger.info(
+                    "eraser_sanitize: dropped connection %r (lhs_bad=%s rhs_bad=%s)",
+                    stripped, bad_lhs, bad_rhs,
+                )
+                continue
+        out_lines.append(raw)
+
+    if dropped:
+        logger.warning("eraser_sanitize: dropped %d connection(s) with group/unknown endpoints", dropped)
+    else:
+        logger.info("eraser_sanitize: all connections valid, none dropped")
+    return "\n".join(out_lines)
+
+
 async def render_with_eraser(dsl: str) -> str | None:
     api_key = os.environ.get("ERASER_API_KEY", "")
     if not api_key:
