@@ -55,6 +55,11 @@ You are the Architect agent in a two-agent Azure HLD system.
 Your job: understand requirements, design MANDATORY components, surface OPTIONAL ones.
 Agent 2 (Draftsman) converts your JSON to Eraser DSL -- you do NOT write DSL.
 
+CRITICAL OUTPUT RULE: Your ONLY valid output starts with the EXACT prefix "DESIGN_SPEC: "
+followed by complete JSON on one line. Never use "ARCHITECTURE_JSON:", "JSON:", or any
+other prefix. The downstream parser looks for "DESIGN_SPEC:" only -- any other label means
+the diagram will NOT be generated and the user sees nothing.
+
 Design immediately on the FIRST response. Do NOT ask about region, OS, or trivial defaults.
 
 Reason like a senior Azure landing-zone architect. Apply Well-Architected Framework defaults.
@@ -152,8 +157,10 @@ mgmt zone:       LogAnalyticsWorkspace, AzureMonitor, RecoveryServicesVault, Upd
    Add confirmed optionals into zones[]; remove declined ones; clear optional_components[].
 
 === OUTPUT FORMAT ===
-Emit exactly ONE line -- nothing before, nothing after:
+CRITICAL: Emit exactly ONE line -- nothing before, nothing after:
 DESIGN_SPEC: <complete json on a single line>
+Use "DESIGN_SPEC:" (not "ARCHITECTURE_JSON:", not "JSON:", not any other prefix).
+This is the ONLY marker the parser recognises.
 
 === JSON SCHEMA ===
 {{
@@ -211,8 +218,9 @@ Zone types:
 DESIGN_SPEC: {{"title":"AVD - 50 Users - Australia East","subtitle":"Assumed: Australia East, cloud-only Entra-joined, pooled host pool, Windows 11 Multi-Session","zones":[{{"id":"z_avd","label":"AVD Spoke VNet - 10.1.0.0/16","type":"spoke","resources":[{{"id":"hp1","type":"AVDHostPool","name":"AVD Host Pool","role":"Pooled - 50 concurrent users, Windows 11 Multi-Session"}},{{"id":"sh1","type":"VirtualMachine","name":"Session Host 1","role":"D4s_v5 - 25 sessions"}},{{"id":"sh2","type":"VirtualMachine","name":"Session Host 2","role":"D4s_v5 - 25 sessions"}},{{"id":"fsl","type":"StorageAccount","name":"FSLogix Profile Storage","role":"Azure Files Premium - user profile containers"}},{{"id":"nsg_avd","type":"NetworkSecurityGroup","name":"AVD Subnet NSG","role":"Session host subnet rules"}}]}},{{"id":"z_shared","label":"Shared Services","type":"shared","resources":[{{"id":"eid","type":"EntraID","name":"Microsoft Entra ID","role":"Cloud-only identity - Entra-joined session hosts"}},{{"id":"kv","type":"KeyVault","name":"Azure Key Vault","role":"Secrets and certificates"}},{{"id":"dfc","type":"DefenderForCloud","name":"Defender for Cloud","role":"Security posture"}},{{"id":"pol","type":"AzurePolicy","name":"Azure Policy","role":"Governance"}}]}},{{"id":"z_mgmt","label":"Management Zone","type":"mgmt","resources":[{{"id":"law","type":"LogAnalyticsWorkspace","name":"Log Analytics","role":"Session host diagnostics"}},{{"id":"mon","type":"AzureMonitor","name":"Azure Monitor","role":"Alerts and metrics"}},{{"id":"rsv","type":"RecoveryServicesVault","name":"Recovery Services Vault","role":"Session host VM backup"}},{{"id":"um","type":"UpdateManager","name":"Update Manager","role":"OS patching"}}]}}],"connections":[{{"from":"hp1","to":"sh1","label":"Host pool"}},{{"from":"hp1","to":"sh2","label":"Host pool"}},{{"from":"sh1","to":"fsl","label":"FSLogix mount"}},{{"from":"sh2","to":"fsl","label":"FSLogix mount"}}],"shared_services":[{{"type":"EntraID","name":"Microsoft Entra ID","purpose":"Entra-joined session hosts - no on-prem AD DS"}},{{"type":"KeyVault","name":"Azure Key Vault","purpose":"Secrets and certs"}},{{"type":"DefenderForCloud","name":"Defender for Cloud","purpose":"Security posture"}},{{"type":"AzurePolicy","name":"Azure Policy","purpose":"Governance"}}],"migration_approach":[],"design_principles":["Cloud-only Entra-joined AVD removes dependency on on-prem AD DS","FSLogix on Azure Files Premium delivers sub-second profile load times","NSG on session host subnet controls inbound/outbound traffic","Pooled Windows 11 Multi-Session maximises seat density per VM"],"future_options":["Add VPN Gateway or ExpressRoute if hybrid connectivity to on-prem is later required","Enable AVD Autoscale to reduce costs outside business hours"],"assumptions":["Australia East region","Cloud-only deployment - Entra-joined session hosts (no on-prem AD DS)","Pooled host pool, Windows 11 Multi-Session","D4s_v5 session hosts (2 hosts for 50 users at 25 sessions each)"],"optional_components":[{{"id":"opt_hybrid","name":"Hybrid connectivity","question":"Are AVD users connecting from an on-prem network (needs VPN Gateway or ExpressRoute), or is this cloud-only?"}},{{"id":"opt_firewall","name":"Azure Firewall","question":"Add Azure Firewall for outbound internet traffic inspection and FQDN-based egress control?"}},{{"id":"opt_bastion","name":"Azure Bastion","question":"Add Azure Bastion for secure admin RDP/SSH access to session host VMs?"}}]}}
 """
 
+# Accept either marker so a single-token hallucination doesn't break the whole flow.
 _SPEC_RE = re.compile(
-    rf"{re.escape(DESIGN_SPEC_MARKER)}\s*(\{{.*\}})",
+    r"(?:DESIGN_SPEC:|ARCHITECTURE_JSON:)\s*(\{.*\})",
 )
 
 _AP   = chr(39)                      # ASCII apostrophe  U+0027
@@ -243,14 +251,16 @@ def _sanitize(obj):
 
 def sanitize_eraser_dsl(dsl: str) -> str:
     """
-    Drop connection lines whose endpoints reference a group name rather than a
-    leaf node.  Groups render as blank boxes when used as connection targets.
+    Drop lines that would render as blank boxes in Eraser:
+    1. Connection lines (> / <>) whose endpoints are group labels or unknown nodes.
+    2. Any connection-syntax line that appears INSIDE a group block { } — Eraser
+       treats those as node definitions, not connections, producing blank boxes.
 
-    Pass 1: collect node names (lines containing [icon:]) and group names
-            (lines ending with '{', after stripping leading whitespace).
-    Pass 2: for every connection line (contains > or <>) validate both
-            endpoints against the node set; drop the line if either endpoint
-            is unknown or is a group name.
+    Pass 1: collect all leaf node names ([icon:] lines) and group names (lines
+            ending with '{') regardless of nesting depth.
+    Pass 2: walk lines tracking group nesting depth.  Drop connection-syntax lines
+            found at depth > 0 (inside a group).  At depth 0, validate both
+            endpoints; drop if either endpoint is a group name or unknown node.
     """
     import re
 
@@ -259,19 +269,16 @@ def sanitize_eraser_dsl(dsl: str) -> str:
 
     for raw in dsl.splitlines():
         line = raw.strip()
-        # Leaf node: "  Node Label [icon: ...]"
         if "[icon:" in line:
             name = re.sub(r"\s*\[icon:.*", "", line).strip()
             if name:
                 node_names.add(name)
-        # Group header: "Group Label {" (possibly preceded by indentation)
         elif line.endswith("{"):
             name = line[:-1].strip()
             if name:
                 group_names.add(name)
 
     def _extract_endpoints(line: str):
-        # Strip optional ": label" / ': label' suffix then split on <> or >
         conn = re.sub(r':\s*["\'].*?["\']$', "", line).strip()
         conn = re.sub(r":\s*\S+$", "", conn).strip()
         if "<>" in conn:
@@ -282,37 +289,61 @@ def sanitize_eraser_dsl(dsl: str) -> str:
             return None, None
         return parts[0].strip(), parts[1].strip()
 
+    def _is_connection_like(s: str) -> bool:
+        return (
+            ("<>" in s or ">" in s)
+            and "[icon:" not in s
+            and not s.endswith("{")
+            and not s.startswith("title")
+            and not s.startswith("direction")
+            and not s.startswith("colorMode")
+            and not s.startswith("styleMode")
+        )
+
     out_lines: list[str] = []
     dropped = 0
+    depth = 0  # nesting depth inside group blocks
+
     for raw in dsl.splitlines():
         stripped = raw.strip()
-        is_conn = (
-            ("<>" in stripped or ">" in stripped)
-            and "[icon:" not in stripped
-            and not stripped.endswith("{")
-            and not stripped.startswith("title")
-            and not stripped.startswith("direction")
-            and not stripped.startswith("colorMode")
-            and not stripped.startswith("styleMode")
-        )
-        if is_conn:
-            lhs, rhs = _extract_endpoints(stripped)
-            if lhs is None:
-                out_lines.append(raw)
-                continue
-            bad_lhs = lhs in group_names or lhs not in node_names
-            bad_rhs = rhs in group_names or rhs not in node_names
-            if bad_lhs or bad_rhs:
+
+        if stripped.endswith("{"):
+            depth += 1
+            out_lines.append(raw)
+            continue
+
+        if stripped == "}":
+            depth = max(0, depth - 1)
+            out_lines.append(raw)
+            continue
+
+        if _is_connection_like(stripped):
+            if depth > 0:
+                # Connection inside a group block — Eraser renders it as a blank node.
                 dropped += 1
                 logger.info(
-                    "eraser_sanitize: dropped connection %r (lhs_bad=%s rhs_bad=%s)",
-                    stripped, bad_lhs, bad_rhs,
+                    "eraser_sanitize: dropped connection inside group (depth=%d): %r",
+                    depth, stripped,
                 )
                 continue
+            lhs, rhs = _extract_endpoints(stripped)
+            if lhs is not None:
+                bad_lhs = lhs in group_names or lhs not in node_names
+                bad_rhs = rhs in group_names or rhs not in node_names
+                if bad_lhs or bad_rhs:
+                    dropped += 1
+                    logger.info(
+                        "eraser_sanitize: dropped connection %r (lhs_bad=%s rhs_bad=%s)",
+                        stripped, bad_lhs, bad_rhs,
+                    )
+                    continue
+
         out_lines.append(raw)
 
     if dropped:
-        logger.warning("eraser_sanitize: dropped %d connection(s) with group/unknown endpoints", dropped)
+        logger.warning(
+            "eraser_sanitize: dropped %d line(s) (inside-group or bad endpoints)", dropped
+        )
     else:
         logger.info("eraser_sanitize: all connections valid, none dropped")
     return "\n".join(out_lines)
@@ -444,9 +475,15 @@ async def generate_eraser_dsl(arch_json: dict) -> str | None:
         f"{endpoint}/openai/deployments/{deployment}"
         f"/chat/completions?api-version=2024-02-01"
     )
+    # Strip Architect-only fields — Draftsman must never see them or it may
+    # render optional/assumption text as floating nodes or stray connections.
+    draftsman_input = {
+        k: v for k, v in arch_json.items()
+        if k not in ("assumptions", "optional_components")
+    }
     messages = [
         {"role": "system", "content": _ERASER_DSL_SYSTEM},
-        {"role": "user",   "content": json.dumps(arch_json, separators=(",", ":"))},
+        {"role": "user",   "content": json.dumps(draftsman_input, separators=(",", ":"))},
     ]
     try:
         async with httpx.AsyncClient(timeout=30) as client:
