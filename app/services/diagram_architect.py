@@ -251,18 +251,48 @@ def _sanitize(obj):
 
 def sanitize_eraser_dsl(dsl: str) -> str:
     """
-    Drop lines that would render as blank boxes in Eraser:
-    1. Connection lines (> / <>) whose endpoints are group labels or unknown nodes.
-    2. Any connection-syntax line that appears INSIDE a group block { } — Eraser
-       treats those as node definitions, not connections, producing blank boxes.
+    Three-pass guard before sending DSL to Eraser:
 
-    Pass 1: collect all leaf node names ([icon:] lines) and group names (lines
-            ending with '{') regardless of nesting depth.
-    Pass 2: walk lines tracking group nesting depth.  Drop connection-syntax lines
-            found at depth > 0 (inside a group).  At depth 0, validate both
-            endpoints; drop if either endpoint is a group name or unknown node.
+    Pre-pass: auto-quote any group-header or node name that contains "/" (CIDR),
+              "(", ")", ":", or ",".  An unquoted "/" breaks Eraser's parser and
+              causes the entire group's contents to render as blank boxes.
+
+    Pass 1: collect leaf node names ([icon:] lines) and group names (lines ending
+            with '{') from the (already-quoted) DSL.
+
+    Pass 2: walk lines tracking group-nesting depth.
+            - At depth > 0: drop connection-syntax lines (they render as blank nodes).
+            - At depth 0: validate connection endpoints; drop if either references a
+              group name or an unknown node.
     """
     import re
+
+    # Characters that break Eraser's parser when unquoted in a label.
+    _SPECIAL = re.compile(r'[/(),:]')
+
+    def _quote_if_needed(raw: str) -> str:
+        stripped = raw.strip()
+        indent = raw[: len(raw) - len(stripped)]
+
+        if stripped.endswith("{"):
+            name_part = stripped[:-1].strip()
+            if not name_part.startswith('"') and _SPECIAL.search(name_part):
+                return f'{indent}"{name_part}" {{'
+
+        elif "[icon:" in stripped:
+            name_part = re.sub(r"\s*\[icon:.*", "", stripped).strip()
+            if not name_part.startswith('"') and _SPECIAL.search(name_part):
+                icon_part = stripped[stripped.index("[icon:"):]
+                return f'{indent}"{name_part}" {icon_part}'
+
+        return raw
+
+    # Pre-pass: rewrite lines whose names contain special chars.
+    fixed_lines = [_quote_if_needed(r) for r in dsl.splitlines()]
+    auto_quoted = sum(1 for a, b in zip(dsl.splitlines(), fixed_lines) if a != b)
+    if auto_quoted:
+        logger.info("eraser_sanitize: auto-quoted %d line(s) with special-char names", auto_quoted)
+        dsl = "\n".join(fixed_lines)
 
     node_names: set[str] = set()
     group_names: set[str] = set()
@@ -416,6 +446,25 @@ Syntax:
   }
   Source > Target: "label"
   Source <> Target
+
+QUOTING RULE -- CRITICAL: Any group or node name that contains "/" (e.g. CIDR blocks like
+10.0.0.0/16), "(", ")", ":", or "," MUST be wrapped in double quotes. An unquoted "/"
+in a group header breaks Eraser's parser and causes ALL nodes inside that group to render
+as blank boxes. Names without these characters do NOT need quotes.
+
+Correct (CIDR and parentheses quoted):
+  "Hub VNet - 10.0.0.0/16" {
+    "App Subnet - 10.0.1.0/24" [icon: azure-subnet]
+    VPN Gateway [icon: azure-virtual-network-gateways]
+  }
+  "On-Premises (Primary Site)" {
+    DC Server [icon: server]
+  }
+
+No quotes needed for plain names:
+  Shared Services {
+    Azure Key Vault [icon: azure-key-vaults]
+  }
 
 When emitting ARCHITECTURE_DSL, use ONLY these exact Eraser icon names. Do NOT invent names -- an invalid name renders as a blank box. If a component is not in this list, use a generic icon (server, database, cloud, globe, lock, key, shield) instead of guessing.
 
