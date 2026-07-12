@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-07-06) — v2.4.0
+## Current Status (2026-07-12) — v2.4.0
 
 ### Last Known-Good State (2026-07-06)
 - Commit: `ca8c0b3` (main) — multi-SKU pricing fix complete, live on prod
@@ -865,17 +865,29 @@ A pre-sales conversation tool: the user describes a customer scenario (e.g., "5 
 
 ```
 User message → POST /api/diagram/chat
-  → diagram_architect.py  (multi-turn GPT-4o discovery)
-  → emits ARCHITECTURE_JSON: {...}
-  → generate_eraser_dsl()  ← separate GPT-4o call; JSON-in → Eraser DSL-out
-  → sanitize_eraser_dsl()  ← deterministic guard: drop connections targeting group names
-  → render_with_eraser()   ← POST app.eraser.io/api/render/elements  [if ERASER_API_KEY set]
+  → architect_chat()  (Agent 1: ARCHITECT — GPT-4o)
+  │   understands requirements, applies per-pattern mandatory/optional rules
+  │   → emits DESIGN_SPEC: {...}  (JSON: zones, resources, assumptions[], optional_components[])
+  │   → _format_confirmation_reply()  ← baseline assumptions + optional-component questions
+  │   → {type:"architecture", json:..., reply:"..."} returned to router
+  ↓
+  → generate_eraser_dsl(arch_json)  (Agent 2: DRAFTSMAN — GPT-4o)
+  │   receives DESIGN_SPEC stripped of assumptions/optional_components
+  │   → Eraser cloud-architecture DSL
+  ↓
+  → sanitize_eraser_dsl(dsl)  ← 3-pass deterministic guard:
+  │   pre-pass: auto-quote names with CIDR "/" or special chars
+  │   pass 1:   collect node/group names
+  │   pass 2:   drop connections inside groups; drop connections to group names or unknown nodes
+  ↓
+  → render_with_eraser(dsl)   ← POST app.eraser.io/api/render/elements  [if ERASER_API_KEY set]
   │   → eraser_image_url in response
   └── diagram_renderer_svg.py  (980px landscape SVG — always runs as free default/fallback)
       → svg_b64 in response
 
   architect.html: if eraser_image_url non-empty → img.src = eraser_image_url
                   else                           → img.src = data:image/svg+xml;base64,...
+  reply bubble: Architect's baseline assumptions + optional-component questions shown below diagram
 ```
 
 ### Endpoints
@@ -930,9 +942,13 @@ W = 18 (left margin) + 726 (3×218px cols + 2×36px gaps) + 18 (gap) + 200 (side
   "shared_services": [{"type": "string", "name": "string", "purpose": "string"}],
   "migration_approach": [{"step": "string", "description": "string"}],
   "design_principles": ["string"],
-  "future_options": ["string"]
+  "future_options": ["string"],
+  "assumptions": ["string"],
+  "optional_components": [{"name": "string", "description": "string", "question": "string"}]
 }
 ```
+
+**Note:** `assumptions[]` and `optional_components[]` are ARCHITECT-only fields — stripped before passing to DRAFTSMAN so they never leak into the Eraser DSL as stray nodes.
 
 **Zone type routing:**
 - `onprem` → center column 0
@@ -1007,6 +1023,42 @@ Most Eraser Azure icon names are PLURAL: `azure-firewalls`, `azure-bastions`, `a
 - `GET /api/diagram/dsl/{session_id}` endpoint (remove)
 - `logger.info("ERASER_DSL_CONTENT_START...")` full DSL log line in `diagram_architect.py` (remove)
 
+### Two-Agent Architect Pipeline (dev, 2026-07-12)
+
+Refactor of `diagram_architect.py` from a single discovery+render agent into two focused agents with a structured JSON handoff.
+
+**Agent 1 — ARCHITECT**
+- Multi-turn GPT-4o discovery conversation; scenario-detection logic (migration / AVD / web / landing zone / generic)
+- Emits `DESIGN_SPEC: <json>` with `zones[]`, `connections[]`, `assumptions[]`, `optional_components[]`
+- Marker: `DESIGN_SPEC:` (tolerant regex also accepts `ARCHITECTURE_JSON:` to survive single-token hallucinations)
+- `assumptions[]`: decisions the agent made without asking (e.g. "cloud-only AVD — no VPN Gateway")
+- `optional_components[]`: items not included by default, each with a clarifying question for the user
+- Conditional hub fundamentals: VPN Gateway / ER Gateway / Firewall / Bastion included or excluded per pattern (migration=mandatory; AVD cloud-only=none; SAP/web=optional with question)
+
+**Agent 2 — DRAFTSMAN**
+- Receives `DESIGN_SPEC` stripped of `assumptions`/`optional_components` (those fields must not reach DRAFTSMAN)
+- Focused system prompt: Eraser cloud-architecture DSL syntax, verified Azure icon list, CIDR quoting rule
+- Output: Eraser DSL → `sanitize_eraser_dsl()` → `render_with_eraser()`
+
+**Baseline-then-confirm flow:**
+1. ARCHITECT emits `DESIGN_SPEC` with a baseline (best-practice defaults, no ambiguity questions)
+2. DRAFTSMAN renders diagram; `_format_confirmation_reply()` appends assumptions + optional-component questions below the diagram card in the UI
+3. User answers → ARCHITECT updates DESIGN_SPEC → new diagram rendered
+
+**Bugs fixed in this build (2026-07-12):**
+- Over-questioning: ARCHITECT asked multiple questions per turn. Fixed: strict "one question per turn" rule.
+- Invalid/plural icon names: `azure-firewall` → `azure-firewalls`, etc. Fixed: full verified icon list in DRAFTSMAN prompt.
+- Connections targeting group names: `Hub VNet > Spoke VNet` renders as blank boxes. Fixed: prompt rule + sanitizer guard.
+- `optional_components`/`assumptions` leaking to DRAFTSMAN: leaked fields rendered as stray floating nodes. Fixed: stripped in `generate_eraser_dsl()` before passing to DRAFTSMAN.
+- CIDR `/` in group headers breaking Eraser parser: `Hub VNet - 10.0.0.0/16 {` causes all nodes inside to render blank. Fixed: DRAFTSMAN prompt QUOTING RULE + sanitizer auto-quote pre-pass wraps names containing `/(),:` in double quotes.
+
+**KEY FINDING — prompt-scaffolding accuracy has plateaued:**
+After this refactor, the pipeline is technically sound (rendering, sanitizing, flow all correct). But per-workload correctness across 100+ open-ended scenarios cannot be prompted in. The agent produces generically-correct but specifically-wrong architectures. Known example: AVD cloud-only design adds a VPN Gateway. This is architecturally wrong — AVD users connect over HTTPS/443 via the reverse-connect broker model; a VPN Gateway only makes sense if the customer has on-prem connectivity requirements. This class of error cannot be fixed by further prompt iteration. The agent lacks the domain depth to know which services are logically required vs. logically impossible for each combination of workload and connectivity pattern at scale.
+
+**Accuracy target:** A ChatGPT image-gen reference diagram for "AVD for SAP B1, 50-user SMB, Sydney" defines what "complete and correct" looks like — explicit AVD access model (no VPN for cloud-only), Option1/Option2 connectivity alternatives, App/Data tier separation, benefits, legend. RAG grounding against Azure Architecture Center reference architectures is how the agent reaches that substance.
+
+**Image-gen as renderer — EVALUATED AND REJECTED (2026-07-12):** Image-gen (ChatGPT/DALL-E) was evaluated as a renderer. Rejected: non-reproducible (same prompt → different output each time), non-editable, garbles text labels, cannot produce a reliably structured diagram. Eraser remains the renderer; RAG makes Eraser output architecturally correct.
+
 ### Known Limitations
 
 - **No connections rendered** — `connections[]` is parsed but SVG arrows between zones are not drawn (deferred). Zone-to-zone flow is implied by column order (left→right).
@@ -1019,16 +1071,24 @@ Most Eraser Azure icon names are PLURAL: `azure-firewalls`, `azure-bastions`, `a
 
 ### Next Directions (parked)
 
-#### Priority 1 — RAG grounding for the architect agent
+#### Priority 1 — RAG grounding for the architect agent — NEXT BUILD (spike first)
 
-**Why:** The top presales differentiator would be grounding the agent against customer-specific data — Hyper-V inventory exports, Azure Migrate assessment CSVs, or a product catalogue. Without grounding, every scenario is a blank-slate LLM inference; with grounding, the agent could import a real migration assessment and produce a diagram directly from the customer's actual workload data.
+**Why prompt-scaffolding has plateaued:** After the two-agent refactor (2026-07-12), the /architect pipeline is technically sound — correct rendering, Eraser integration, baseline-then-confirm flow, conditional hub fundamentals. But per-workload correctness across 100+ open-ended scenarios cannot be prompted in. The agent produces generically-correct but specifically-wrong architectures.
 
-**Implementation path:**
-1. Ingest assessment CSV → Azure AI Search index (same infra as the VM SKU index, `rg-hyperxen-app-dev`)
-2. Add a RAG retrieval step in `diagram_architect.py` system context before the first turn
-3. Agent uses retrieved workload facts as grounding; still asks clarifying questions for gaps
+Known example: AVD cloud-only designs incorrectly include a VPN Gateway. This is wrong — AVD users connect over HTTPS/443 via the reverse-connect broker model; there is no VPN in a cloud-only AVD deployment. VPN Gateway is only valid if the customer has on-prem connectivity requirements. This cannot be fixed by prompt iteration — the agent lacks the domain depth to know which services are logically required vs. impossible for each combination of workload and connectivity pattern.
 
-**Why this is first:** Grounds the tool in real data, differentiates from generic AI diagram generators, directly addresses the "how many VMs / what workloads?" question that every pre-sales conversation starts with.
+**Accuracy target:** A ChatGPT image-gen reference diagram for "AVD for SAP B1, 50-user SMB, Sydney" defines what "complete and correct" looks like — Option1/Option2 connectivity alternatives, explicit AVD access model (no VPN for cloud-only), App/Data tiering, benefits, legend. This is the quality bar RAG should reach.
+
+**Image-gen as renderer: REJECTED.** Non-reproducible, non-editable, garbles text labels. Eraser stays the renderer; RAG makes the content architecturally correct.
+
+**Phase-1 spike plan (before full build):**
+1. Ingest ~5-10 Azure Architecture Center reference architectures (incl. AVD, SAP-on-Azure, hub-spoke Landing Zone) into the existing `hyperxen-search` Azure AI Search index (same infra as VM SKU index, `rg-hyperxen-app-dev`).
+2. Wire retrieval into `architect_chat()` — inject retrieved context into ARCHITECT system prompt before the first turn.
+3. Test grounded-vs-ungrounded on the AVD+SAP scenario (the known failure case).
+4. Review the Part B RAG plan before expanding corpus.
+5. Only expand to full corpus build after the spike proves grounded accuracy on the test case.
+
+**Why spike-first:** Corpus build is cheap (5-10 docs). The high-risk question is whether RAG retrieval changes the agent's reasoning enough to fix the specific-wrongness. Prove it on one scenario first before investing in a full ingest pipeline.
 
 #### Track 2 — draw.io rendering experiment — **EVALUATED AND REJECTED (2026-06-24)**
 
@@ -1060,6 +1120,10 @@ Most Eraser Azure icon names are PLURAL: `azure-firewalls`, `azure-bastions`, `a
 | Removed `.arch-head` card title | HTML card showed title in plain text above SVG *and* SVG gradient bar also showed it — two identical titles looked like a bug. SVG header bar is now the single title display. |
 | shared/mgmt zones → sidebar only | Cross-cutting concerns (Entra ID, Monitor, Defender) belong in a dedicated right panel, not mixed into the on-prem→hub→spoke traffic flow. Matches Microsoft reference architecture layout standard. |
 | EntraID proxy icon | V23 has no standalone "Microsoft Entra ID" service icon. `enterprise-applications.svg` is the closest visual proxy (blue people icon). Will update if V24 adds one. |
+| Eraser as canonical renderer (2026-07-11) | Eraser cloud-architecture API produces professional diagrams with correct Azure icons and layout. Layered invisibly on top of SVG renderer; SVG fallback retained. Gated on `ERASER_API_KEY`. |
+| Image-gen renderer evaluated and rejected (2026-07-12) | ChatGPT/DALL-E image-gen evaluated as a renderer. Rejected: non-reproducible (same prompt → different output), non-editable, garbles text labels. Eraser stays; accuracy comes from RAG grounding. |
+| Two-agent split: Architect + Draftsman (2026-07-12) | Single agent was unreliable for both DESIGN_SPEC and Eraser DSL in one response. Split into focused agents with structured JSON handoff (DESIGN_SPEC). Each agent has a tighter, more reliable prompt. |
+| Prompt-scaffolding ceiling reached (2026-07-12) | Per-workload correctness (e.g. AVD VPN logic, SAP tier separation) cannot be achieved through prompt iteration alone at scale. RAG grounding against Azure Architecture Center reference architectures is the next step. |
 
 ---
 
