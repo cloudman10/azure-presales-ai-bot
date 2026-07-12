@@ -320,13 +320,17 @@ def sanitize_eraser_dsl(dsl: str) -> str:
 
 async def render_with_eraser(dsl: str) -> str | None:
     api_key = os.environ.get("ERASER_API_KEY", "")
+    # TEMP DIAG
+    logger.warning("eraser: ENTERED render_with_eraser key_set=%s dsl_len=%d", bool(api_key), len(dsl))
     if not api_key:
+        logger.warning("eraser: ERASER_API_KEY not set -- skipping render")
         return None
     dsl_hash = hashlib.sha256(dsl.encode()).hexdigest()
     if dsl_hash in _eraser_cache:
         logger.info("eraser: cache hit hash=%s", dsl_hash[:12])
         return _eraser_cache[dsl_hash]
     try:
+        logger.warning("eraser: CALLING POST https://app.eraser.io/api/render/elements auth=Bearer ***%s", api_key[-4:])
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 "https://app.eraser.io/api/render/elements",
@@ -347,13 +351,16 @@ async def render_with_eraser(dsl: str) -> str | None:
                     "imageQuality": 3,
                 },
             )
+        logger.warning("eraser: HTTP status=%s body_100=%r", resp.status_code, resp.text[:100])
         if resp.status_code == 200:
             image_url = resp.json().get("imageUrl")
             if image_url:
                 _eraser_cache[dsl_hash] = image_url
                 logger.info("eraser: rendered ok hash=%s url=%s", dsl_hash[:12], image_url[:60])
                 return image_url
-        logger.warning("eraser: non-200 status=%s body=%s", resp.status_code, resp.text[:200])
+            logger.warning("eraser: 200 but no imageUrl in response keys=%s", list(resp.json().keys()))
+        else:
+            logger.warning("eraser: non-200 status=%s body=%s", resp.status_code, resp.text[:200])
     except Exception as exc:
         logger.warning("eraser: render failed: %s", exc)
     return None
