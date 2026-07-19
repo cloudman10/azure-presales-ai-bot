@@ -1,10 +1,15 @@
 """
 app/services/diagram_architect.py
 
-AI-driven architecture discovery agent.
-Conducts a multi-turn conversation via Azure AI Foundry / GPT-4o,
-asking ONE clarifying question per turn until it has enough to emit
-a rich High-Level Design (HLD) spec prefixed with ARCHITECTURE_JSON:.
+Two-agent Azure HLD system:
+  Agent 1 (ARCHITECT)  — multi-turn GPT-4o discovery, emits DESIGN_SPEC JSON
+  Agent 2 (DRAFTSMAN)  — converts DESIGN_SPEC JSON to Eraser cloud-architecture DSL
+
+RAG grounding (optional, controlled by RAG_ENABLED env var):
+  On the first turn of each session, retrieve relevant Azure Architecture Center
+  reference excerpts from the "arch-center-spike" Azure AI Search index and inject
+  them into the ARCHITECT system context before the design step.
+  Populate the index by running: python scripts/ingest_arch_center.py
 """
 
 import hashlib
@@ -551,6 +556,62 @@ async def generate_eraser_dsl(arch_json: dict) -> str | None:
         return None
 
 
+async def retrieve_arch_context(scenario: str, top_k: int = 3) -> str:
+    """
+    Query the arch-center-spike Azure AI Search index (keyword BM25) for reference
+    architecture chunks relevant to this scenario.  Returns formatted text to inject
+    into the ARCHITECT system prompt, or empty string if RAG is unavailable.
+
+    Requires:
+      - AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY env vars set
+      - "arch-center-spike" index populated via scripts/ingest_arch_center.py
+    """
+    endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
+    api_key  = os.environ.get("AZURE_SEARCH_API_KEY", "")
+    if not endpoint or not api_key:
+        logger.warning("rag: AZURE_SEARCH_ENDPOINT or AZURE_SEARCH_API_KEY not set — skipping")
+        return ""
+    try:
+        from azure.search.documents import SearchClient
+        from azure.core.credentials import AzureKeyCredential
+
+        query = scenario[:500]
+
+        def _sync_search() -> list[str]:
+            client = SearchClient(
+                endpoint=endpoint,
+                index_name="arch-center-spike",
+                credential=AzureKeyCredential(api_key),
+            )
+            results = client.search(
+                search_text=query,
+                select=["pattern_name", "workload_type", "content", "source_url"],
+                top=top_k,
+            )
+            out: list[str] = []
+            for r in results:
+                header = f"[{r['pattern_name']} | {r['source_url']}]"
+                out.append(f"{header}\n{r['content']}")
+            return out
+
+        import asyncio
+        chunks = await asyncio.to_thread(_sync_search)
+
+        if not chunks:
+            logger.info("rag: no results for query %r", query[:80])
+            return ""
+
+        logger.info(
+            "rag: retrieved %d chunk(s) for query %r",
+            len(chunks), query[:80],
+        )
+        return "\n\n---\n\n".join(chunks)
+
+    except Exception as exc:
+        logger.warning("rag: retrieval failed: %s", exc)
+        return ""
+
+
 async def architect_chat(history: list[dict], message: str) -> dict:
     """
     Single turn of the two-agent architecture conversation.
@@ -559,9 +620,24 @@ async def architect_chat(history: list[dict], message: str) -> dict:
     Returns one of:
       {"type": "question",     "reply": "<question text>"}
       {"type": "architecture", "json": <HLD dict>, "reply": "<assumptions + optional questions>"}
+
+    RAG grounding: if RAG_ENABLED env var is "true"/"1"/"yes", retrieves relevant
+    Azure Architecture Center reference excerpts on the FIRST turn and injects them
+    into the ARCHITECT system context before the design step.
     """
     history.append({"role": "user", "content": message})
-    raw = await _call_foundry(history)
+
+    # RAG: inject reference context only on the first user turn
+    rag_context = ""
+    rag_enabled = os.environ.get("RAG_ENABLED", "").lower() in ("true", "1", "yes")
+    if rag_enabled and len(history) == 1:
+        rag_context = await retrieve_arch_context(message)
+        if rag_context:
+            logger.info("rag: injecting %d chars of reference context", len(rag_context))
+        else:
+            logger.info("rag: enabled but no context retrieved (index empty or query miss)")
+
+    raw = await _call_foundry(history, rag_context=rag_context)
     history.append({"role": "assistant", "content": raw})
 
     match = _SPEC_RE.search(raw)
@@ -577,7 +653,7 @@ async def architect_chat(history: list[dict], message: str) -> dict:
     return {"type": "question", "reply": raw}
 
 
-async def _call_foundry(history: list[dict]) -> str:
+async def _call_foundry(history: list[dict], rag_context: str = "") -> str:
     endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
     api_key    = os.environ["AZURE_OPENAI_KEY"]
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
@@ -586,6 +662,23 @@ async def _call_foundry(history: list[dict]) -> str:
         f"/chat/completions?api-version=2024-02-01"
     )
     messages = [{"role": "system", "content": ARCHITECT_PROMPT}]
+    if rag_context:
+        messages.append({
+            "role": "system",
+            "content": (
+                "=== AZURE REFERENCE ARCHITECTURE GUIDANCE ===\n"
+                "The following authoritative excerpts were retrieved from the Azure Architecture Center "
+                "and Azure documentation for this specific scenario. Use them to inform your design:\n"
+                "- Which components are MANDATORY vs OPTIONAL for this workload pattern\n"
+                "- The correct access and connectivity model (critical: AVD uses reverse-connect "
+                "transport over HTTPS/443 -- users reach session hosts WITHOUT a VPN; a VPN Gateway "
+                "is only needed if there is on-premises AD DS or on-prem data sources)\n"
+                "- Architecture best practices specific to this workload type\n"
+                "Prefer this guidance over general assumptions.\n\n"
+                f"{rag_context}\n"
+                "=== END REFERENCE GUIDANCE ==="
+            ),
+        })
     messages.extend({"role": m["role"], "content": m["content"]} for m in history)
 
     async with httpx.AsyncClient(timeout=90) as client:
