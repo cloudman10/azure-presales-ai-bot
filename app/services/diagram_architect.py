@@ -556,6 +556,84 @@ async def generate_eraser_dsl(arch_json: dict) -> str | None:
         return None
 
 
+# ── Query expansion ────────────────────────────────────────────────────────────
+# Maps detected workload type → additional technical search terms.
+# Appended to the user's natural-language scenario before hybrid retrieval so
+# that BM25 and vector both hit workload-specific sub-pattern chunks that the
+# user's words alone (e.g. "AKS for microservices") would not rank highly.
+
+_QUERY_EXPANSION_MAP: dict[str, list[str]] = {
+    "aks": [
+        "system node pool", "user node pool", "Azure CNI network plugin",
+        "ingress controller NGINX", "Azure Container Registry private endpoint",
+        "Key Vault CSI Secrets Store driver", "Container Insights monitoring",
+        "private cluster API server endpoint", "cluster autoscaler workload identity",
+    ],
+    "avd": [
+        "reverse connect transport HTTPS 443", "FSLogix profile Azure Files Premium",
+        "session host Entra ID joined", "host pool RDP Shortpath",
+        "Teams media optimization AVD", "Azure Virtual Desktop gateway broker",
+    ],
+    "sap": [
+        "ASCS ERS SAP central services", "HANA system replication",
+        "application server E-series M-series VM SAP certified",
+        "Azure NetApp Files transport shared storage NFS",
+        "pacemaker HA cluster availability zones SIOS",
+    ],
+    "openai": [
+        "Azure OpenAI private endpoint VNet integration",
+        "managed identity model deployment token rate limit",
+        "content filtering responsible AI Azure AI Foundry",
+        "API Management semantic cache private DNS zone",
+        "data residency Australia compliance Log Analytics diagnostics",
+    ],
+    "hybrid": [
+        "ExpressRoute private peering BGP circuit", "VPN Gateway active-active IKEv2",
+        "redundant MPLS circuit hub VNet Azure Firewall",
+        "forced tunneling UDR on-premises connectivity", "private DNS zone",
+    ],
+    "migration": [
+        "Azure Migrate appliance replication dependency mapping",
+        "VPN tunnel cutover lift and shift",
+        "Hyper-V VMware agentless replication",
+    ],
+    "web": [
+        "Application Gateway WAF v2 TLS termination", "private endpoint database",
+        "Redis Cache session managed identity App Service",
+        "Azure Front Door CDN global load balancing",
+    ],
+    "data": [
+        "Data Lake Gen2 Azure Data Factory pipeline",
+        "Synapse Analytics dedicated pool private endpoint",
+        "managed VNet integration", "Unity Catalog governance",
+    ],
+}
+
+_WORKLOAD_DETECT: list[tuple[str, list[str]]] = [
+    ("aks",       ["aks", "kubernetes", "k8s", "microservice", "container", "helm", "kubectl"]),
+    ("avd",       ["avd", "virtual desktop", "remote desktop", "wvd", "session host", "azure virtual desktop"]),
+    ("sap",       ["sap", "s/4hana", "s4hana", "hana", "ascs", "business one", "ecc", "bw/4"]),
+    ("openai",    ["openai", "gpt", "llm", "azure ai", "ai landing", "language model", "generative ai", "ai hub", "foundry"]),
+    ("hybrid",    ["on-prem", "on-premises", "expressroute", "mpls", "datacenter", "site-to-site"]),
+    ("migration", ["migrat", "lift and shift", "azure migrate", "rehost", "replatform"]),
+    ("web",       ["web app", "app service", "web application", "waf", "front door"]),
+    ("data",      ["data lake", "data platform", "synapse", "data factory", "analytics warehouse"]),
+]
+
+
+def _expand_query(scenario: str) -> str:
+    """Append workload-specific technical terms to a natural-language query."""
+    q_lower = scenario.lower()
+    for workload, keywords in _WORKLOAD_DETECT:
+        if any(kw in q_lower for kw in keywords):
+            terms = _QUERY_EXPANSION_MAP.get(workload, [])
+            if terms:
+                expanded = f"{scenario} {' '.join(terms[:8])}"
+                logger.info("rag: query expanded for workload=%s", workload)
+                return expanded
+    return scenario
+
+
 async def _embed_query(text: str) -> list[float] | None:
     """Embed a query string using text-embedding-3-small; returns None if unavailable."""
     dep = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "")
@@ -601,7 +679,8 @@ async def retrieve_arch_context(scenario: str, top_k: int = 5) -> str:
         from azure.search.documents import SearchClient
         from azure.core.credentials import AzureKeyCredential
 
-        query     = scenario[:500]
+        # Expand with workload-specific technical terms, then cap for search API
+        query     = _expand_query(scenario[:300])[:700]
         embedding = await _embed_query(query)
         use_vector = embedding is not None
 
