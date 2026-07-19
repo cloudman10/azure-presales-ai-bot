@@ -1,11 +1,13 @@
 """
 scripts/ingest_arch_center.py
 
-RAG Phase-1 Spike: ingest a small curated set of Azure Architecture Center
-reference architectures into the "arch-center-spike" Azure AI Search index.
+RAG spike: ingest curated Azure Architecture Center pages into the
+"arch-center-spike" Azure AI Search index with:
+  - Smaller ~400-char chunks (was 1200) for tighter semantic hits
+  - text-embedding-3-small embeddings (1536 dims) on every chunk
+  - Hybrid index: keyword BM25 (en.microsoft) + HNSW vector field
 
-Uses keyword search only (no embedding model required for the spike).
-Run once before setting RAG_ENABLED=true on the dev app.
+Run once before enabling RAG_ENABLED=true on the dev app.
 
 Usage:
     cd ~/azure-presales-ai-bot
@@ -29,10 +31,14 @@ from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
+    HnswAlgorithmConfiguration,
     SearchableField,
+    SearchField,
     SearchFieldDataType,
     SearchIndex,
     SimpleField,
+    VectorSearch,
+    VectorSearchProfile,
 )
 
 logging.basicConfig(
@@ -42,59 +48,52 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-SEARCH_ENDPOINT = os.environ["AZURE_SEARCH_ENDPOINT"]
-SEARCH_API_KEY  = os.environ["AZURE_SEARCH_API_KEY"]
-INDEX_NAME      = "arch-center-spike"
-CHUNK_CHARS     = 1200  # max chars per chunk; sized to keep key paragraphs intact
+SEARCH_ENDPOINT      = os.environ["AZURE_SEARCH_ENDPOINT"]
+SEARCH_API_KEY       = os.environ["AZURE_SEARCH_API_KEY"]
+OPENAI_ENDPOINT      = os.environ["AZURE_OPENAI_ENDPOINT"]
+OPENAI_API_KEY       = os.environ["AZURE_OPENAI_KEY"]
+EMBEDDING_DEPLOYMENT = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
+EMBEDDING_DIMS       = 1536
+INDEX_NAME           = "arch-center-spike"
+CHUNK_CHARS          = 400   # smaller chunks for tighter semantic hits
 
-# ── Curated corpus ─────────────────────────────────────────────────────────────
-# 8 reference pages covering the known failure scenarios (AVD+SAP) plus common
-# patterns (hub-spoke, hybrid, AKS, web).  Each URL is a stable learn.microsoft
-# or architecture-center page with authoritative reference content.
+# ── Curated corpus (unchanged from phase-1 spike) ──────────────────────────────
 CORPUS = [
-    # AVD — the key page: explains reverse-connect transport over HTTPS/443, cloud-only model
     {
         "pattern_name": "Azure Virtual Desktop - Network Connectivity Model",
         "workload_type": "avd",
         "url": "https://learn.microsoft.com/en-us/azure/virtual-desktop/network-connectivity",
     },
-    # AVD — CAF landing zone network design (hub connectivity, optional for cloud-only)
     {
         "pattern_name": "Azure Virtual Desktop - CAF Network Topology",
         "workload_type": "avd",
         "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/scenarios/azure-virtual-desktop/eslz-network-topology-and-connectivity",
     },
-    # AVD — Azure Firewall integration guide (when to add egress control)
     {
         "pattern_name": "Azure Virtual Desktop - Azure Firewall Protection",
         "workload_type": "avd",
         "url": "https://learn.microsoft.com/en-us/azure/firewall/protect-azure-virtual-desktop",
     },
-    # SAP — planning guide (VM sizing, storage, HA, networking — applicable to all SAP products)
     {
         "pattern_name": "SAP on Azure - VM Planning Guide",
         "workload_type": "sap",
         "url": "https://learn.microsoft.com/en-us/azure/virtual-machines/workloads/sap/planning-guide",
     },
-    # SAP — S/4HANA reference architecture (tiers: ASCS, App Server, DB, shared storage)
     {
         "pattern_name": "SAP S/4HANA on Azure - Reference Architecture",
         "workload_type": "sap",
         "url": "https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/sap/sap-s4hana",
     },
-    # Networking — hub-spoke topology: when to use VPN Gateway, Firewall, ExpressRoute
     {
         "pattern_name": "Hub-Spoke Network Topology on Azure",
         "workload_type": "networking",
         "url": "https://learn.microsoft.com/en-us/azure/architecture/networking/hub-spoke-vwan-architecture",
     },
-    # Networking — hybrid connectivity: VPN vs ExpressRoute decision guide
     {
         "pattern_name": "Hybrid Connectivity - VPN vs ExpressRoute Comparison",
         "workload_type": "hybrid",
         "url": "https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/",
     },
-    # AKS — baseline architecture
     {
         "pattern_name": "AKS Baseline Architecture",
         "workload_type": "aks",
@@ -103,15 +102,6 @@ CORPUS = [
 ]
 
 # ── Index schema ───────────────────────────────────────────────────────────────
-#
-#   id           – unique key (uuid)
-#   pattern_name – searchable; human-readable name of the reference pattern
-#   workload_type– filterable tag (avd, sap, networking, hybrid, aks, web)
-#   source_url   – retrievable; the canonical URL of the source page
-#   content      – searchable; the chunk text (BM25 keyword search)
-#
-# No vector field yet — upgrade to hybrid after spike proves retrieval fires.
-
 
 def create_index(index_client: SearchIndexClient) -> None:
     fields = [
@@ -146,22 +136,34 @@ def create_index(index_client: SearchIndexClient) -> None:
             analyzer_name="en.microsoft",
             retrievable=True,
         ),
+        SearchField(
+            name="embedding",
+            type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+            searchable=True,
+            vector_search_dimensions=EMBEDDING_DIMS,
+            vector_search_profile_name="hnsw-profile",
+        ),
     ]
-    idx = SearchIndex(name=INDEX_NAME, fields=fields)
+    vector_search = VectorSearch(
+        algorithms=[HnswAlgorithmConfiguration(name="hnsw")],
+        profiles=[VectorSearchProfile(name="hnsw-profile", algorithm_configuration_name="hnsw")],
+    )
+    idx = SearchIndex(name=INDEX_NAME, fields=fields, vector_search=vector_search)
     try:
         index_client.delete_index(INDEX_NAME)
         log.info("Dropped existing index '%s'", INDEX_NAME)
     except Exception:
         pass
     index_client.create_index(idx)
-    log.info("Created index '%s' (keyword BM25 only)", INDEX_NAME)
+    log.info("Created index '%s' (BM25 keyword + HNSW vector)", INDEX_NAME)
     log.info("")
     log.info("Schema:")
-    log.info("  id           String  key")
-    log.info("  pattern_name String  searchable (en.microsoft)")
+    log.info("  id            String  key")
+    log.info("  pattern_name  String  searchable (en.microsoft)")
     log.info("  workload_type String  filterable, facetable")
-    log.info("  source_url   String  retrievable")
-    log.info("  content      String  searchable (en.microsoft), BM25")
+    log.info("  source_url    String  retrievable")
+    log.info("  content       String  searchable (en.microsoft), BM25")
+    log.info("  embedding     Collection(Single) 1536-dim HNSW vector")
     log.info("")
 
 
@@ -182,29 +184,17 @@ _MULTI_NL = re.compile(r'\n{3,}')
 
 
 def _html_to_text(html: str) -> str:
-    """Strip HTML to plain readable text, preserving paragraph breaks."""
-    # Remove block-level noise first (scripts, nav, headers, etc.)
     html = _BLOCK_TAGS.sub(' ', html)
-
-    # Try to isolate the main article body
     for tag in ('main', 'article'):
         m = re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', html, re.DOTALL | re.IGNORECASE)
         if m:
             html = m.group(1)
             break
-
-    # Convert block elements to newlines so paragraphs survive tag stripping
     html = re.sub(r'<(p|h[1-6]|li|dt|dd|div|br|tr)[^>]*>', '\n', html, flags=re.IGNORECASE)
     html = re.sub(r'</(p|h[1-6]|li|dt|dd|div|tr)>', '\n', html, flags=re.IGNORECASE)
-
-    # Strip remaining inline tags
     text = _INLINE_TAGS.sub(' ', html)
-
-    # Decode common HTML entities
     for entity, char in _ENTITIES:
         text = text.replace(entity, char)
-
-    # Clean up whitespace
     lines = []
     for line in text.splitlines():
         line = _WS.sub(' ', line).strip()
@@ -218,14 +208,9 @@ def _html_to_text(html: str) -> str:
 # ── Chunking ───────────────────────────────────────────────────────────────────
 
 def _chunk_text(text: str, source: dict) -> list[dict]:
-    """
-    Split text into chunks of ~CHUNK_CHARS by sentence boundary.
-    Each chunk carries the source metadata.
-    """
     sentences = re.split(r'(?<=[.!?])\s+|\n\n+', text)
     chunks: list[dict] = []
     buf = ""
-
     for sentence in sentences:
         sentence = sentence.strip()
         if not sentence:
@@ -235,10 +220,8 @@ def _chunk_text(text: str, source: dict) -> list[dict]:
             buf = sentence + " "
         else:
             buf += sentence + " "
-
     if buf.strip():
         chunks.append(_make_doc(buf.strip(), source))
-
     return chunks
 
 
@@ -249,7 +232,37 @@ def _make_doc(content: str, source: dict) -> dict:
         "workload_type": source["workload_type"],
         "source_url": source["url"],
         "content": content,
+        "embedding": None,  # filled in by embed_all_chunks()
     }
+
+
+# ── Embedding ──────────────────────────────────────────────────────────────────
+
+async def _embed_batch(texts: list[str]) -> list[list[float]]:
+    url = f"{OPENAI_ENDPOINT}/openai/deployments/{EMBEDDING_DEPLOYMENT}/embeddings?api-version=2024-02-01"
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            url,
+            headers={"api-key": OPENAI_API_KEY, "Content-Type": "application/json"},
+            json={"input": texts},
+        )
+    resp.raise_for_status()
+    data = resp.json()["data"]
+    return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
+
+
+async def embed_all_chunks(chunks: list[dict]) -> list[dict]:
+    batch_size = 16
+    total_batches = (len(chunks) + batch_size - 1) // batch_size
+    log.info("Embedding %d chunks with '%s' (%d batches)...", len(chunks), EMBEDDING_DEPLOYMENT, total_batches)
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i : i + batch_size]
+        texts = [c["content"] for c in batch]
+        embeddings = await _embed_batch(texts)
+        for chunk, vec in zip(batch, embeddings):
+            chunk["embedding"] = vec
+        log.info("  Embedded batch %d/%d", i // batch_size + 1, total_batches)
+    return chunks
 
 
 # ── Fetch ──────────────────────────────────────────────────────────────────────
@@ -302,6 +315,13 @@ async def main() -> None:
         return
 
     log.info("")
+    log.info("Total chunks before embedding: %d", len(all_chunks))
+
+    # Embed all chunks
+    await embed_all_chunks(all_chunks)
+
+    # Upload to search index
+    log.info("")
     log.info("Uploading %d chunks to '%s'...", len(all_chunks), INDEX_NAME)
     batch_size = 100
     total_ok = 0
@@ -310,19 +330,19 @@ async def main() -> None:
         results = search_client.upload_documents(documents=batch)
         ok = sum(1 for r in results if r.succeeded)
         total_ok += ok
-        log.info("  Batch %d: %d/%d succeeded", i // batch_size + 1, ok, len(batch))
+        log.info("  Upload batch %d: %d/%d succeeded", i // batch_size + 1, ok, len(batch))
 
+    sources_ingested = len({c["source_url"] for c in all_chunks})
     log.info("")
     log.info("=" * 60)
     log.info("INGEST COMPLETE")
-    log.info("  Index:  %s", INDEX_NAME)
-    log.info("  Search: %s", SEARCH_ENDPOINT)
-    log.info("  Docs fetched from %d sources", len(CORPUS))
-    log.info("  Chunks uploaded: %d / %d", total_ok, len(all_chunks))
-    log.info("")
-    log.info("Schema recap:")
-    log.info("  id, pattern_name (searchable), workload_type (filterable),")
-    log.info("  source_url (retrievable), content (searchable BM25 en.microsoft)")
+    log.info("  Index:            %s", INDEX_NAME)
+    log.info("  Search endpoint:  %s", SEARCH_ENDPOINT)
+    log.info("  Sources fetched:  %d / %d", sources_ingested, len(CORPUS))
+    log.info("  Chunks uploaded:  %d / %d", total_ok, len(all_chunks))
+    log.info("  Chunk size:       ~%d chars", CHUNK_CHARS)
+    log.info("  Embedding model:  %s (%d dims)", EMBEDDING_DEPLOYMENT, EMBEDDING_DIMS)
+    log.info("  Search type:      BM25 keyword + HNSW vector (hybrid)")
     log.info("=" * 60)
 
 

@@ -556,56 +556,107 @@ async def generate_eraser_dsl(arch_json: dict) -> str | None:
         return None
 
 
-async def retrieve_arch_context(scenario: str, top_k: int = 3) -> str:
+async def _embed_query(text: str) -> list[float] | None:
+    """Embed a query string using text-embedding-3-small; returns None if unavailable."""
+    dep = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "")
+    if not dep:
+        return None
+    try:
+        endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+        api_key  = os.environ["AZURE_OPENAI_KEY"]
+        url = f"{endpoint}/openai/deployments/{dep}/embeddings?api-version=2024-02-01"
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json={"input": text},
+            )
+        resp.raise_for_status()
+        return resp.json()["data"][0]["embedding"]
+    except Exception as exc:
+        logger.warning("rag: embed query failed: %s", exc)
+        return None
+
+
+async def retrieve_arch_context(scenario: str, top_k: int = 5) -> str:
     """
-    Query the arch-center-spike Azure AI Search index (keyword BM25) for reference
-    architecture chunks relevant to this scenario.  Returns formatted text to inject
-    into the ARCHITECT system prompt, or empty string if RAG is unavailable.
+    Hybrid search (BM25 keyword + vector) in the arch-center-spike Azure AI Search
+    index. Returns formatted reference chunks to inject into the ARCHITECT prompt.
+
+    Diversity: prefers one chunk per unique source URL, filling remaining slots from
+    the best remaining chunks.  Falls back to keyword-only if embedding unavailable.
 
     Requires:
-      - AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY env vars set
+      - AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_API_KEY env vars set
+      - AZURE_OPENAI_EMBEDDING_DEPLOYMENT set (e.g. "text-embedding-3-small")
       - "arch-center-spike" index populated via scripts/ingest_arch_center.py
     """
-    endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
-    api_key  = os.environ.get("AZURE_SEARCH_API_KEY", "")
-    if not endpoint or not api_key:
+    endpoint   = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
+    search_key = os.environ.get("AZURE_SEARCH_API_KEY", "")
+    if not endpoint or not search_key:
         logger.warning("rag: AZURE_SEARCH_ENDPOINT or AZURE_SEARCH_API_KEY not set — skipping")
         return ""
     try:
+        import asyncio
         from azure.search.documents import SearchClient
         from azure.core.credentials import AzureKeyCredential
 
-        query = scenario[:500]
+        query     = scenario[:500]
+        embedding = await _embed_query(query)
+        use_vector = embedding is not None
 
-        def _sync_search() -> list[str]:
+        def _sync_search() -> list[dict]:
             client = SearchClient(
                 endpoint=endpoint,
                 index_name="arch-center-spike",
-                credential=AzureKeyCredential(api_key),
+                credential=AzureKeyCredential(search_key),
             )
-            results = client.search(
-                search_text=query,
-                select=["pattern_name", "workload_type", "content", "source_url"],
-                top=top_k,
-            )
-            out: list[str] = []
-            for r in results:
-                header = f"[{r['pattern_name']} | {r['source_url']}]"
-                out.append(f"{header}\n{r['content']}")
-            return out
+            kwargs: dict = {
+                "search_text": query,
+                "select": ["pattern_name", "workload_type", "content", "source_url"],
+                "top": top_k * 3,  # fetch extra for diversity dedup
+            }
+            if use_vector:
+                from azure.search.documents.models import VectorizedQuery
+                kwargs["vector_queries"] = [
+                    VectorizedQuery(
+                        vector=embedding,
+                        k_nearest_neighbors=top_k,
+                        fields="embedding",
+                    )
+                ]
+            results = client.search(**kwargs)
+            return [dict(r) for r in results]
 
-        import asyncio
-        chunks = await asyncio.to_thread(_sync_search)
+        raw = await asyncio.to_thread(_sync_search)
 
-        if not chunks:
+        # Diversity: one chunk per source URL first, then fill remaining slots
+        seen: set[str] = set()
+        primary: list[dict]   = []
+        secondary: list[dict] = []
+        for r in raw:
+            src = r.get("source_url", "")
+            if src not in seen:
+                seen.add(src)
+                primary.append(r)
+            else:
+                secondary.append(r)
+        diverse = (primary + secondary)[:top_k]
+
+        if not diverse:
             logger.info("rag: no results for query %r", query[:80])
             return ""
 
+        search_type = "hybrid" if use_vector else "keyword"
         logger.info(
-            "rag: retrieved %d chunk(s) for query %r",
-            len(chunks), query[:80],
+            "rag: retrieved %d chunk(s) via %s for query %r",
+            len(diverse), search_type, query[:80],
         )
-        return "\n\n---\n\n".join(chunks)
+        formatted = [
+            f"[{r['pattern_name']} | {r['source_url']}]\n{r['content']}"
+            for r in diverse
+        ]
+        return "\n\n---\n\n".join(formatted)
 
     except Exception as exc:
         logger.warning("rag: retrieval failed: %s", exc)
@@ -668,13 +719,19 @@ async def _call_foundry(history: list[dict], rag_context: str = "") -> str:
             "content": (
                 "=== AZURE REFERENCE ARCHITECTURE GUIDANCE ===\n"
                 "The following authoritative excerpts were retrieved from the Azure Architecture Center "
-                "and Azure documentation for this specific scenario. Use them to inform your design:\n"
-                "- Which components are MANDATORY vs OPTIONAL for this workload pattern\n"
-                "- The correct access and connectivity model (critical: AVD uses reverse-connect "
-                "transport over HTTPS/443 -- users reach session hosts WITHOUT a VPN; a VPN Gateway "
-                "is only needed if there is on-premises AD DS or on-prem data sources)\n"
-                "- Architecture best practices specific to this workload type\n"
-                "Prefer this guidance over general assumptions.\n\n"
+                "and Azure documentation for this specific scenario.\n\n"
+                "GROUNDING RULES -- follow these exactly:\n"
+                "1. Use these references to determine which components are correct, mandatory, or "
+                "optional for this specific workload type.\n"
+                "2. Use the correct access and connectivity model from the reference (e.g. AVD uses "
+                "reverse-connect transport over HTTPS/443 -- no VPN needed for cloud-only deployments; "
+                "a VPN Gateway is only required when on-premises AD DS or on-prem data sources are needed).\n"
+                "3. CRITICAL -- design only for what the user asked: do NOT copy topology, zones, or "
+                "components from the reference that the user did NOT request. If the reference shows an "
+                "on-premises environment but the user said cloud-only, omit on-premises entirely. If the "
+                "reference includes ExpressRoute but the user has no on-prem connectivity requirement, "
+                "omit it. Adapt the reference pattern to the user's actual stated requirements -- "
+                "never copy a reference architecture wholesale.\n\n"
                 f"{rag_context}\n"
                 "=== END REFERENCE GUIDANCE ==="
             ),
