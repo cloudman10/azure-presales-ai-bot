@@ -23,58 +23,58 @@ _XML_PROHIBITED = _re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]")
 # ── Color palette (single source of truth — swap all values here for dark theme) ──
 _PALETTE: dict = {
     # ── Canvas & surfaces ─────────────────────────────────────────────────────
-    "canvas":           "#F4F6F8",   # page/document background
-    "surface":          "#FFFFFF",   # resource row fill, migration step card bg, sidebar panel card
-    "surface_alt":      "#FAFBFC",   # sidebar outer background
-    "surface_mig":      "#EBF4FB",   # pillar strip, migration band, Azure envelope label bg
-    "surface_cp":       "#F8F8FC",   # principles + future options band bg
-    "surface_leg":      "#EEF2F6",   # legend band bg
+    "canvas":           "#0d1117",   # page/document background (near-black)
+    "surface":          "#161b22",   # resource row fill, migration step card bg, sidebar panel card
+    "surface_alt":      "#1c2129",   # sidebar outer background
+    "surface_mig":      "#161b22",   # pillar strip, migration band, Azure envelope label bg
+    "surface_cp":       "#161b22",   # principles + future options band bg
+    "surface_leg":      "#161b22",   # legend band bg
     # ── Borders & dividers ────────────────────────────────────────────────────
-    "border":           "#E8E8E8",   # resource row border, sidebar panel card border
-    "border_panel":     "#DDE4EC",   # sidebar outer panel border
-    "border_mig":       "#C3DDF5",   # pillar strip bottom line, pillar divider, migration band border
-    "border_mig_step":  "#90CAF9",   # migration step card border
-    "border_cp":        "#E0E0F0",   # principles+future band border
-    "border_cp_div":    "#DDDDF0",   # vertical divider inside principles+future band
-    "border_leg":       "#CDD5DF",   # legend band border
+    "border":           "#30363d",   # resource row border, sidebar panel card border
+    "border_panel":     "#30363d",   # sidebar outer panel border
+    "border_mig":       "#30363d",   # pillar strip bottom line, pillar divider, migration band border
+    "border_mig_step":  "#3d444d",   # migration step card border
+    "border_cp":        "#30363d",   # principles+future band border
+    "border_cp_div":    "#3d444d",   # vertical divider inside principles+future band
+    "border_leg":       "#30363d",   # legend band border
     # ── Text ─────────────────────────────────────────────────────────────────
-    "text_primary":     "#1A1A2E",   # resource names, sidebar labels, region primary text
-    "text_secondary":   "#666666",   # resource roles, migration step descriptions
-    "text_muted":       "#555555",   # region paired row, legend "Legend:" label
-    "text_faint":       "#888888",   # "Region not specified" italic
-    "text_dark":        "#333333",   # principles and future options body text
-    "text_badge":       "#444444",   # pillar description text, legend item labels
+    "text_primary":     "#e6edf3",   # resource names, sidebar labels, region primary text
+    "text_secondary":   "#adbac7",   # resource roles, migration step descriptions
+    "text_muted":       "#768390",   # region paired row, legend "Legend:" label
+    "text_faint":       "#545d68",   # "Region not specified" italic
+    "text_dark":        "#e6edf3",   # principles/future options body text (light on dark bg)
+    "text_badge":       "#ffffff",   # pillar description text, legend item labels
     # ── Accent colors ─────────────────────────────────────────────────────────
-    "accent":           "#0078D4",   # primary azure blue: connections, envelope, circles, arrows
-    "accent_teal":      "#0099BC",   # networking badge color, region sidebar panel header
+    "accent":           "#388bfd",   # primary blue: connections, envelope, circles, arrows
+    "accent_teal":      "#39c5cf",   # networking badge color, region sidebar panel header
     # ── Header gradient ───────────────────────────────────────────────────────
-    "hdr_start":        "#0F2D57",   # gradient dark (left) stop
-    "hdr_end":          "#1565C0",   # gradient bright (right) stop
-    "hdr_subtitle":     "#A8CCEC",   # subtitle text on dark header
-    # ── Value pillar accent colors ────────────────────────────────────────────
-    "pillar_secure":    "#D83B01",   # Secure & Zero Trust; also Security sidebar panel header
-    "pillar_reliable":  "#107C10",   # Resilient & Available; also Future Options heading/bullets
-    "pillar_efficient": "#5C2D91",   # Operationally Efficient; Mgmt sidebar panel, Principles heading
+    "hdr_start":        "#1f6feb",   # gradient left stop
+    "hdr_end":          "#0d419d",   # gradient right stop
+    "hdr_subtitle":     "#adbac7",   # subtitle text on header
+    # ── Value pillar accent colors (bright hues readable on dark bg) ──────────
+    "pillar_secure":    "#f0883e",   # Secure & Zero Trust; also Security sidebar panel header
+    "pillar_reliable":  "#3fb950",   # Resilient & Available; also Future Options heading/bullets
+    "pillar_efficient": "#bc8cff",   # Operationally Efficient; Mgmt sidebar panel, Principles heading
     # ── Sidebar panel header colors ───────────────────────────────────────────
-    "sb_bkp":           "#0078D4",   # Backup & DR panel header (same as accent)
+    "sb_bkp":           "#388bfd",   # Backup & DR panel header (same as accent)
     # (Security panel = pillar_secure; Management panel = pillar_efficient; Region panel = accent_teal)
     # ── Badge fallback colors (letter-badge for unmapped resource types) ───────
-    "badge_compute":    "#0078D4",   # compute: VM, AKS, App Service, Container, Function, AVD
-    "badge_networking": "#0099BC",   # networking: Firewall, Bastion, VPN, ER, LB, AGW, VNet, etc.
-    "badge_data":       "#7B2FBE",   # data/storage: SQL, Cosmos, Storage, MySQL, Postgres, Redis, ADF
-    "badge_identity":   "#005A9E",   # identity: Entra ID, Managed Identity
-    "badge_security":   "#D83B01",   # security: Key Vault, Defender, Sentinel
-    "badge_mgmt":       "#5C2D91",   # management: Monitor, Log Analytics, RSV, Update Manager, etc.
-    "badge_onprem":     "#555555",   # on-prem VM / Server badge fill
-    "badge_onprem_hv":  "#444444",   # HyperV host badge fill
-    "badge_onprem_net": "#666666",   # on-prem network / firewall badge fill
+    "badge_compute":    "#388bfd",   # compute: VM, AKS, App Service, Container, Function, AVD
+    "badge_networking": "#39c5cf",   # networking: Firewall, Bastion, VPN, ER, LB, AGW, VNet, etc.
+    "badge_data":       "#bc8cff",   # data/storage: SQL, Cosmos, Storage, MySQL, Postgres, Redis, ADF
+    "badge_identity":   "#79c0ff",   # identity: Entra ID, Managed Identity
+    "badge_security":   "#f0883e",   # security: Key Vault, Defender, Sentinel
+    "badge_mgmt":       "#a371f7",   # management: Monitor, Log Analytics, RSV, Update Manager, etc.
+    "badge_onprem":     "#8b949e",   # on-prem VM / Server badge fill
+    "badge_onprem_hv":  "#6e7681",   # HyperV host badge fill
+    "badge_onprem_net": "#768390",   # on-prem network / firewall badge fill
     # ── Zone style sub-dicts (_ZONE_STYLE is derived from these) ──────────────
-    "zone_onprem": {"bg": "#F0F0F0", "border": "#AAAAAA", "hdr": "#757575", "hdr_fg": "#FFFFFF"},
-    "zone_hub":    {"bg": "#E3F2FD", "border": "#90CAF9", "hdr": "#1565C0", "hdr_fg": "#FFFFFF"},
-    "zone_spoke":  {"bg": "#E8F5E9", "border": "#A5D6A7", "hdr": "#2E7D32", "hdr_fg": "#FFFFFF"},
-    "zone_shared": {"bg": "#F3E5F5", "border": "#CE93D8", "hdr": "#6A1B9A", "hdr_fg": "#FFFFFF"},
-    "zone_mgmt":   {"bg": "#FFF3E0", "border": "#FFCC80", "hdr": "#E65100", "hdr_fg": "#FFFFFF"},
-    "zone_default":{"bg": "#F5F5F5", "border": "#CCCCCC", "hdr": "#999999", "hdr_fg": "#FFFFFF"},
+    "zone_onprem": {"bg": "#1c2128", "border": "#6e7681", "hdr": "#373e47", "hdr_fg": "#e6edf3"},
+    "zone_hub":    {"bg": "#0d2135", "border": "#388bfd", "hdr": "#1256c9", "hdr_fg": "#ffffff"},
+    "zone_spoke":  {"bg": "#0d1f18", "border": "#3fb950", "hdr": "#1a4731", "hdr_fg": "#ffffff"},
+    "zone_shared": {"bg": "#1e1228", "border": "#bc8cff", "hdr": "#3d246e", "hdr_fg": "#ffffff"},
+    "zone_mgmt":   {"bg": "#201a0e", "border": "#d29922", "hdr": "#5c4400", "hdr_fg": "#ffffff"},
+    "zone_default":{"bg": "#161b22", "border": "#3d444d", "hdr": "#1c2129", "hdr_fg": "#adbac7"},
 }
 
 # ── Icon infrastructure ───────────────────────────────────────────────────────
