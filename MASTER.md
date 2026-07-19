@@ -5,7 +5,7 @@
 
 ---
 
-## Current Status (2026-07-12) — v2.4.0
+## Current Status (2026-07-19) — v2.4.0
 
 ### Last Known-Good State (2026-07-06)
 - Commit: `ca8c0b3` (main) — multi-SKU pricing fix complete, live on prod
@@ -365,6 +365,10 @@ ANTHROPIC_API_KEY=<key>
 **Eraser API (`diagram_architect.py` — dev only):**
 - `ERASER_API_KEY` — Bearer token for `app.eraser.io/api/render/elements`. Set on dev app only. **⚠ ROTATE before prod** — current token was exposed in plaintext; revoke + regenerate in Eraser dashboard.
 
+**RAG / Architect grounding (`diagram_architect.py` — dev only today):**
+- `RAG_ENABLED` — Set to `"true"` (or `"1"`/`"yes"`) to enable hybrid retrieval on the first architect turn. **Set on dev only; NOT on prod** — spike index, not production-ready corpus.
+- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` — Embedding model deployment name. Default: `text-embedding-3-small`. If unset, vector retrieval is skipped (BM25 keyword-only fallback). Same `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_KEY` as GPT-4o — no separate endpoint needed.
+
 **Observability:**
 - `APPLICATIONINSIGHTS_CONNECTION_STRING` — Azure Monitor SDK (`configure_azure_monitor()` in `main.py`)
 
@@ -584,6 +588,7 @@ azure-presales-ai-bot/
 - VM Price Compare (`/compare`) — filterable/sortable table of all deployable australiaeast SKUs; region, OS, vCPU range, RAM range filters; all pricing tiers (PAYG, Spot, SP 1/3yr, RI 1/3yr); default OS=Windows; result count + price freshness; purple "Arm64" badge on Linux Arm64 SKUs
 - Solution Architecture Designer (`/architect`) — Eraser API integration (dev only, gated on `ERASER_API_KEY`): GPT-4o generates Eraser cloud-architecture DSL (separate focused LLM call); `sanitize_eraser_dsl()` drops connections targeting group names (deterministic guard); `render_with_eraser()` calls `app.eraser.io/api/render/elements`; SHA-256 DSL cache avoids duplicate paid renders; SVG renderer retained as free default/fallback when key unset or Eraser fails; Eraser image displayed in portal UI; download saves PNG via blob fetch; Eraser never visible to user
 - Compare deployability gate — `index_vm_prices.py` applies ARM LOCATION-restriction filter (141 location-restricted SKUs excluded) plus Arm64/OS compatibility gate (Arm64 SKUs are Linux-only in the grid; Windows images are x86-64; 9 phantom Windows Arm64 docs removed); index: 1,975 docs (1,036 Linux + 939 Windows); `architecture` field (Arm64/x64) on every doc; portal-accurate results
+- RAG grounding on dev (`RAG_ENABLED=true`): `arch-center-spike` Azure AI Search index (897 chunks from 8 Azure Architecture Center pages, ~400-char chunks, text-embedding-3-small 1536d HNSW embeddings, BM25+vector hybrid, top-k=5 with source-diversity dedup, workload keyword query expansion, grounding-discipline prompt); validated A/B: AKS GROUNDED +3/9 checks (system node pool, ACR as mandatory resource, private cluster endpoint), 0 regressions. NOT on prod.
 - Per-VM pricing term selection — radio in each term's own header (PAYG hero, 1/3-Yr SP, 1/3-Yr RI, PAYG+HB, 1/3-Yr RI+HB for Windows); PAYG default; radio click selects without expanding breakdown; SP/RI show total monthly in header; +HB rows collapsible with Compute + License $0 (AHB) + Total; basket and export show term label per line; +HB footnote in export; storage undiscounted regardless of term
 - 60+ city-to-region mapping (Australia, Asia Pacific, Middle East, Europe, Americas, Africa)
 - Modern SKU preference — v4/v5/v6 ranked above v1/v2; Promo/Basic excluded
@@ -1063,7 +1068,7 @@ After this refactor, the pipeline is technically sound (rendering, sanitizing, f
 
 - **No connections rendered** — `connections[]` is parsed but SVG arrows between zones are not drawn (deferred). Zone-to-zone flow is implied by column order (left→right).
 - **No draw.io export** — SVG only; draw.io evaluated and rejected 2026-06-24 (see decision log).
-- **LLM grounding** — architect agent uses GPT-4o with no RAG retrieval. New or unusual Azure service types may produce unmapped `type` values that fall back to letter-badge.
+- **LLM grounding (dev: RAG active; prod: not yet)** — ARCHITECT agent uses hybrid search RAG on dev (`RAG_ENABLED=true`). `arch-center-spike` index: 897 chunks from 8 Azure Architecture Center pages, text-embedding-3-small 1536d embeddings, ~400-char chunks, BM25+vector hybrid, top-k=5 with source diversity, query expansion. RAG is NOT set on prod. Unmapped `type` values still fall back to letter-badge.
 - **Auto-height** — canvas grows with zone count; very tall zone stacks may exceed typical slide height.
 - **Single-step architect** — no memory of prior architecture conversations (each `/architect` session is independent). Session ID scoped to page load.
 
@@ -1071,24 +1076,45 @@ After this refactor, the pipeline is technically sound (rendering, sanitizing, f
 
 ### Next Directions (parked)
 
-#### Priority 1 — RAG grounding for the architect agent — NEXT BUILD (spike first)
+#### Priority 1 — RAG grounding for the architect agent — SPIKE COMPLETE, PHASE 2 APPROVED (2026-07-19)
 
-**Why prompt-scaffolding has plateaued:** After the two-agent refactor (2026-07-12), the /architect pipeline is technically sound — correct rendering, Eraser integration, baseline-then-confirm flow, conditional hub fundamentals. But per-workload correctness across 100+ open-ended scenarios cannot be prompted in. The agent produces generically-correct but specifically-wrong architectures.
+**RAG spike go/no-go: GO.** Phase 2 (full corpus build) is approved and prioritized.
 
-Known example: AVD cloud-only designs incorrectly include a VPN Gateway. This is wrong — AVD users connect over HTTPS/443 via the reverse-connect broker model; there is no VPN in a cloud-only AVD deployment. VPN Gateway is only valid if the customer has on-prem connectivity requirements. This cannot be fixed by prompt iteration — the agent lacks the domain depth to know which services are logically required vs. impossible for each combination of workload and connectivity pattern.
+**Decisive A/B evidence (grounded vs ungrounded, dev, 2026-07-19):**
 
-**Accuracy target:** A ChatGPT image-gen reference diagram for "AVD for SAP B1, 50-user SMB, Sydney" defines what "complete and correct" looks like — Option1/Option2 connectivity alternatives, explicit AVD access model (no VPN for cloud-only), App/Data tiering, benefits, legend. This is the quality bar RAG should reach.
+| Scenario | Result | Key finding |
+|---|---|---|
+| AKS baseline | **GROUNDED WINS +3 checks, 0 regressions** | Grounded added: system node pool (in assumptions), Azure Container Registry as a MANDATORY resource (not just future_option), AKS API Server Private Endpoint. Source: AKS Baseline Architecture doc. First clean proof RAG adds knowledge the prompt lacks. |
+| Azure OpenAI landing zone (enterprise) | NO DIFFERENCE (5/7 both) | No OpenAI LZ content in spike corpus — proves RAG value = corpus coverage, not retrieval quality. |
+| SAP cloud-only (over-grounding validation) | FIXED | Grounding-discipline prompt eliminated spurious on-prem zone. Zero on-prem, zero VPN, zero ExpressRoute in cloud-only design. |
 
-**Image-gen as renderer: REJECTED.** Non-reproducible, non-editable, garbles text labels. Eraser stays the renderer; RAG makes the content architecturally correct.
+**Spike infrastructure — working, reused in Phase 2:**
+- Azure AI Search index `arch-center-spike` — 897 chunks from 8 Azure Architecture Center pages (~400-char chunks, was 1200)
+- Embedding: `text-embedding-3-small` (deployed GlobalStandard 120k TPM on `hyperxen-foundry-presales1`), 1536 dims
+- Retrieval: hybrid BM25 keyword + HNSW vector (`VectorizedQuery`), top-k=5, source-diversity dedup
+- Query expansion: workload-detected technical term injection before retrieval (e.g. AKS → adds "system node pool", "user node pool", "Azure CNI", "ACR private endpoint", etc.)
+- Grounding discipline: RAG injection rule — "use reference for correctness but design ONLY for the user's stated requirements; do not copy unrequested topology"
+- `RAG_ENABLED` env var gates retrieval on/off. Currently `true` on dev, NOT set on prod.
 
-**Phase-1 spike plan (before full build):**
-1. Ingest ~5-10 Azure Architecture Center reference architectures (incl. AVD, SAP-on-Azure, hub-spoke Landing Zone) into the existing `hyperxen-search` Azure AI Search index (same infra as VM SKU index, `rg-hyperxen-app-dev`).
-2. Wire retrieval into `architect_chat()` — inject retrieved context into ARCHITECT system prompt before the first turn.
-3. Test grounded-vs-ungrounded on the AVD+SAP scenario (the known failure case).
-4. Review the Part B RAG plan before expanding corpus.
-5. Only expand to full corpus build after the spike proves grounded accuracy on the test case.
+**Phase 2 strategy — prioritized + deep, NOT ingest-everything:**
 
-**Why spike-first:** Corpus build is cheap (5-10 docs). The high-risk question is whether RAG retrieval changes the agent's reasoning enough to fix the specific-wrongness. Prove it on one scenario first before investing in a full ingest pipeline.
+1. **Prioritize by PROMPT WEAKNESS.** Ingest first the patterns where the ARCHITECT_PROMPT is thin or absent. Do NOT re-ingest what the prompt already handles well (basic hub-spoke, AVD basics) — RAG adds marginal value there.
+   - HIGH PRIORITY (prompt thin/absent): Azure OpenAI landing zone, Azure Landing Zones (ALZ), AKS sub-pattern depth, exotic/long-tail patterns (Azure Arc, AVS, HPC)
+   - LOW PRIORITY (prompt already strong): basic hub-spoke topology, AVD cloud-only, hybrid connectivity
+
+2. **Go DEEP per high-value pattern.** Ingest sub-topic docs, not just the overview. Spike proved: one AKS overview page surfaces security sections but misses node-pool/CNI specifics (scored 5/9; gaps = user node pool, Azure CNI, ingress controller, network policy). Phase 2 AKS corpus needs: node pool guide, CNI guide, ingress guide, workload identity guide separately.
+
+3. **Add an EVAL discipline.** Maintain a set of A/B test scenarios (one per high-value workload type) to confirm coverage and accuracy improves as corpus grows. Run eval before each corpus expansion batch.
+
+4. **RAG is ongoing maintenance.** Corpus curation, freshness updates, and eval are a recurring discipline — not a one-time build. Azure Architecture Center docs change as services evolve.
+
+**Cost profile:**
+- Azure AI Search: `arch-center-spike` in existing `hyperxen-search` (Free tier — no incremental cost)
+- Embedding: text-embedding-3-small GlobalStandard 120k TPM; per-query embed adds ~1–5ms at $0.00002/1k tokens (negligible)
+- Token cost: RAG context injection adds ~1,000–2,000 tokens per grounded first-turn request to the ARCHITECT GPT-4o call
+- Eraser render: unchanged — 1 `/render/elements` call per diagram regardless of RAG
+
+**Next build: Phase 2 corpus expansion (dev, spike index → production index).**
 
 #### Track 2 — draw.io rendering experiment — **EVALUATED AND REJECTED (2026-06-24)**
 
@@ -1124,6 +1150,9 @@ Known example: AVD cloud-only designs incorrectly include a VPN Gateway. This is
 | Image-gen renderer evaluated and rejected (2026-07-12) | ChatGPT/DALL-E image-gen evaluated as a renderer. Rejected: non-reproducible (same prompt → different output), non-editable, garbles text labels. Eraser stays; accuracy comes from RAG grounding. |
 | Two-agent split: Architect + Draftsman (2026-07-12) | Single agent was unreliable for both DESIGN_SPEC and Eraser DSL in one response. Split into focused agents with structured JSON handoff (DESIGN_SPEC). Each agent has a tighter, more reliable prompt. |
 | Prompt-scaffolding ceiling reached (2026-07-12) | Per-workload correctness (e.g. AVD VPN logic, SAP tier separation) cannot be achieved through prompt iteration alone at scale. RAG grounding against Azure Architecture Center reference architectures is the next step. |
+| RAG spike go/no-go = GO (2026-07-19) | AKS grounded WINS +3/9 checks (system node pool, ACR as mandatory resource, private cluster API endpoint), 0 regressions. OpenAI LZ: no difference (no corpus coverage yet). Go/no-go criterion met: grounded wins on at least 1 scenario with 0 regressions. Decision: FULL CORPUS BUILD approved — Phase 2 starts next build. |
+| Hybrid retrieval: BM25 + HNSW vector + query expansion (2026-07-19) | Keyword-only retrieval missed technical sub-patterns (AKS node pools, CNI) because natural-language queries don't contain those terms. Vector search alone insufficient at 897-chunk scale. Query expansion (workload keyword detection + technical term injection before embedding) closed the gap deterministically without training data. |
+| Phase 2 corpus strategy: prioritized depth over breadth (2026-07-19) | Do NOT ingest all Azure Architecture Center docs indiscriminately. Prioritize by PROMPT WEAKNESS (patterns where ARCHITECT_PROMPT is thin or absent) and go DEEP per pattern (sub-topic docs, not just overview pages). Spike proved AKS overview alone scored 5/9; node pool + CNI + ingress guides are needed to close to 8/9+. |
 
 ---
 
@@ -1163,6 +1192,8 @@ Known example: AVD cloud-only designs incorrectly include a VPN Gateway. This is
 | `AZURE_SEARCH_API_KEY` | Azure AI Search admin key |
 | `ANTHROPIC_API_KEY` | Anthropic API key — **not set in App Service** (Anthropic path dormant). Add when switching `LLM_PROVIDER=anthropic`. |
 | `ERASER_API_KEY` | Eraser API bearer token — set on dev only. **⚠ ROTATE NOW** (current token compromised). Set on prod when promoting Eraser. |
+| `RAG_ENABLED` | `"true"` enables hybrid retrieval on first architect turn. Dev only — `arch-center-spike` is a spike index; not set on prod. |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Embedding model deployment name for RAG query embedding. `text-embedding-3-small` on dev. Omit to disable vector retrieval (keyword fallback). |
 | `ENVIRONMENT` | `dev` / `prod` |
 | `PORT` | `8000` |
 
