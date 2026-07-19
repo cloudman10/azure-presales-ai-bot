@@ -20,6 +20,63 @@ import re as _re
 # ── XML 1.0 prohibited chars ──────────────────────────────────────────────────
 _XML_PROHIBITED = _re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]")
 
+# ── Color palette (single source of truth — swap all values here for dark theme) ──
+_PALETTE: dict = {
+    # ── Canvas & surfaces ─────────────────────────────────────────────────────
+    "canvas":           "#F4F6F8",   # page/document background
+    "surface":          "#FFFFFF",   # resource row fill, migration step card bg, sidebar panel card
+    "surface_alt":      "#FAFBFC",   # sidebar outer background
+    "surface_mig":      "#EBF4FB",   # pillar strip, migration band, Azure envelope label bg
+    "surface_cp":       "#F8F8FC",   # principles + future options band bg
+    "surface_leg":      "#EEF2F6",   # legend band bg
+    # ── Borders & dividers ────────────────────────────────────────────────────
+    "border":           "#E8E8E8",   # resource row border, sidebar panel card border
+    "border_panel":     "#DDE4EC",   # sidebar outer panel border
+    "border_mig":       "#C3DDF5",   # pillar strip bottom line, pillar divider, migration band border
+    "border_mig_step":  "#90CAF9",   # migration step card border
+    "border_cp":        "#E0E0F0",   # principles+future band border
+    "border_cp_div":    "#DDDDF0",   # vertical divider inside principles+future band
+    "border_leg":       "#CDD5DF",   # legend band border
+    # ── Text ─────────────────────────────────────────────────────────────────
+    "text_primary":     "#1A1A2E",   # resource names, sidebar labels, region primary text
+    "text_secondary":   "#666666",   # resource roles, migration step descriptions
+    "text_muted":       "#555555",   # region paired row, legend "Legend:" label
+    "text_faint":       "#888888",   # "Region not specified" italic
+    "text_dark":        "#333333",   # principles and future options body text
+    "text_badge":       "#444444",   # pillar description text, legend item labels
+    # ── Accent colors ─────────────────────────────────────────────────────────
+    "accent":           "#0078D4",   # primary azure blue: connections, envelope, circles, arrows
+    "accent_teal":      "#0099BC",   # networking badge color, region sidebar panel header
+    # ── Header gradient ───────────────────────────────────────────────────────
+    "hdr_start":        "#0F2D57",   # gradient dark (left) stop
+    "hdr_end":          "#1565C0",   # gradient bright (right) stop
+    "hdr_subtitle":     "#A8CCEC",   # subtitle text on dark header
+    # ── Value pillar accent colors ────────────────────────────────────────────
+    "pillar_secure":    "#D83B01",   # Secure & Zero Trust; also Security sidebar panel header
+    "pillar_reliable":  "#107C10",   # Resilient & Available; also Future Options heading/bullets
+    "pillar_efficient": "#5C2D91",   # Operationally Efficient; Mgmt sidebar panel, Principles heading
+    # ── Sidebar panel header colors ───────────────────────────────────────────
+    "sb_bkp":           "#0078D4",   # Backup & DR panel header (same as accent)
+    # (Security panel = pillar_secure; Management panel = pillar_efficient; Region panel = accent_teal)
+    # ── Badge fallback colors (letter-badge for unmapped resource types) ───────
+    "badge_compute":    "#0078D4",   # compute: VM, AKS, App Service, Container, Function, AVD
+    "badge_networking": "#0099BC",   # networking: Firewall, Bastion, VPN, ER, LB, AGW, VNet, etc.
+    "badge_data":       "#7B2FBE",   # data/storage: SQL, Cosmos, Storage, MySQL, Postgres, Redis, ADF
+    "badge_identity":   "#005A9E",   # identity: Entra ID, Managed Identity
+    "badge_security":   "#D83B01",   # security: Key Vault, Defender, Sentinel
+    "badge_mgmt":       "#5C2D91",   # management: Monitor, Log Analytics, RSV, Update Manager, etc.
+    "badge_onprem":     "#555555",   # on-prem VM / Server badge fill
+    "badge_onprem_hv":  "#444444",   # HyperV host badge fill
+    "badge_onprem_net": "#666666",   # on-prem network / firewall badge fill
+    # ── Zone style sub-dicts (_ZONE_STYLE is derived from these) ──────────────
+    "zone_onprem": {"bg": "#F0F0F0", "border": "#AAAAAA", "hdr": "#757575", "hdr_fg": "#FFFFFF"},
+    "zone_hub":    {"bg": "#E3F2FD", "border": "#90CAF9", "hdr": "#1565C0", "hdr_fg": "#FFFFFF"},
+    "zone_spoke":  {"bg": "#E8F5E9", "border": "#A5D6A7", "hdr": "#2E7D32", "hdr_fg": "#FFFFFF"},
+    "zone_shared": {"bg": "#F3E5F5", "border": "#CE93D8", "hdr": "#6A1B9A", "hdr_fg": "#FFFFFF"},
+    "zone_mgmt":   {"bg": "#FFF3E0", "border": "#FFCC80", "hdr": "#E65100", "hdr_fg": "#FFFFFF"},
+    "zone_default":{"bg": "#F5F5F5", "border": "#CCCCCC", "hdr": "#999999", "hdr_fg": "#FFFFFF"},
+}
+
 # ── Icon infrastructure ───────────────────────────────────────────────────────
 _ICON_DIR = _pl.Path(__file__).parent.parent.parent / "static" / "azure-icons"
 
@@ -105,35 +162,35 @@ _ABBREV = {
 }
 
 _COLOR = {
-    "VirtualMachine": "#0078D4",  "ScaleSet": "#0078D4",    "AVDHostPool": "#0078D4",
-    "FunctionApp": "#0078D4",     "ContainerApp": "#0078D4","AKSCluster": "#0078D4",
-    "AppService": "#0078D4",      "AzureFirewall": "#0099BC","BastionHost": "#0099BC",
-    "VPNGateway": "#0099BC",      "ExpressRouteGateway": "#0099BC",
-    "ApplicationGateway": "#0099BC","LoadBalancer": "#0099BC","VirtualNetwork": "#0099BC",
-    "Subnet": "#0099BC",          "NetworkSecurityGroup": "#0099BC",
-    "PrivateDNSZone": "#0099BC",  "PrivateEndpoint": "#0099BC","NATGateway": "#0099BC",
-    "RouteTable": "#0099BC",      "VNetPeering": "#0099BC",
-    "SQLDatabase": "#7B2FBE",     "SQLManagedInstance": "#7B2FBE","StorageAccount": "#7B2FBE",
-    "CosmosDB": "#7B2FBE",        "MySQLDatabase": "#7B2FBE","PostgreSQLDatabase": "#7B2FBE",
-    "RedisCache": "#7B2FBE",      "DataFactory": "#7B2FBE",
-    "EntraID": "#005A9E",         "KeyVault": "#D83B01",    "DefenderForCloud": "#D83B01",
-    "AzurePolicy": "#5C2D91",     "Sentinel": "#D83B01",    "ManagedIdentity": "#005A9E",
-    "RecoveryServicesVault": "#5C2D91","LogAnalyticsWorkspace": "#5C2D91",
-    "AzureMonitor": "#5C2D91",    "ApplicationInsights": "#5C2D91",
-    "UpdateManager": "#5C2D91",   "AutomationAccount": "#5C2D91","CostManagement": "#5C2D91",
-    "OnPremVM": "#555555",        "OnPremServer": "#555555","HyperVHost": "#444444",
-    "OnPremNetwork": "#666666",   "OnPremFirewall": "#666666","AzureService": "#0078D4",
+    "VirtualMachine": _PALETTE["badge_compute"],   "ScaleSet": _PALETTE["badge_compute"],    "AVDHostPool": _PALETTE["badge_compute"],
+    "FunctionApp": _PALETTE["badge_compute"],      "ContainerApp": _PALETTE["badge_compute"], "AKSCluster": _PALETTE["badge_compute"],
+    "AppService": _PALETTE["badge_compute"],       "AzureFirewall": _PALETTE["badge_networking"], "BastionHost": _PALETTE["badge_networking"],
+    "VPNGateway": _PALETTE["badge_networking"],    "ExpressRouteGateway": _PALETTE["badge_networking"],
+    "ApplicationGateway": _PALETTE["badge_networking"], "LoadBalancer": _PALETTE["badge_networking"], "VirtualNetwork": _PALETTE["badge_networking"],
+    "Subnet": _PALETTE["badge_networking"],        "NetworkSecurityGroup": _PALETTE["badge_networking"],
+    "PrivateDNSZone": _PALETTE["badge_networking"], "PrivateEndpoint": _PALETTE["badge_networking"], "NATGateway": _PALETTE["badge_networking"],
+    "RouteTable": _PALETTE["badge_networking"],    "VNetPeering": _PALETTE["badge_networking"],
+    "SQLDatabase": _PALETTE["badge_data"],         "SQLManagedInstance": _PALETTE["badge_data"],    "StorageAccount": _PALETTE["badge_data"],
+    "CosmosDB": _PALETTE["badge_data"],            "MySQLDatabase": _PALETTE["badge_data"],         "PostgreSQLDatabase": _PALETTE["badge_data"],
+    "RedisCache": _PALETTE["badge_data"],          "DataFactory": _PALETTE["badge_data"],
+    "EntraID": _PALETTE["badge_identity"],         "KeyVault": _PALETTE["badge_security"],          "DefenderForCloud": _PALETTE["badge_security"],
+    "AzurePolicy": _PALETTE["badge_mgmt"],         "Sentinel": _PALETTE["badge_security"],          "ManagedIdentity": _PALETTE["badge_identity"],
+    "RecoveryServicesVault": _PALETTE["badge_mgmt"], "LogAnalyticsWorkspace": _PALETTE["badge_mgmt"],
+    "AzureMonitor": _PALETTE["badge_mgmt"],        "ApplicationInsights": _PALETTE["badge_mgmt"],
+    "UpdateManager": _PALETTE["badge_mgmt"],       "AutomationAccount": _PALETTE["badge_mgmt"],     "CostManagement": _PALETTE["badge_mgmt"],
+    "OnPremVM": _PALETTE["badge_onprem"],          "OnPremServer": _PALETTE["badge_onprem"],        "HyperVHost": _PALETTE["badge_onprem_hv"],
+    "OnPremNetwork": _PALETTE["badge_onprem_net"], "OnPremFirewall": _PALETTE["badge_onprem_net"],  "AzureService": _PALETTE["badge_compute"],
 }
 
 # ── Zone colour styles ────────────────────────────────────────────────────────
 _ZONE_STYLE = {
-    "onprem": {"bg": "#F0F0F0", "border": "#AAAAAA", "hdr": "#757575", "hdr_fg": "#FFFFFF"},
-    "hub":    {"bg": "#E3F2FD", "border": "#90CAF9", "hdr": "#1565C0", "hdr_fg": "#FFFFFF"},
-    "spoke":  {"bg": "#E8F5E9", "border": "#A5D6A7", "hdr": "#2E7D32", "hdr_fg": "#FFFFFF"},
-    "shared": {"bg": "#F3E5F5", "border": "#CE93D8", "hdr": "#6A1B9A", "hdr_fg": "#FFFFFF"},
-    "mgmt":   {"bg": "#FFF3E0", "border": "#FFCC80", "hdr": "#E65100", "hdr_fg": "#FFFFFF"},
+    "onprem": _PALETTE["zone_onprem"],
+    "hub":    _PALETTE["zone_hub"],
+    "spoke":  _PALETTE["zone_spoke"],
+    "shared": _PALETTE["zone_shared"],
+    "mgmt":   _PALETTE["zone_mgmt"],
 }
-_DEFAULT_STYLE = {"bg": "#F5F5F5", "border": "#CCCCCC", "hdr": "#999999", "hdr_fg": "#FFFFFF"}
+_DEFAULT_STYLE = _PALETTE["zone_default"]
 
 # ── Region detection ──────────────────────────────────────────────────────────
 _KNOWN_REGIONS = [
@@ -176,11 +233,11 @@ def _find_region(text: str) -> str:
 
 # ── Value pillars ─────────────────────────────────────────────────────────────
 _PIL_DEFAULTS = [
-    ("#D83B01", "Secure & Zero Trust",
+    (_PALETTE["pillar_secure"],    "Secure & Zero Trust",
      "Azure Firewall, no public IPs, Bastion access, Entra hybrid identity"),
-    ("#107C10", "Resilient & Available",
+    (_PALETTE["pillar_reliable"],  "Resilient & Available",
      "Recovery Vault backup, geo-redundant storage, zone-aware deployment"),
-    ("#5C2D91", "Operationally Efficient",
+    (_PALETTE["pillar_efficient"], "Operationally Efficient",
      "Azure Monitor, Update Manager, Automation for Day-2 operations"),
 ]
 _SECURE_KW  = {"firewall","bastion","public","trust","security","nsg","identity","zero"}
@@ -310,13 +367,13 @@ def render_architecture_svg(arch: dict) -> bytes:
 
     # ── Sidebar panels list ───────────────────────────────────────────────────
     sb_panels: list[tuple] = []   # (label, color, items_or_None)
-    if sec_items:  sb_panels.append(("Security & Identity",     "#D83B01", sec_items))
-    if mgmt_items: sb_panels.append(("Management & Monitoring", "#5C2D91", mgmt_items))
-    if bkp_items:  sb_panels.append(("Backup & DR",             "#0078D4", bkp_items))
+    if sec_items:  sb_panels.append(("Security & Identity",     _PALETTE["pillar_secure"],    sec_items))
+    if mgmt_items: sb_panels.append(("Management & Monitoring", _PALETTE["pillar_efficient"], mgmt_items))
+    if bkp_items:  sb_panels.append(("Backup & DR",             _PALETTE["sb_bkp"],           bkp_items))
     # Region panel always shown
     region_items_count = (2 if primary_region and paired_region else
                           1 if primary_region else 1)
-    sb_panels.append(("Region", "#0099BC", None))   # None = special region rendering
+    sb_panels.append(("Region", _PALETTE["accent_teal"], None))   # None = special region rendering
 
     sb_total_h = sum(
         _sb_panel_h(len(p[2])) if p[2] is not None else _sb_panel_h(region_items_count)
@@ -382,15 +439,15 @@ def render_architecture_svg(arch: dict) -> bytes:
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">',
         '<defs>',
         '  <linearGradient id="hdrG" x1="0%" y1="0%" x2="100%" y2="0%">',
-        '    <stop offset="0%"   stop-color="#0F2D57"/>',
-        '    <stop offset="100%" stop-color="#1565C0"/>',
+        f'    <stop offset="0%"   stop-color="{_PALETTE["hdr_start"]}"/>',
+        f'    <stop offset="100%" stop-color="{_PALETTE["hdr_end"]}"/>',
         '  </linearGradient>',
         '  <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">',
-        '    <polygon points="0 0, 8 3, 0 6" fill="#0078D4" opacity="0.8"/>',
+        f'    <polygon points="0 0, 8 3, 0 6" fill="{_PALETTE["accent"]}" opacity="0.8"/>',
         '  </marker>',
         '</defs>',
         # Canvas background
-        f'<rect width="{W}" height="{H}" fill="#F4F6F8"/>',
+        f'<rect width="{W}" height="{H}" fill="{_PALETTE["canvas"]}"/>',
     ]
 
     # ── Header bar ────────────────────────────────────────────────────────────
@@ -408,7 +465,7 @@ def render_architecture_svg(arch: dict) -> bytes:
     if subtitle:
         out.append(
             f'<text x="{_M + 50}" y="{_HDR_H // 2 + 12}" dominant-baseline="middle"'
-            f' font-size="10" fill="#A8CCEC"'
+            f' font-size="10" fill="{_PALETTE["hdr_subtitle"]}"'
             f' font-family="system-ui,Arial,sans-serif">{_e(_trunc(subtitle, 110))}</text>'
         )
     out.append(
@@ -421,11 +478,11 @@ def render_architecture_svg(arch: dict) -> bytes:
     pil_y = _HDR_H
     pil_w = W // 3
     pillars = _make_pillars(principles)
-    out.append(f'<rect x="0" y="{pil_y}" width="{W}" height="{_PIL_H}" fill="#EBF4FB"/>')
+    out.append(f'<rect x="0" y="{pil_y}" width="{W}" height="{_PIL_H}" fill="{_PALETTE["surface_mig"]}"/>')
     # Thin separator line at bottom of pillar row
     out.append(
         f'<line x1="0" y1="{pil_y + _PIL_H - 1}" x2="{W}" y2="{pil_y + _PIL_H - 1}"'
-        f' stroke="#C3DDF5" stroke-width="1"/>'
+        f' stroke="{_PALETTE["border_mig"]}" stroke-width="1"/>'
     )
 
     for i, (pcolor, ptitle, pdesc) in enumerate(pillars):
@@ -442,14 +499,14 @@ def render_architecture_svg(arch: dict) -> bytes:
             f' font-family="system-ui,Arial,sans-serif">{_e(ptitle)}</text>',
             # Description
             f'<text x="{px + _M}" y="{py_mid + 10}" dominant-baseline="middle"'
-            f' font-size="8" fill="#444444"'
+            f' font-size="8" fill="{_PALETTE["text_badge"]}"'
             f' font-family="system-ui,Arial,sans-serif">{_e(_trunc(pdesc, 78))}</text>',
         ]
         # Vertical divider (not after last pillar)
         if i < 2:
             out.append(
                 f'<line x1="{px + pil_w}" y1="{pil_y + 5}" x2="{px + pil_w}" y2="{pil_y + _PIL_H - 5}"'
-                f' stroke="#C3DDF5" stroke-width="1"/>'
+                f' stroke="{_PALETTE["border_mig"]}" stroke-width="1"/>'
             )
 
     # ── Azure envelope ────────────────────────────────────────────────────────
@@ -457,10 +514,10 @@ def render_architecture_svg(arch: dict) -> bytes:
         lbl_w = 130
         out += [
             f'<rect x="{az_x}" y="{az_y}" width="{az_w}" height="{az_h}"'
-            f' rx="8" fill="none" stroke="#0078D4" stroke-width="1.5" stroke-dasharray="6,3"/>',
-            f'<rect x="{az_x + 8}" y="{az_y - 12}" width="{lbl_w}" height="20" rx="4" fill="#EBF4FB"/>',
+            f' rx="8" fill="none" stroke="{_PALETTE["accent"]}" stroke-width="1.5" stroke-dasharray="6,3"/>',
+            f'<rect x="{az_x + 8}" y="{az_y - 12}" width="{lbl_w}" height="20" rx="4" fill="{_PALETTE["surface_mig"]}"/>',
             f'<text x="{az_x + 8 + lbl_w // 2}" y="{az_y - 2}"'
-            f' text-anchor="middle" font-size="10" font-weight="600" fill="#0078D4"'
+            f' text-anchor="middle" font-size="10" font-weight="600" fill="{_PALETTE["accent"]}"'
             f' font-family="system-ui,Arial,sans-serif">Microsoft Azure</text>',
         ]
 
@@ -503,7 +560,7 @@ def render_architecture_svg(arch: dict) -> bytes:
                 p += [
                     f'<g transform="translate({_ZP},{res_y:.0f})">',
                     f'<rect width="{rw}" height="{_RES_H}" rx="4"'
-                    f' fill="#FFFFFF" stroke="#E8E8E8" stroke-width="0.8"/>',
+                    f' fill="{_PALETTE["surface"]}" stroke="{_PALETTE["border"]}" stroke-width="0.8"/>',
                 ]
 
                 if icon:
@@ -512,7 +569,7 @@ def render_architecture_svg(arch: dict) -> bytes:
                     p.append(f'<image href="{icon}" x="3" y="{iy}" width="{ISIZ}" height="{ISIZ}"/>')
                 else:
                     abbr  = _ABBREV.get(rtype, rtype[:3].upper())
-                    color = _COLOR.get(rtype, "#0078D4")
+                    color = _COLOR.get(rtype, _PALETTE["accent"])
                     bw    = max(26, len(abbr) * 6 + 8)
                     tx    = bw + 9
                     p += [
@@ -526,16 +583,16 @@ def render_architecture_svg(arch: dict) -> bytes:
                 if rrole:
                     p += [
                         f'<text x="{tx}" y="{_RES_H // 2 - 5}" dominant-baseline="middle"'
-                        f' font-size="10" font-weight="500" fill="#1A1A2E"'
+                        f' font-size="10" font-weight="500" fill="{_PALETTE["text_primary"]}"'
                         f' font-family="system-ui,Arial,sans-serif">{rname}</text>',
                         f'<text x="{tx}" y="{_RES_H // 2 + 7}" dominant-baseline="middle"'
-                        f' font-size="8" fill="#666666"'
+                        f' font-size="8" fill="{_PALETTE["text_secondary"]}"'
                         f' font-family="system-ui,Arial,sans-serif">{rrole}</text>',
                     ]
                 else:
                     p.append(
                         f'<text x="{tx}" y="{_RES_H // 2 + 1}" dominant-baseline="middle"'
-                        f' font-size="10" font-weight="500" fill="#1A1A2E"'
+                        f' font-size="10" font-weight="500" fill="{_PALETTE["text_primary"]}"'
                         f' font-family="system-ui,Arial,sans-serif">{rname}</text>'
                     )
                 p.append("</g>")
@@ -599,16 +656,16 @@ def render_architecture_svg(arch: dict) -> bytes:
             lx, ly = (px1 + px2) / 2 + 6, (py1 + py2) / 2
 
         conn_svgs.append(
-            f'<path d="{d_}" fill="none" stroke="#0078D4"'
+            f'<path d="{d_}" fill="none" stroke="{_PALETTE["accent"]}"'
             f' stroke-width="1.5" opacity="0.7" marker-end="url(#arr)"/>'
         )
         if lbl:
             tw = len(lbl) * 5 + 6
             conn_svgs += [
                 f'<rect x="{lx - 2:.0f}" y="{ly - 10:.0f}" width="{tw}" height="12"'
-                f' rx="2" fill="#F4F6F8" opacity="0.9"/>',
+                f' rx="2" fill="{_PALETTE["canvas"]}" opacity="0.9"/>',
                 f'<text x="{lx:.0f}" y="{ly:.0f}" dominant-baseline="middle"'
-                f' font-size="8" fill="#0078D4" font-style="italic"'
+                f' font-size="8" fill="{_PALETTE["accent"]}" font-style="italic"'
                 f' font-family="system-ui,Arial,sans-serif">{_e(lbl)}</text>',
             ]
 
@@ -620,7 +677,7 @@ def render_architecture_svg(arch: dict) -> bytes:
     # Subtle background panel
     out.append(
         f'<rect x="{sb_x - 6}" y="{arch_y - 6}" width="{_SB_W + 12}" height="{arch_h + 12}"'
-        f' rx="8" fill="#FAFBFC" stroke="#DDE4EC" stroke-width="1"/>'
+        f' rx="8" fill="{_PALETTE["surface_alt"]}" stroke="{_PALETTE["border_panel"]}" stroke-width="1"/>'
     )
 
     sb_py = arch_y
@@ -631,7 +688,7 @@ def render_architecture_svg(arch: dict) -> bytes:
 
         out += [
             f'<rect x="{sb_x}" y="{sb_py}" width="{_SB_W}" height="{ph}"'
-            f' rx="6" fill="white" stroke="#E8E8E8" stroke-width="1"/>',
+            f' rx="6" fill="{_PALETTE["surface"]}" stroke="{_PALETTE["border"]}" stroke-width="1"/>',
             f'<rect x="{sb_x}" y="{sb_py}" width="{_SB_W}" height="{_SB_TH}" rx="6" fill="{panel_color}"/>',
             f'<rect x="{sb_x}" y="{sb_py + _SB_TH - 6}" width="{_SB_W}" height="6" fill="{panel_color}"/>',
             f'<text x="{sb_x + _SB_W // 2}" y="{sb_py + _SB_TH // 2 + 1}"'
@@ -648,7 +705,7 @@ def render_architecture_svg(arch: dict) -> bytes:
                 out += [
                     f'<circle cx="{sb_x + 12}" cy="{iy + _SB_IH // 2}" r="5" fill="{panel_color}"/>',
                     f'<text x="{sb_x + 22}" y="{iy + _SB_IH // 2 + 1}" dominant-baseline="middle"'
-                    f' font-size="9" font-weight="600" fill="#1A1A2E"'
+                    f' font-size="9" font-weight="600" fill="{_PALETTE["text_primary"]}"'
                     f' font-family="system-ui,Arial,sans-serif">{_e(_trunc("Primary: " + primary_region, 26))}</text>',
                 ]
                 iy += _SB_IH
@@ -657,13 +714,13 @@ def render_architecture_svg(arch: dict) -> bytes:
                         f'<circle cx="{sb_x + 12}" cy="{iy + _SB_IH // 2}" r="5"'
                         f' fill="none" stroke="{panel_color}" stroke-width="1.5"/>',
                         f'<text x="{sb_x + 22}" y="{iy + _SB_IH // 2 + 1}" dominant-baseline="middle"'
-                        f' font-size="9" fill="#555555"'
+                        f' font-size="9" fill="{_PALETTE["text_muted"]}"'
                         f' font-family="system-ui,Arial,sans-serif">{_e(_trunc("Paired: " + paired_region, 26))}</text>',
                     ]
             else:
                 out.append(
                     f'<text x="{sb_x + 10}" y="{iy + _SB_IH // 2 + 1}" dominant-baseline="middle"'
-                    f' font-size="9" fill="#888888" font-style="italic"'
+                    f' font-size="9" fill="{_PALETTE["text_faint"]}" font-style="italic"'
                     f' font-family="system-ui,Arial,sans-serif">Region not specified</text>'
                 )
         else:
@@ -675,12 +732,12 @@ def render_architecture_svg(arch: dict) -> bytes:
                     out.append(f'<image href="{icon}" x="{sb_x + 6}" y="{iiy}" width="{ISIZ}" height="{ISIZ}"/>')
                     tx = sb_x + 6 + ISIZ + 5
                 else:
-                    color = _COLOR.get(rtype, "#0078D4")
+                    color = _COLOR.get(rtype, _PALETTE["accent"])
                     out.append(f'<circle cx="{sb_x + 12}" cy="{iy + _SB_IH // 2}" r="6" fill="{color}"/>')
                     tx = sb_x + 24
                 out.append(
                     f'<text x="{tx}" y="{iy + _SB_IH // 2 + 1}" dominant-baseline="middle"'
-                    f' font-size="9" fill="#1A1A2E"'
+                    f' font-size="9" fill="{_PALETTE["text_primary"]}"'
                     f' font-family="system-ui,Arial,sans-serif">{_e(_trunc(rname, 23))}</text>'
                 )
                 iy += _SB_IH
@@ -696,9 +753,9 @@ def render_architecture_svg(arch: dict) -> bytes:
     if has_mig:
         out += [
             f'<rect x="{bx}" y="{cur_y}" width="{bw}" height="{_MBAND_H}"'
-            f' rx="6" fill="#EBF4FB" stroke="#C3DDF5" stroke-width="1"/>',
+            f' rx="6" fill="{_PALETTE["surface_mig"]}" stroke="{_PALETTE["border_mig"]}" stroke-width="1"/>',
             f'<text x="{bx + 10}" y="{cur_y + 14}" dominant-baseline="middle"'
-            f' font-size="10" font-weight="700" fill="#0078D4"'
+            f' font-size="10" font-weight="700" fill="{_PALETTE["accent"]}"'
             f' font-family="system-ui,Arial,sans-serif">Migration Approach</text>',
         ]
         steps = mig_steps[:8]
@@ -721,20 +778,20 @@ def render_architecture_svg(arch: dict) -> bytes:
 
                 out += [
                     f'<rect x="{sx_s}" y="{sy}" width="{step_w}" height="{sh}"'
-                    f' rx="4" fill="white" stroke="#90CAF9" stroke-width="1"/>',
-                    f'<circle cx="{sx_s + 13}" cy="{sy + sh // 2}" r="10" fill="#0078D4"/>',
+                    f' rx="4" fill="{_PALETTE["surface"]}" stroke="{_PALETTE["border_mig_step"]}" stroke-width="1"/>',
+                    f'<circle cx="{sx_s + 13}" cy="{sy + sh // 2}" r="10" fill="{_PALETTE["accent"]}"/>',
                     f'<text x="{sx_s + 13}" y="{sy + sh // 2 + 1}"'
                     f' text-anchor="middle" dominant-baseline="middle"'
                     f' font-size="9" font-weight="700" fill="white"'
                     f' font-family="system-ui,Arial,sans-serif">{i+1}</text>',
                     f'<text x="{sx_s + 28}" y="{sy + sh // 2 - (4 if sdesc else 0)}" dominant-baseline="middle"'
-                    f' font-size="8.5" font-weight="600" fill="#1A1A2E"'
+                    f' font-size="8.5" font-weight="600" fill="{_PALETTE["text_primary"]}"'
                     f' font-family="system-ui,Arial,sans-serif">{_e(_trunc(sname, 16))}</text>',
                 ]
                 if sdesc:
                     out.append(
                         f'<text x="{sx_s + 28}" y="{sy + sh // 2 + 9}" dominant-baseline="middle"'
-                        f' font-size="7.5" fill="#666666"'
+                        f' font-size="7.5" fill="{_PALETTE["text_secondary"]}"'
                         f' font-family="system-ui,Arial,sans-serif">{_e(sdesc)}</text>'
                     )
                 # Arrow to next step
@@ -743,7 +800,7 @@ def render_architecture_svg(arch: dict) -> bytes:
                     ay = sy + sh // 2
                     out.append(
                         f'<path d="M {ax},{ay} L {ax + ARW - 3},{ay}"'
-                        f' stroke="#0078D4" stroke-width="1.5" opacity="0.7" marker-end="url(#arr)"/>'
+                        f' stroke="{_PALETTE["accent"]}" stroke-width="1.5" opacity="0.7" marker-end="url(#arr)"/>'
                     )
 
         cur_y += _MBAND_H + _BAND_GAP
@@ -752,7 +809,7 @@ def render_architecture_svg(arch: dict) -> bytes:
     if has_cp:
         out.append(
             f'<rect x="{bx}" y="{cur_y}" width="{bw}" height="{cp_h}"'
-            f' rx="6" fill="#F8F8FC" stroke="#E0E0F0" stroke-width="1"/>'
+            f' rx="6" fill="{_PALETTE["surface_cp"]}" stroke="{_PALETTE["border_cp"]}" stroke-width="1"/>'
         )
 
         split_x = bx + int(bw * 0.58)
@@ -760,7 +817,7 @@ def render_architecture_svg(arch: dict) -> bytes:
         if n_princ:
             out.append(
                 f'<text x="{bx + 10}" y="{cur_y + 13}" dominant-baseline="middle"'
-                f' font-size="10" font-weight="700" fill="#5C2D91"'
+                f' font-size="10" font-weight="700" fill="{_PALETTE["pillar_efficient"]}"'
                 f' font-family="system-ui,Arial,sans-serif">Key Design Principles</text>'
             )
             col_w = (split_x - bx - 20) // 2
@@ -768,9 +825,9 @@ def render_architecture_svg(arch: dict) -> bytes:
                 px_off = bx + 10 + (idx % 2) * (col_w + 4)
                 py_off = cur_y + 22 + (idx // 2) * 14
                 out += [
-                    f'<circle cx="{px_off + 5}" cy="{py_off + 5}" r="4" fill="#5C2D91" opacity="0.75"/>',
+                    f'<circle cx="{px_off + 5}" cy="{py_off + 5}" r="4" fill="{_PALETTE["pillar_efficient"]}" opacity="0.75"/>',
                     f'<text x="{px_off + 14}" y="{py_off + 6}" dominant-baseline="middle"'
-                    f' font-size="8.5" fill="#333333"'
+                    f' font-size="8.5" fill="{_PALETTE["text_dark"]}"'
                     f' font-family="system-ui,Arial,sans-serif">{_e(_trunc(ptext, 52))}</text>',
                 ]
 
@@ -778,22 +835,22 @@ def render_architecture_svg(arch: dict) -> bytes:
             fo_x = split_x + 8
             out.append(
                 f'<text x="{fo_x}" y="{cur_y + 13}" dominant-baseline="middle"'
-                f' font-size="10" font-weight="700" fill="#107C10"'
+                f' font-size="10" font-weight="700" fill="{_PALETTE["pillar_reliable"]}"'
                 f' font-family="system-ui,Arial,sans-serif">Future Options</text>'
             )
             for idx, ftext in enumerate(future_opts[:6]):
                 fy = cur_y + 22 + idx * 12
                 out += [
-                    f'<circle cx="{fo_x + 5}" cy="{fy + 4}" r="3" fill="#107C10" opacity="0.8"/>',
+                    f'<circle cx="{fo_x + 5}" cy="{fy + 4}" r="3" fill="{_PALETTE["pillar_reliable"]}" opacity="0.8"/>',
                     f'<text x="{fo_x + 13}" y="{fy + 5}" dominant-baseline="middle"'
-                    f' font-size="8" fill="#333333"'
+                    f' font-size="8" fill="{_PALETTE["text_dark"]}"'
                     f' font-family="system-ui,Arial,sans-serif">{_e(_trunc(ftext, 46))}</text>',
                 ]
 
         if n_princ and n_future:
             out.append(
                 f'<line x1="{split_x}" y1="{cur_y + 6}" x2="{split_x}" y2="{cur_y + cp_h - 6}"'
-                f' stroke="#DDDDF0" stroke-width="1"/>'
+                f' stroke="{_PALETTE["border_cp_div"]}" stroke-width="1"/>'
             )
 
         cur_y += cp_h + _BAND_GAP
@@ -801,30 +858,30 @@ def render_architecture_svg(arch: dict) -> bytes:
     # Legend
     out += [
         f'<rect x="{bx}" y="{cur_y}" width="{bw}" height="{_LEG_H}"'
-        f' rx="6" fill="#EEF2F6" stroke="#CDD5DF" stroke-width="1"/>',
+        f' rx="6" fill="{_PALETTE["surface_leg"]}" stroke="{_PALETTE["border_leg"]}" stroke-width="1"/>',
         f'<text x="{bx + 10}" y="{cur_y + _LEG_H // 2 + 1}" dominant-baseline="middle"'
-        f' font-size="9" font-weight="600" fill="#555555"'
+        f' font-size="9" font-weight="600" fill="{_PALETTE["text_muted"]}"'
         f' font-family="system-ui,Arial,sans-serif">Legend:</text>',
         # Primary connection
         f'<line x1="{bx + 68}" y1="{cur_y + _LEG_H // 2}" x2="{bx + 94}" y2="{cur_y + _LEG_H // 2}"'
-        f' stroke="#0078D4" stroke-width="2" marker-end="url(#arr)"/>',
+        f' stroke="{_PALETTE["accent"]}" stroke-width="2" marker-end="url(#arr)"/>',
         f'<text x="{bx + 98}" y="{cur_y + _LEG_H // 2 + 1}" dominant-baseline="middle"'
-        f' font-size="8.5" fill="#444444" font-family="system-ui,Arial,sans-serif">Network connection</text>',
+        f' font-size="8.5" fill="{_PALETTE["text_badge"]}" font-family="system-ui,Arial,sans-serif">Network connection</text>',
         # Azure boundary
         f'<rect x="{bx + 230}" y="{cur_y + _LEG_H // 2 - 7}" width="28" height="13"'
-        f' rx="3" fill="none" stroke="#0078D4" stroke-width="1.5" stroke-dasharray="4,2"/>',
+        f' rx="3" fill="none" stroke="{_PALETTE["accent"]}" stroke-width="1.5" stroke-dasharray="4,2"/>',
         f'<text x="{bx + 263}" y="{cur_y + _LEG_H // 2 + 1}" dominant-baseline="middle"'
-        f' font-size="8.5" fill="#444444" font-family="system-ui,Arial,sans-serif">Azure boundary</text>',
+        f' font-size="8.5" fill="{_PALETTE["text_badge"]}" font-family="system-ui,Arial,sans-serif">Azure boundary</text>',
         # On-premises
         f'<rect x="{bx + 370}" y="{cur_y + _LEG_H // 2 - 7}" width="28" height="13"'
-        f' rx="3" fill="#F0F0F0" stroke="#AAAAAA" stroke-width="1.5"/>',
+        f' rx="3" fill="{_PALETTE["zone_onprem"]["bg"]}" stroke="{_PALETTE["zone_onprem"]["border"]}" stroke-width="1.5"/>',
         f'<text x="{bx + 403}" y="{cur_y + _LEG_H // 2 + 1}" dominant-baseline="middle"'
-        f' font-size="8.5" fill="#444444" font-family="system-ui,Arial,sans-serif">On-premises zone</text>',
+        f' font-size="8.5" fill="{_PALETTE["text_badge"]}" font-family="system-ui,Arial,sans-serif">On-premises zone</text>',
         # Sidebar
         f'<rect x="{bx + 510}" y="{cur_y + _LEG_H // 2 - 7}" width="28" height="13"'
-        f' rx="3" fill="#FAFBFC" stroke="#DDE4EC" stroke-width="1.5"/>',
+        f' rx="3" fill="{_PALETTE["surface_alt"]}" stroke="{_PALETTE["border_panel"]}" stroke-width="1.5"/>',
         f'<text x="{bx + 543}" y="{cur_y + _LEG_H // 2 + 1}" dominant-baseline="middle"'
-        f' font-size="8.5" fill="#444444" font-family="system-ui,Arial,sans-serif">Cross-cutting services</text>',
+        f' font-size="8.5" fill="{_PALETTE["text_badge"]}" font-family="system-ui,Arial,sans-serif">Cross-cutting services</text>',
     ]
 
     out.append("</svg>")
