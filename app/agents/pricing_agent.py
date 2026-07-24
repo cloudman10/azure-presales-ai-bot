@@ -338,6 +338,9 @@ def _format_pricing(
 
     ri1 = find_price(items, os_type, 'Reservation', '1 Year')
     ri3 = find_price(items, os_type, 'Reservation', '3 Years')
+    # Linux RI prices for the pure-compute column in the 3-axis card
+    ri1_linux = find_price(items, 'Linux', 'Reservation', '1 Year') if os_type == 'Windows' else ri1
+    ri3_linux = find_price(items, 'Linux', 'Reservation', '3 Years') if os_type == 'Windows' else ri3
 
     # Always find Linux item directly by filtering productName
     linux_items = [
@@ -582,6 +585,28 @@ def _format_pricing(
         out += "Default OS disk shown — ask to change the tier/size or add data disks.\n"
         if storage_data:
             out += f"STORAGE_DATA:{json.dumps(storage_data, separators=(',', ':'))}\n"
+
+    # Structured data block consumed by the 3-column card renderer.
+    # Compute column = pure compute (Linux base rate discounted by SP/RI).
+    # OS and SQL columns are independent additive costs.
+    _lnx_h = linux_payg_direct['retailPrice'] if linux_payg_direct else price_h
+    _sql_full_m = (
+        sql_license_hourly(vcpus, sql_edition, False) * HOURS_PER_MONTH
+        if (is_sql and vcpus) else 0.0
+    )
+    _pd = {
+        "payg_compute": round(_lnx_h * HOURS_PER_MONTH, 2),
+        "sp1_compute":  round(sp_rates["1Y"] * HOURS_PER_MONTH, 2) if "1Y" in sp_rates else None,
+        "sp3_compute":  round(sp_rates["3Y"] * HOURS_PER_MONTH, 2) if "3Y" in sp_rates else None,
+        "ri1_compute":  round(ri_monthly(ri1_linux), 2) if ri1_linux else None,
+        "ri3_compute":  round(ri_monthly(ri3_linux), 2) if ri3_linux else None,
+        "win_os_m":     round(win_lic_payg, 2),
+        "sql_m":        round(_sql_full_m, 2),
+        "is_sql":       is_sql,
+        "os_type":      os_type,
+        "sql_edition":  sql_edition,
+    }
+    out += f"PRICING_DATA:{json.dumps(_pd, separators=(',', ':'))}\n"
 
     out += f"\nAll prices are Microsoft Retail RRP. CSP pricing would be lower.\n"
     out += f"Monthly estimates based on {HOURS_PER_MONTH} hours."

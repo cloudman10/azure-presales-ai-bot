@@ -156,6 +156,24 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .pc-sql-row{display:flex;justify-content:space-between;font-size:13px;color:#444;padding:1px 0}
 .pc-sql-row.total{font-weight:700;color:#0078D4;margin-top:3px;padding-top:5px;border-top:1px solid #D0E8FF}
 
+/* ── 3-column pricing axes ──────────────────────────────────────────────── */
+.pc-axes{display:grid;grid-template-columns:1fr 1fr 1fr;border-top:1px solid #D0E8FF}
+.pc-axes.two-col{grid-template-columns:1fr 1fr}
+.pc-axes.one-col{grid-template-columns:1fr}
+.pc-axis{padding:14px 16px;border-right:1px solid #EEF2F7}
+.pc-axis:last-child{border-right:none}
+.pc-axis-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#005A9E;margin-bottom:10px}
+.pc-axis-opt{margin-bottom:4px}
+.pc-axis-lbl{display:flex;align-items:flex-start;gap:6px;cursor:pointer;padding:5px 0;line-height:1.35}
+.pc-axis-lbl input[type=radio]{accent-color:#0078D4;cursor:pointer;flex-shrink:0;margin-top:2px}
+.pc-axis-lbl-name{font-size:13px;color:#1A1A2E}
+.pc-axis-opt.selected .pc-axis-lbl-name{color:#0078D4;font-weight:600}
+.pc-axis-opt-price{font-size:12px;color:#5A7A9A;margin-left:20px;padding-bottom:6px}
+.pc-total-bar{background:#F0F7FF;border-top:1.5px solid #C3DDF5;padding:11px 18px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.pc-total-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#005A9E}
+.pc-total-amt{font-size:20px;font-weight:700;color:#0078D4}
+.pc-total-unit{font-size:13px;color:#5A7A9A}
+
 /* ── input bar ──────────────────────────────────────────────────────────── */
 .bar{padding:12px 20px;padding-bottom:max(12px,env(safe-area-inset-bottom,12px));background:#fff;border-top:1px solid #E5E9ED;display:flex;gap:10px;flex-shrink:0}
 textarea{flex:1;min-height:44px;max-height:140px;resize:none;border:1px solid #D1D5DB;border-radius:10px;padding:11px 14px;font-family:inherit;font-size:14px;outline:none;line-height:1.5;transition:border-color .15s}
@@ -272,6 +290,8 @@ function parsePricing(text){
   const secs  = [];
   // storage holds the non-collapsible disk pricing block
   let storage = null;
+  // pricingDataObj holds the structured PRICING_DATA block for 3-column card
+  let pricingDataObj = null;
 
   // block tracks which top-level section we're currently inside
   let block   = 'info'; // 'info'|'payg'|'sp'|'ri'|'ahb'|'storage'
@@ -285,6 +305,12 @@ function parsePricing(text){
   for(const raw of lines){
     const l = raw.trim();
     if(!l || l==='=== Azure VM Pricing Estimate ===') continue;
+
+    // Structured data block for 3-column card renderer
+    if(l.startsWith('PRICING_DATA:')){
+      try{ pricingDataObj = JSON.parse(l.slice(13).trim()); }catch(_){}
+      continue;
+    }
 
     // "=== Storage ===" section header (not a --- divider)
     if(l === '=== Storage ==='){
@@ -404,7 +430,7 @@ function parsePricing(text){
 
   // Drop sections that ended up empty (e.g. "not available" RI lines)
   const validSecs = secs.filter(s => s.rows.length > 0);
-  const result = (payg.hourly || validSecs.length) ? {info, payg, secs:validSecs, storage} : null;
+  const result = (payg.hourly || validSecs.length || pricingDataObj) ? {info, payg, secs:validSecs, storage, pricingData:pricingDataObj} : null;
   // ── DIAGNOSTIC: remove after confirming storage parsing ──────────────────
   console.log('[parsePricing] raw has "=== Storage ===":', text.includes('=== Storage ==='));
   console.log('[parsePricing] storage object:', JSON.stringify(storage));
@@ -468,6 +494,143 @@ function buildCard(text){
       ${ram?`<span>💾 ${esc(ram)}</span>`:''}
     </div>`;
   card.appendChild(head);
+
+  // ── 3-column axis layout (when PRICING_DATA is present) ─────────────────────
+  if(p.pricingData){
+    const pd = p.pricingData;
+    const isWindows = pd.os_type === 'Windows';
+    const isSql = !!pd.is_sql;
+    const cardN = ++_cardSeq;
+    const cgId = 'cg' + cardN;
+    const ogId = 'og' + cardN;
+    const sgId = 'sg' + cardN;
+
+    const axCols = 1 + (isWindows ? 1 : 0) + (isSql ? 1 : 0);
+    const axes = document.createElement('div');
+    axes.className = 'pc-axes' + (axCols === 2 ? ' two-col' : axCols === 1 ? ' one-col' : '');
+
+    // COMPUTE axis
+    const compTiers = [
+      {key:'payg', label:'Pay-as-you-go',         val:pd.payg_compute},
+      {key:'sp1',  label:'1-Year Savings Plan',   val:pd.sp1_compute},
+      {key:'sp3',  label:'3-Year Savings Plan',   val:pd.sp3_compute},
+      {key:'ri1',  label:'1-Year Reserved Inst.', val:pd.ri1_compute},
+      {key:'ri3',  label:'3-Year Reserved Inst.', val:pd.ri3_compute},
+    ].filter(t => t.val !== null && t.val !== undefined);
+
+    const compAxis = document.createElement('div');
+    compAxis.className = 'pc-axis';
+    const compHdr = document.createElement('div'); compHdr.className='pc-axis-title'; compHdr.textContent='Compute';
+    compAxis.appendChild(compHdr);
+    compTiers.forEach((tier, i) => {
+      const opt = document.createElement('div'); opt.className = 'pc-axis-opt' + (i===0?' selected':'');
+      const lbl = document.createElement('label'); lbl.className = 'pc-axis-lbl';
+      const rb  = document.createElement('input'); rb.type='radio'; rb.name=cgId; rb.value=tier.val; rb.checked=(i===0);
+      rb.addEventListener('change', () => {
+        compAxis.querySelectorAll('.pc-axis-opt').forEach(o=>o.classList.remove('selected'));
+        opt.classList.add('selected');
+        recalcTotal();
+      });
+      const nm = document.createElement('span'); nm.className='pc-axis-lbl-name'; nm.textContent=tier.label;
+      lbl.appendChild(rb); lbl.appendChild(nm);
+      const pr = document.createElement('div'); pr.className='pc-axis-opt-price'; pr.textContent='USD '+tier.val.toFixed(2)+'/mo';
+      opt.appendChild(lbl); opt.appendChild(pr);
+      compAxis.appendChild(opt);
+    });
+    axes.appendChild(compAxis);
+
+    // OS axis (Windows only)
+    let osAxis = null;
+    if(isWindows){
+      osAxis = document.createElement('div'); osAxis.className='pc-axis';
+      const osHdr = document.createElement('div'); osHdr.className='pc-axis-title'; osHdr.textContent='OS (Windows Server)';
+      osAxis.appendChild(osHdr);
+      [{key:'li',label:'License-Included',addCost:pd.win_os_m},
+       {key:'ahb',label:'Azure Hybrid Benefit',addCost:0}
+      ].forEach((o2,i) => {
+        const opt = document.createElement('div'); opt.className='pc-axis-opt'+(i===0?' selected':'');
+        const lbl = document.createElement('label'); lbl.className='pc-axis-lbl';
+        const rb  = document.createElement('input'); rb.type='radio'; rb.name=ogId; rb.value=o2.key; rb.checked=(i===0);
+        rb.addEventListener('change', () => {
+          osAxis.querySelectorAll('.pc-axis-opt').forEach(o=>o.classList.remove('selected'));
+          opt.classList.add('selected');
+          recalcTotal();
+        });
+        const nm = document.createElement('span'); nm.className='pc-axis-lbl-name'; nm.textContent=o2.label;
+        lbl.appendChild(rb); lbl.appendChild(nm);
+        const pr = document.createElement('div'); pr.className='pc-axis-opt-price';
+        pr.textContent = o2.addCost > 0 ? '+USD '+o2.addCost.toFixed(2)+'/mo' : '+USD 0.00/mo (AHB)';
+        opt.appendChild(lbl); opt.appendChild(pr);
+        osAxis.appendChild(opt);
+      });
+      axes.appendChild(osAxis);
+    }
+
+    // SQL axis (SQL only)
+    let sqlAxis = null;
+    if(isSql){
+      sqlAxis = document.createElement('div'); sqlAxis.className='pc-axis';
+      const sqlHdr = document.createElement('div'); sqlHdr.className='pc-axis-title';
+      sqlHdr.textContent = 'SQL Server' + (pd.sql_edition ? ' ('+pd.sql_edition+')' : '');
+      sqlAxis.appendChild(sqlHdr);
+      [{key:'li',label:'License-Included',addCost:pd.sql_m},
+       {key:'ahb',label:'Azure Hybrid Benefit',addCost:0}
+      ].forEach((o2,i) => {
+        const opt = document.createElement('div'); opt.className='pc-axis-opt'+(i===0?' selected':'');
+        const lbl = document.createElement('label'); lbl.className='pc-axis-lbl';
+        const rb  = document.createElement('input'); rb.type='radio'; rb.name=sgId; rb.value=o2.key; rb.checked=(i===0);
+        rb.addEventListener('change', () => {
+          sqlAxis.querySelectorAll('.pc-axis-opt').forEach(o=>o.classList.remove('selected'));
+          opt.classList.add('selected');
+          recalcTotal();
+        });
+        const nm = document.createElement('span'); nm.className='pc-axis-lbl-name'; nm.textContent=o2.label;
+        lbl.appendChild(rb); lbl.appendChild(nm);
+        const pr = document.createElement('div'); pr.className='pc-axis-opt-price';
+        pr.textContent = o2.addCost > 0 ? '+USD '+o2.addCost.toFixed(2)+'/mo' : '+USD 0.00/mo (AHB)';
+        opt.appendChild(lbl); opt.appendChild(pr);
+        sqlAxis.appendChild(opt);
+      });
+      axes.appendChild(sqlAxis);
+    }
+
+    card.appendChild(axes);
+
+    // TOTAL bar
+    const totalBar = document.createElement('div'); totalBar.className='pc-total-bar';
+    const totalLbl = document.createElement('span'); totalLbl.className='pc-total-lbl'; totalLbl.textContent='Total';
+    const totalAmt = document.createElement('span'); totalAmt.className='pc-total-amt';
+    const totalUnit = document.createElement('span'); totalUnit.className='pc-total-unit'; totalUnit.textContent='/month';
+    totalBar.appendChild(totalLbl); totalBar.appendChild(totalAmt); totalBar.appendChild(totalUnit);
+    card.appendChild(totalBar);
+
+    function recalcTotal(){
+      const compRb  = card.querySelector('input[name="'+cgId+'"]:checked');
+      const compVal = compRb ? parseFloat(compRb.value) : pd.payg_compute;
+      const winAHB  = isWindows && card.querySelector('input[name="'+ogId+'"]:checked')?.value === 'ahb';
+      const sqlAHB  = isSql    && card.querySelector('input[name="'+sgId+'"]:checked')?.value === 'ahb';
+      const total   = compVal + (winAHB ? 0 : (isWindows ? pd.win_os_m : 0)) + (sqlAHB ? 0 : pd.sql_m);
+      totalAmt.textContent = 'USD ' + total.toFixed(2);
+    }
+    recalcTotal();
+
+    card._getSelectedTerm = () => {
+      const compRb  = card.querySelector('input[name="'+cgId+'"]:checked');
+      const compVal = compRb ? parseFloat(compRb.value) : pd.payg_compute;
+      const tier    = compTiers.find(t => String(t.val) === String(compVal));
+      const compLbl = tier ? tier.label : 'PAYG';
+      const winAHB  = isWindows && card.querySelector('input[name="'+ogId+'"]:checked')?.value === 'ahb';
+      const sqlAHB  = isSql    && card.querySelector('input[name="'+sgId+'"]:checked')?.value === 'ahb';
+      const total   = compVal + (winAHB ? 0 : (isWindows ? pd.win_os_m : 0)) + (sqlAHB ? 0 : pd.sql_m);
+      let label = compLbl;
+      if(isWindows && winAHB) label += ' + Win AHB';
+      if(isSql && sqlAHB) label += ' + SQL AHB';
+      return {label, monthly: total};
+    };
+
+    card._pricingMeta = {sku:vm, os, region:reg, paygMonthly:pd.payg_compute + pd.win_os_m + pd.sql_m, rawText:text};
+
+  } else {
 
   // ── term setup: one radio group per card ────────────────────────────────────
   const _terms = _extractTerms(payg, secs);
@@ -575,7 +738,17 @@ function buildCard(text){
     card.appendChild(wrap);
   }
 
-  // Storage block — interactive when STORAGE_DATA is present, static fallback otherwise
+  // Old-layout metadata (inside else scope so _terms/_rgroup are in scope)
+  card._pricingMeta = {sku:vm, os, region:reg, paygMonthly:parseUSDMonth(payg.monthly), rawText:text};
+  card._getSelectedTerm = () => {
+    if(_terms.length <= 1) return _terms[0] || {label:'PAYG', monthly:parseUSDMonth(payg.monthly)};
+    const checked = card.querySelector('input[name="'+_rgroup+'"]:checked');
+    return checked ? {label:checked.dataset.label, monthly:parseFloat(checked.value)} : (_terms[0]||{label:'PAYG',monthly:parseUSDMonth(payg.monthly)});
+  };
+
+  } // end else (old card layout)
+
+  // Storage block — shared by both layouts — interactive when STORAGE_DATA is present, static fallback otherwise
   if(p.storage && (p.storage.data || p.storage.disks.length || p.storage.subtotal)){
     const stg = document.createElement('div');
     stg.className = 'pc-storage';
@@ -735,15 +908,7 @@ function buildCard(text){
     card.appendChild(stg);
   }
 
-  // Metadata used by "Add to Quote" button in the card footer
-  card._pricingMeta = {sku:vm, os, region:reg, paygMonthly:parseUSDMonth(payg.monthly), rawText:text};
-  card._getSelectedTerm = () => {
-    if(_terms.length <= 1) return _terms[0] || {label:'PAYG', monthly:parseUSDMonth(payg.monthly)};
-    const checked = card.querySelector('input[name="'+_rgroup+'"]:checked');
-    return checked ? {label:checked.dataset.label, monthly:parseFloat(checked.value)} : (_terms[0]||{label:'PAYG',monthly:parseUSDMonth(payg.monthly)});
-  };
   if(!card._getDiskState) card._getDiskState = () => [];
-
   return card;
 }
 
