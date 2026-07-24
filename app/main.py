@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import basket, chat, diagram, vm_prices
+from app.routers import basket, chat, diagram, vm_prices, sql_prices
 
 app = FastAPI(title="Azure VM Pricing Bot", version="1.0.0")
 
@@ -45,6 +45,7 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(basket.router, prefix="/api/basket")
 app.include_router(diagram.router, prefix="/api/diagram")
 app.include_router(vm_prices.router, prefix="/api/vm-prices")
+app.include_router(sql_prices.router, prefix="/api/sql-vm-prices", tags=["sql-pricing"])
 
 
 @app.get("/")
