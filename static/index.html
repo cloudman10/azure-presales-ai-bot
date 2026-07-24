@@ -146,6 +146,16 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;height:10
 .chip{font-size:11.5px;padding:5px 10px;border-radius:6px;background:#F4F6F8;border:1px solid #D1D5DB;color:#005A9E;cursor:pointer}
 .chip:hover{background:#E8F4FD;border-color:#0078D4}
 
+/* ── quick-reply chips (below question messages) ────────────────────────── */
+.quick-replies{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.qr-chip{font-size:12.5px;padding:6px 14px;border-radius:16px;border:1.5px solid #0078D4;background:#fff;color:#0078D4;cursor:pointer;transition:background .15s,color .15s;font-family:inherit;line-height:1.4}
+.qr-chip:hover{background:#0078D4;color:#fff}
+
+/* ── SQL breakdown inside PAYG box ─────────────────────────────────────── */
+.pc-sql-breakdown{width:100%;margin:6px 0 2px;display:flex;flex-direction:column;gap:3px;padding-top:8px;border-top:1px solid #D0E8FF}
+.pc-sql-row{display:flex;justify-content:space-between;font-size:13px;color:#444;padding:1px 0}
+.pc-sql-row.total{font-weight:700;color:#0078D4;margin-top:3px;padding-top:5px;border-top:1px solid #D0E8FF}
+
 /* ── input bar ──────────────────────────────────────────────────────────── */
 .bar{padding:12px 20px;padding-bottom:max(12px,env(safe-area-inset-bottom,12px));background:#fff;border-top:1px solid #E5E9ED;display:flex;gap:10px;flex-shrink:0}
 textarea{flex:1;min-height:44px;max-height:140px;resize:none;border:1px solid #D1D5DB;border-radius:10px;padding:11px 14px;font-family:inherit;font-size:14px;outline:none;line-height:1.5;transition:border-color .15s}
@@ -316,6 +326,11 @@ function parsePricing(text){
     if(block === 'payg'){
       const m = l.match(/Per VM:\s*(.+?\/hr)\s*\|\s*(.+)/i);
       if(m){ payg.hourly = m[1].trim(); payg.monthly = m[2].trim(); }
+      else {
+        // SQL 4-part breakdown rows
+        const sm = l.match(/^(Base compute|Windows OS[^:]*|SQL Server[^:]*|Total PAYG)\s*:\s*(USD\s+[\d,]+\.?\d*\/month)/i);
+        if(sm){ if(!payg.sqlRows) payg.sqlRows=[]; payg.sqlRows.push({lbl:sm[1].trim(),val:sm[2].trim()}); }
+      }
       continue;
     }
 
@@ -487,7 +502,18 @@ function buildCard(text){
     const lbl = document.createElement('span'); lbl.className='pc-payg-lbl'; lbl.textContent='Pay-as-You-Go';
     hdrRow.appendChild(lbl);
     pg.appendChild(hdrRow);
-    if(payg.monthly){ const m=document.createElement('div'); m.className='pc-payg-mo'; m.textContent=payg.monthly; pg.appendChild(m); }
+    if(payg.sqlRows && payg.sqlRows.length){
+      const bd = document.createElement('div'); bd.className='pc-sql-breakdown';
+      payg.sqlRows.forEach(row => {
+        const r = document.createElement('div');
+        r.className = 'pc-sql-row' + (/total/i.test(row.lbl) ? ' total' : '');
+        r.innerHTML = `<span>${esc(row.lbl)}</span><span>${esc(row.val)}</span>`;
+        bd.appendChild(r);
+      });
+      pg.appendChild(bd);
+    } else {
+      if(payg.monthly){ const m=document.createElement('div'); m.className='pc-payg-mo'; m.textContent=payg.monthly; pg.appendChild(m); }
+    }
     if(payg.hourly){ const h=document.createElement('div'); h.className='pc-payg-hr'; h.textContent=payg.hourly; pg.appendChild(h); }
     card.appendChild(pg);
   }
@@ -721,6 +747,21 @@ function buildCard(text){
   return card;
 }
 
+// ── quick-reply chip detection ───────────────────────────────────────────────
+function _quickReplies(text){
+  const low = text.toLowerCase();
+  // SQL edition question
+  if(low.includes('enterprise') && low.includes('standard') && low.includes('web') && low.includes('express'))
+    return ['Enterprise','Standard','Web','Express'];
+  // SQL license question (LI vs AHB)
+  if((low.includes('license-included') || low.includes('license included')) && (low.includes('sql ahb') || low.includes('ahb') || low.includes('byol')))
+    return ['License-Included','SQL AHB'];
+  // OS question
+  if(low.includes('windows') && low.includes('linux') && (low.includes('?') || low.includes(' os') || low.includes('operating system')))
+    return ['Windows','Linux'];
+  return null;
+}
+
 // ── addMsg ───────────────────────────────────────────────────────────────────
 function addMsg(role, text, type){
   const w  = document.createElement('div'); w.className = 'msg ' + role;
@@ -773,6 +814,17 @@ function addMsg(role, text, type){
     } else {
       b.className = 'bubble bot';
       b.textContent = text;
+      const qrs = _quickReplies(text);
+      if(qrs){
+        const qr = document.createElement('div'); qr.className = 'quick-replies';
+        qrs.forEach(opt => {
+          const chip = document.createElement('button'); chip.className = 'qr-chip';
+          chip.textContent = opt;
+          chip.onclick = () => { inp.value = opt; inp.style.height='auto'; send(); };
+          qr.appendChild(chip);
+        });
+        b.appendChild(qr);
+      }
     }
   }
 

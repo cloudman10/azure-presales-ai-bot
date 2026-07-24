@@ -3,7 +3,7 @@ import logging
 import os
 import re
 
-from app.services.sql_pricing import get_sku_vcpus, sql_license_hourly
+from app.services.sql_pricing import constrained_vcpu_count, get_sku_vcpus, sql_license_hourly
 from app.services.azure_pricing import (
     DISK_TIER_SIZES_GIB, DISK_TYPES,
     fetch_disk_tier_prices, fetch_prices, fetch_temp_storage_gb,
@@ -416,6 +416,7 @@ def _format_pricing(
         out += f"  SQL Server:     {c(sql_m)}/month  ({sql_edition}, {sql_vcpu_note}{sql_free_note})\n"
         out += f"  {sep}\n"
         out += f"  Total PAYG:     {c(total_m)}/month\n"
+        out += f"Per VM:  {currency} {total_m / HOURS_PER_MONTH:.4f}/hr  |  {c(total_m)}/month\n"
         if qty > 1:
             out += f"  {qty} VMs:          {c(total_m * qty)}/month\n"
 
@@ -666,6 +667,12 @@ async def run(messages: list[dict]) -> dict:
 
                 if wants_sql:
                     vcpus = results[3] if len(results) > 3 else None
+                    # Constrained vCPU SKUs (e.g. E8-4ads_v7): SQL billing uses the active
+                    # count encoded in the SKU name, not the physical count from the index.
+                    active = constrained_vcpu_count(sku)
+                    if active:
+                        vcpus = active
+                        logger.info("pricing_agent: constrained vCPU sku=%r using active=%d for SQL billing", sku, active)
                     if vcpus:
                         per_params["vcpus"] = vcpus
                     else:

@@ -9,7 +9,23 @@ Source: Retail Prices API, serviceName="Virtual Machines Licenses",
 Confirmed 2026-07-24 — rates unchanged since SQL Server 2022 GA.
 """
 
+import re as _re
+
 HOURS_PER_MONTH = 730
+
+
+def constrained_vcpu_count(sku_name: str) -> int | None:
+    """Return the active (constrained) vCPU count for constrained-vCPU SKUs.
+
+    Standard_E8-4ads_v7  → 4  (8 physical, 4 active)
+    Standard_E32-8ads_v5 → 8  (32 physical, 8 active)
+    Standard_E8s_v5      → None (not constrained; use index value)
+
+    Format: {Series}{size}-{active}{suffix}_v{N}
+    The number after the hyphen is the active vCPU count used for SQL billing.
+    """
+    m = _re.search(r'[A-Za-z](\d+)-(\d+)', sku_name)
+    return int(m.group(2)) if m else None
 
 # Per-vCPU hourly SQL Server license rates (License Included, global).
 # Express is $0 (free edition — no license fee).
