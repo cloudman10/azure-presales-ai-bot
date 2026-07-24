@@ -74,6 +74,8 @@ PRICING_KEYWORDS = [
     "payg", "reserved", "ri", "hybrid benefit",
     "vm", "virtual machine", "d4s", "e8s", "standard_",
     "windows", "linux", "per month", "per hour",
+    # SQL Server pricing keywords
+    "sql server", "sql standard", "sql enterprise", "sql web", "sql express",
 ]
 
 _OS_KEYWORDS = re.compile(

@@ -3,6 +3,7 @@ import logging
 import os
 import re
 
+from app.services.sql_pricing import get_sku_vcpus, sql_license_hourly
 from app.services.azure_pricing import (
     DISK_TIER_SIZES_GIB, DISK_TYPES,
     fetch_disk_tier_prices, fetch_prices, fetch_temp_storage_gb,
@@ -45,6 +46,25 @@ RULES:
   - Rule: if digits run together without hyphen, split where second number is 2, 4, 8, or 16
 - Normalize region to armRegionName: australiaeast, southeastasia, eastus
 - Never make up prices
+
+SQL SERVER PRICING:
+When the user mentions "SQL Server", "SQL", or an SQL edition name (Enterprise, Standard,
+Web, Express) alongside a VM SKU, collect TWO additional fields before emitting FETCH_PRICING:
+  4. SQL Edition: Enterprise, Standard, Web, or Express
+     - If not specified, ask: "Which SQL Server edition: Enterprise, Standard, Web, or Express?"
+  5. SQL License Model: License-Included (LI) or Azure Hybrid Benefit (AHB)?
+     - LI  = Azure charges the SQL Server license per vCPU per hour
+     - AHB = customer brings own SQL Server license ($0 SQL charge from Azure)
+     - Express is always free — skip this question for Express edition
+     - If not specified, ask: "SQL license: License-Included, or do you have SQL AHB/BYOL?"
+     - Default to LI if the user does not clearly specify
+IMPORTANT — SQL and Windows licenses are INDEPENDENT:
+  - wants_hb = Windows Server AHB (existing field, covers Windows OS licence)
+  - sql_ahb  = SQL Server AHB    (new field, covers SQL Server licence only)
+  Ask them as separate questions. Never conflate the two.
+When all fields are collected, add sql_edition and sql_ahb to FETCH_PRICING:
+  FETCH_PRICING:{"skus":["Standard_E8s_v5"],"region":"australiaeast","os":"Windows","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"sql_edition":"Standard","sql_ahb":false}
+  FETCH_PRICING:{"skus":["Standard_E8s_v5"],"region":"australiaeast","os":"Linux","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"sql_edition":"Enterprise","sql_ahb":true}
 
 STORAGE PRICING (always included — server injects default if not specified):
 A default OS disk (128 GiB, premium_ssd on premium-capable VMs, else standard_ssd) is
@@ -294,6 +314,11 @@ def _format_pricing(
     qty = params.get('qty') or 1
     wants_hb = params.get('wants_hb') or False
 
+    # SQL Server pricing fields (present only when user requested SQL)
+    sql_edition = params.get('sql_edition')        # "Enterprise"|"Standard"|"Web"|"Express"|None
+    sql_ahb     = bool(params.get('sql_ahb', False))
+    vcpus       = params.get('vcpus')              # fetched from index for SQL billing calc
+
     if not items:
         return (
             f"No pricing data found for {sku} in {display_region(region)}.\n\n"
@@ -356,8 +381,11 @@ def _format_pricing(
         out += f"RAM:      {ram_gb_val} GB\n"
     out += f"OS:       {os_type}"
     if wants_hb and os_type == 'Windows':
-        out += " + Azure Hybrid Benefit"
+        out += " + Windows AHB"
     out += "\n"
+    if sql_edition:
+        sql_lic_label = "AHB (BYOL)" if sql_ahb else "License Included"
+        out += f"SQL:      SQL Server {sql_edition} — {sql_lic_label}\n"
     out += f"Region:   {reg}\n"
     if temp_storage_gb:
         out += f"Temp Storage: {temp_storage_gb} GB SSD (included)\n"
@@ -366,35 +394,92 @@ def _format_pricing(
     out += "\n"
 
     out += "--- PAYG (Pay-as-you-go) ---\n"
-    out += f"Per VM:  {currency} {f4(price_h)}/hr  |  {c(price_m)}/month\n"
-    if qty > 1:
-        out += f"Total:   {c(price_m * qty)}/month\n"
-    if os_type == 'Windows' and linux_payg_direct:
-        ahb_payg_m = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH
-        out += f"AHB PAYG: {currency} {ahb_payg_m:.2f}/month  (save {pct(price_m, ahb_payg_m)}% vs Windows PAYG RRP)\n"
 
-    out += "\n--- Savings Plan (flexible, compute discount only) ---\n"
+    # ── SQL Server pricing breakdown ──────────────────────────────────────────
+    is_sql = bool(sql_edition and vcpus and linux_payg_direct)
+    if is_sql:
+        lnx_h    = linux_payg_direct['retailPrice']
+        win_os_h = max(0.0, price_h - lnx_h)           # OS surcharge per hour
+        sql_h    = sql_license_hourly(vcpus, sql_edition, sql_ahb)
+        base_m   = lnx_h    * HOURS_PER_MONTH
+        win_os_m = (0.0 if wants_hb else win_os_h) * HOURS_PER_MONTH
+        sql_m    = sql_h     * HOURS_PER_MONTH
+        total_m  = base_m + win_os_m + sql_m
+        sep      = "─" * 34
+
+        out += f"  Base compute:   {c(base_m)}/month  (Linux base rate)\n"
+        if os_type == 'Windows':
+            win_label = "Windows OS: (AHB applied)" if wants_hb else "Windows OS:"
+            out += f"  {win_label:22s}{c(win_os_m)}/month\n"
+        sql_vcpu_note = f"{vcpus} vCPU" + (" → billed as 4" if vcpus <= 2 else "")
+        sql_free_note = "  — always free" if sql_edition == 'Express' else ""
+        out += f"  SQL Server:     {c(sql_m)}/month  ({sql_edition}, {sql_vcpu_note}{sql_free_note})\n"
+        out += f"  {sep}\n"
+        out += f"  Total PAYG:     {c(total_m)}/month\n"
+        if qty > 1:
+            out += f"  {qty} VMs:          {c(total_m * qty)}/month\n"
+
+        # AHB comparison table (all four combos, always shown for non-Express)
+        if sql_edition != 'Express' or os_type == 'Windows':
+            sql_full_h = sql_license_hourly(vcpus, sql_edition, False)
+            sql_full_m = sql_full_h * HOURS_PER_MONTH
+            out += "\n--- AHB Options (independent axes) ---\n"
+            if os_type == 'Windows':
+                li_li_m    = base_m + win_os_h * HOURS_PER_MONTH + sql_full_m
+                sql_only_m = base_m + win_os_h * HOURS_PER_MONTH              # SQL AHB
+                win_only_m = base_m                             + sql_full_m   # Win AHB
+                both_m     = base_m                                            # both AHB
+                out += f"  No AHB (LI / LI):          {c(li_li_m)}/month  — baseline\n"
+                out += f"  SQL AHB only  (BYOL SQL):   {c(sql_only_m)}/month  (save {pct(li_li_m, sql_only_m)}%)\n"
+                out += f"  Windows AHB only (BYOL Win):{c(win_only_m)}/month  (save {pct(li_li_m, win_only_m)}%)\n"
+                out += f"  Both AHB  (BYOL both):      {c(both_m)}/month  (save {pct(li_li_m, both_m)}%)\n"
+            else:
+                li_m   = base_m + sql_full_m
+                ahb_m  = base_m
+                out += f"  SQL LI:   {c(li_m)}/month\n"
+                out += f"  SQL AHB:  {c(ahb_m)}/month  (save {pct(li_m, ahb_m)}%, BYOL SQL)\n"
+    else:
+        # ── Non-SQL PAYG (existing behaviour) ────────────────────────────────
+        out += f"Per VM:  {currency} {f4(price_h)}/hr  |  {c(price_m)}/month\n"
+        if qty > 1:
+            out += f"Total:   {c(price_m * qty)}/month\n"
+        if os_type == 'Windows' and linux_payg_direct:
+            ahb_payg_m = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH
+            out += f"AHB PAYG: {currency} {ahb_payg_m:.2f}/month  (save {pct(price_m, ahb_payg_m)}% vs Windows PAYG RRP)\n"
+
+    # For SQL: add SQL license overhead to SP/RI totals and note it's a fixed addition
+    _sql_overhead_m = sql_m if is_sql else 0.0   # monthly SQL license at user's chosen model
+
+    sp_header = "--- Compute Commitments — Savings Plan / RI ---\n" if is_sql else "--- Savings Plan (flexible, compute discount only) ---\n"
+    out += f"\n{sp_header}"
+    if is_sql:
+        out += f"Note: SQL license ({c(sql_m)}/month) and Windows OS costs are fixed — not discounted by SP or RI.\n"
     if sp_rates:
-        if os_type == "Windows":
+        if os_type == "Windows" and not is_sql:
             out += f"License: {c(win_lic_payg)}/month  (at RRP, no discount)\n\n"
         if "1Y" in sp_rates:
             sp1_compute = sp_rates["1Y"] * HOURS_PER_MONTH
-            sp1_total = sp1_compute + win_lic_payg
+            sp1_total = sp1_compute + win_lic_payg + _sql_overhead_m
             sp1_compute_base = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH if linux_payg_direct else price_m
             out += f"1-Year Savings Plan  (~{pct(sp1_compute_base, sp1_compute)}% compute discount):\n"
             out += f"  Compute: {c(sp1_compute)}/month  (discounted)\n"
-            if os_type == "Windows":
+            if os_type == "Windows" and not is_sql:
                 out += f"  License: {c(win_lic_payg)}/month  (at RRP)\n"
+            if is_sql:
+                out += f"  SQL+OS:  {c(win_lic_payg + _sql_overhead_m)}/month  (fixed)\n"
             out += f"  Total:   {c(sp1_total)}/month\n"
             if qty > 1:
                 out += f"  {qty} VMs:  {c(sp1_total * qty)}/month\n"
         if "3Y" in sp_rates:
             sp3_compute = sp_rates["3Y"] * HOURS_PER_MONTH
-            sp3_total = sp3_compute + win_lic_payg
+            sp3_total = sp3_compute + win_lic_payg + _sql_overhead_m
+            sp1_compute_base = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH if linux_payg_direct else price_m
             out += f"\n3-Year Savings Plan  (~{pct(sp1_compute_base, sp3_compute)}% compute discount):\n"
             out += f"  Compute: {c(sp3_compute)}/month  (discounted)\n"
-            if os_type == "Windows":
+            if os_type == "Windows" and not is_sql:
                 out += f"  License: {c(win_lic_payg)}/month  (at RRP)\n"
+            if is_sql:
+                out += f"  SQL+OS:  {c(win_lic_payg + _sql_overhead_m)}/month  (fixed)\n"
             out += f"  Total:   {c(sp3_total)}/month\n"
             if qty > 1:
                 out += f"  {qty} VMs:  {c(sp3_total * qty)}/month\n"
@@ -402,12 +487,15 @@ def _format_pricing(
         out += "Savings Plan: not available for this VM\n"
 
     out += "\n--- Reserved Instances (vs PAYG) ---\n"
+    _payg_base_m = (total_m if is_sql else price_m)   # correct PAYG baseline for savings %
     if ri1:
         r1_compute = ri_monthly(ri1)
-        r1_m = r1_compute + win_lic_payg
-        out += f"1-Year RI  (save {pct(price_m, r1_m)}%):\n"
+        r1_m = r1_compute + win_lic_payg + _sql_overhead_m
+        out += f"1-Year RI  (save {pct(_payg_base_m, r1_m)}%):\n"
         out += f"  Per VM:  {c(r1_m)}/month"
-        if os_type == 'Windows' and win_lic_payg > 0:
+        if is_sql:
+            out += f"  ({c(r1_compute)} compute + {c(win_lic_payg + _sql_overhead_m)} SQL/OS)"
+        elif os_type == 'Windows' and win_lic_payg > 0:
             out += f"  ({c(r1_compute)} compute + {c(win_lic_payg)} Win license)"
         out += "\n"
         if qty > 1:
@@ -420,10 +508,12 @@ def _format_pricing(
 
     if ri3:
         r3_compute = ri_monthly(ri3)
-        r3_m = r3_compute + win_lic_payg
-        out += f"3-Year RI  (save {pct(price_m, r3_m)}%):\n"
+        r3_m = r3_compute + win_lic_payg + _sql_overhead_m
+        out += f"3-Year RI  (save {pct(_payg_base_m, r3_m)}%):\n"
         out += f"  Per VM:  {c(r3_m)}/month"
-        if os_type == 'Windows' and win_lic_payg > 0:
+        if is_sql:
+            out += f"  ({c(r3_compute)} compute + {c(win_lic_payg + _sql_overhead_m)} SQL/OS)"
+        elif os_type == 'Windows' and win_lic_payg > 0:
             out += f"  ({c(r3_compute)} compute + {c(win_lic_payg)} Win license)"
         out += "\n"
         if qty > 1:
@@ -434,8 +524,8 @@ def _format_pricing(
         else:
             out += "3-Year RI: not available in this region\n"
 
-    # Always show HB section for Windows VMs
-    if os_type == 'Windows':
+    # Windows HB section — skip when SQL (AHB comparison already shown in PAYG section above)
+    if os_type == 'Windows' and not is_sql:
         hb_p = linux_payg_direct
         hb_r1 = find_price(items, 'Linux', 'Reservation', '1 Year')
         hb_r3 = find_price(items, 'Linux', 'Reservation', '3 Years')
@@ -560,12 +650,27 @@ async def run(messages: list[dict]) -> dict:
         async def _price_one(sku: str) -> str:
             per_params = {**fetch_params, "sku": sku}
             try:
-                items, temp_gb, disk_result = await asyncio.gather(
+                gather_tasks = [
                     fetch_prices(region, sku),
                     fetch_temp_storage_gb(sku, region),
                     resolve_disks(sku, region, disks_spec or None),
-                )
+                ]
+                # For SQL pricing: fetch vCPU count from index (needed for per-vCPU license calc)
+                wants_sql = bool(fetch_params.get("sql_edition"))
+                if wants_sql:
+                    gather_tasks.append(get_sku_vcpus(sku, region))
+
+                results = await asyncio.gather(*gather_tasks)
+                items, temp_gb, disk_result = results[0], results[1], results[2]
                 resolved, storage = disk_result
+
+                if wants_sql:
+                    vcpus = results[3] if len(results) > 3 else None
+                    if vcpus:
+                        per_params["vcpus"] = vcpus
+                    else:
+                        logger.warning("pricing_agent: vcpu lookup failed for sql sku=%r region=%r", sku, region)
+
             except Exception as e:
                 logger.exception("pricing_agent: fetch failed for sku=%r", sku)
                 return (

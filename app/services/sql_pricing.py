@@ -70,6 +70,38 @@ def total_sql_vm_hourly(
     return comp + sql_license_hourly(vcpus, edition, sql_ahb)
 
 
+async def get_sku_vcpus(sku_name: str, region: str) -> int | None:
+    """Return vCPU count for a VM SKU from the vm-sku-prices index.
+
+    Used by the pricing agent to compute SQL Server license cost, which is
+    charged per vCPU and requires the exact count (not derivable from the
+    Retail Prices API response).
+    """
+    import asyncio, os
+    from azure.core.credentials import AzureKeyCredential
+    from azure.search.documents import SearchClient
+
+    endpoint = os.getenv("AZURE_SEARCH_ENDPOINT", "")
+    api_key  = os.getenv("AZURE_SEARCH_API_KEY", "")
+    if not endpoint or not api_key:
+        return None
+
+    def _lookup() -> int | None:
+        try:
+            client  = SearchClient(endpoint, "vm-sku-prices", AzureKeyCredential(api_key))
+            results = list(client.search(
+                "*",
+                filter=f"sku_name eq '{sku_name}' and region eq '{region}' and retired eq false",
+                select=["vcpus"],
+                top=1,
+            ))
+            return results[0]["vcpus"] if results else None
+        except Exception:
+            return None
+
+    return await asyncio.to_thread(_lookup)
+
+
 def price_breakdown(
     vcpus: int,
     edition: str,
