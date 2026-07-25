@@ -773,6 +773,8 @@ async def _show_full_pricing(
     os_type: str,
     sku_docs: list[dict] | None = None,
     sku_regions: list[str] | None = None,
+    sql_edition: str | None = None,
+    sql_ahb: bool | None = None,
 ) -> str:
     """Fetch live pricing and format full breakdown for each chosen SKU."""
     from app.agents.pricing_agent import _format_pricing, resolve_disks
@@ -782,22 +784,23 @@ async def _show_full_pricing(
         doc = sku_docs[idx] if sku_docs and idx < len(sku_docs) else {}
         sku_region = (sku_regions[idx] if sku_regions and idx < len(sku_regions) else None) or region
         logger.info(
-            "_show_full_pricing: sku=%s sku_region=%r region_param=%r sku_regions=%r",
-            sku_name, sku_region, region, sku_regions,
+            "_show_full_pricing: sku=%s sku_region=%r sql_edition=%r sql_ahb=%r",
+            sku_name, sku_region, sql_edition, sql_ahb,
         )
         try:
             items            = await fetch_prices(sku_region, sku_name)
             temp_gb          = await fetch_temp_storage_gb(sku_name, sku_region)
             disks, disk_data = await resolve_disks(sku_name, sku_region, None)
-            logger.info("_show_full_pricing: resolve_disks → %d disks", len(disks))
             params  = {
-                "sku":      sku_name,
-                "region":   sku_region,
-                "os":       os_type,
-                "qty":      1,
-                "wants_hb": False,
-                "vcpus":    doc.get("vcpus"),
-                "ram_gb":   doc.get("ram_gb"),
+                "sku":         sku_name,
+                "region":      sku_region,
+                "os":          os_type,
+                "qty":         1,
+                "wants_hb":    False,
+                "vcpus":       doc.get("vcpus"),
+                "ram_gb":      doc.get("ram_gb"),
+                "sql_edition": sql_edition,
+                "sql_ahb":     sql_ahb or False,
             }
             parts.append(_format_pricing(params, items, temp_gb, disks, disk_data))
         except Exception as e:
@@ -810,7 +813,49 @@ async def _show_full_pricing(
 _EMPTY_STATE = lambda: {
     "vcpus": None, "ram_gb": None, "users": None,
     "workload": None, "region": None, "os": None,
+    "sql_edition": None, "sql_ahb": None,
 }
+
+
+def _parse_sql_edition(text: str) -> str | None:
+    """Detect SQL Server edition from user text.
+
+    Accepts bare numbers 1-4 (from the numbered question we ask), edition names,
+    and 'sql <edition>' phrases. 'standard' alone is accepted in SQL context.
+    """
+    t = text.strip().lower()
+    # Numbered selection from the edition question
+    if re.match(r"^[1-4]$", t):
+        return ["Enterprise", "Standard", "Web", "Express"][int(t) - 1]
+    # Keyword match — most specific first to avoid false-positives
+    if "enterprise" in t:
+        return "Enterprise"
+    if "sql standard" in t or re.search(r"\bstandard\b", t):
+        return "Standard"
+    if "sql web" in t or "web edition" in t:
+        return "Web"
+    if "express" in t:
+        return "Express"
+    return None
+
+
+def _parse_sql_ahb(text: str) -> bool | None:
+    """Detect SQL Server AHB intent from user text.
+
+    True  = user has an existing licence (BYOL / AHB).
+    False = user needs licence-included pricing.
+    """
+    t = text.strip().lower()
+    if any(k in t for k in ["hybrid benefit", "ahb", "byol", "bring your own"]):
+        return True
+    if re.match(r"^(yes|yeah|yep|yup|y)$", t):
+        return True
+    if re.match(r"^(no|nope|n)$", t):
+        return False
+    if "license included" in t or "licence included" in t:
+        return False
+    return None
+
 
 # Affirmative words that, when typed alone in STATE 5, map to "option 1"
 _AFFIRMATIVES = frozenset({
@@ -863,6 +908,15 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             state["workload"] = _r["workload"]
         if _r["os"] and not state["os"]:
             state["os"] = _r["os"]
+        if state.get("workload") == "database":
+            if state.get("sql_edition") is None:
+                _ed = _parse_sql_edition(_text)
+                if _ed:
+                    state["sql_edition"] = _ed
+            if state.get("sql_ahb") is None:
+                _ahb = _parse_sql_ahb(_text)
+                if _ahb is not None:
+                    state["sql_ahb"] = _ahb
         if not state["region"]:
             # extract_region covers full CITY_MAP + REGION_MAP; _r["region"]
             # covers the inline city shortcuts in parse_requirements
@@ -892,10 +946,20 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             state["region"] = _u_rm["arm_name"]
         elif _u["region"]:
             state["region"] = _u["region"]
+    if state.get("workload") == "database":
+        if state.get("sql_edition") is None:
+            _ed = _parse_sql_edition(user_message)
+            if _ed:
+                state["sql_edition"] = _ed
+        if state.get("sql_ahb") is None:
+            _ahb = _parse_sql_ahb(user_message)
+            if _ahb is not None:
+                state["sql_ahb"] = _ahb
 
     logger.info(
-        "sku_advisor: final state vcpus=%s ram_gb=%s region=%s os=%s",
+        "sku_advisor: final state vcpus=%s ram_gb=%s region=%s os=%s sql_edition=%s sql_ahb=%s",
         state["vcpus"], state["ram_gb"], state["region"], state["os"],
+        state.get("sql_edition"), state.get("sql_ahb"),
     )
     sessions[state_key] = state   # persist after every turn
 
@@ -941,7 +1005,9 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
             _sku_regions    = picks.get("sku_regions") or []
             chosen_regions  = [_sku_regions[i] for i in valid_indices if i < len(_sku_regions)] or None
             reply = await _show_full_pricing(
-                chosen_skus, picks["region"], picks["os"], chosen_docs, chosen_regions
+                chosen_skus, picks["region"], picks["os"], chosen_docs, chosen_regions,
+                sql_edition=picks.get("sql_edition"),
+                sql_ahb=picks.get("sql_ahb"),
             )
             return {"reply": reply, "type": "pricing"}
         # No option digit found — if the user is starting a new scenario query
@@ -994,6 +1060,37 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
     if not state["os"]:
         return {
             "reply": "Windows or Linux?",
+            "type": "conversation",
+        }
+
+    # ── STATE 3a: SQL edition (database workload only) ────────────────────────
+    if state.get("workload") == "database" and state.get("sql_edition") is None:
+        return {
+            "reply": (
+                "Which SQL Server edition do you need?\n\n"
+                "- **1 — Enterprise**: full feature set, maximum performance\n"
+                "- **2 — Standard**: most common, core RDBMS features\n"
+                "- **3 — Web**: web-facing workloads, lower cost\n"
+                "- **4 — Express**: free edition, small databases"
+            ),
+            "type": "conversation",
+        }
+
+    # Express is always free — skip the licence question
+    if state.get("workload") == "database" and state.get("sql_edition") == "Express":
+        state["sql_ahb"] = False
+        sessions[state_key] = state
+
+    # ── STATE 3b: SQL licence type ────────────────────────────────────────────
+    if state.get("workload") == "database" and state.get("sql_ahb") is None:
+        ed = state.get("sql_edition", "Standard")
+        return {
+            "reply": (
+                f"Do you have an existing SQL Server **{ed}** licence you can bring to Azure "
+                f"(Azure Hybrid Benefit)?\n\n"
+                "Reply **yes** (BYOL / AHB — no Azure licence fee) or "
+                "**no** (Licence Included — Azure bills the licence)."
+            ),
             "type": "conversation",
         }
 
@@ -1065,15 +1162,17 @@ async def run(messages: list[dict], session_id: str, sessions: dict) -> dict:
         "region":      state["region"],
         "sku_regions": [s.get("_region", state["region"]) for s in top3],
         "os":          state["os"],
+        "sql_edition": state.get("sql_edition"),
+        "sql_ahb":     state.get("sql_ahb"),
     }
     sessions.pop(state_key, None)   # clear state; picks_key keeps the context for STATE 5
     _picks = {
         "skus":                [s.get("sku_name") for s in top3],
         "region":              state["region"],
         "region_display":      display_region(state["region"]),
-        # Per-SKU actual region display — differs from region_display for alt-region fills.
-        # fetchPricingForPicks must use this per-SKU value, not the global region_display.
         "sku_region_displays": [display_region(s.get("_region") or state["region"]) for s in top3],
         "os":                  state["os"],
+        "sql_edition":         state.get("sql_edition"),
+        "sql_ahb":             state.get("sql_ahb"),
     }
     return {"reply": reply, "type": "advisor", "picks": _picks}

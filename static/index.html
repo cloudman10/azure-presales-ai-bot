@@ -1216,7 +1216,11 @@ async function fetchPricingForPicks(indices){
   for(const idx of valid){
     const sku        = picks.skus[idx];
     const regionDisp = (picks.sku_region_displays && picks.sku_region_displays[idx]) || picks.region_display;
-    const q          = `${sku} ${picks.os} ${regionDisp}`;
+    let q = `${sku} ${picks.os} ${regionDisp}`;
+    if(picks.sql_edition){
+      const lic = picks.sql_ahb ? 'Azure Hybrid Benefit' : 'License Included';
+      q += ` SQL Server ${picks.sql_edition} ${lic}`;
+    }
     try{
       const r = await fetch('/api/chat',{
         method:'POST',
