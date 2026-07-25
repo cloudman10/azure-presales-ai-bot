@@ -918,9 +918,9 @@ function _quickReplies(text){
   // SQL edition question
   if(low.includes('enterprise') && low.includes('standard') && low.includes('web') && low.includes('express'))
     return ['Enterprise','Standard','Web','Express'];
-  // SQL license question (LI vs AHB)
-  if((low.includes('license-included') || low.includes('license included')) && (low.includes('sql ahb') || low.includes('ahb') || low.includes('byol')))
-    return ['License-Included','SQL AHB'];
+  // SQL AHB licence question — bot text contains "byol" and "licence" (UK spelling)
+  if(low.includes('byol') && (low.includes('licence') || low.includes('license')))
+    return ['Yes (AHB / BYOL)', 'No (Licence Included)'];
   // OS question
   if(low.includes('windows') && low.includes('linux') && (low.includes('?') || low.includes(' os') || low.includes('operating system')))
     return ['Windows','Linux'];
