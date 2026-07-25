@@ -20,6 +20,7 @@ from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizedQuery
 
 from app.services.azure_pricing import fetch_prices, fetch_temp_storage_gb
+from app.services.sql_pricing import active_vcpu_count
 from app.utils.pricing_calculator import HOURS_PER_MONTH, find_price
 from app.utils.region_normalizer import display_region, extract_region
 
@@ -647,7 +648,7 @@ async def _pick_vms_from_prices(
 
     if vcpus:
         items = [i for i in items
-                 if _vcpus_from_sku(i.get("armSkuName", "")) == vcpus]
+                 if active_vcpu_count(i.get("armSkuName", ""), _vcpus_from_sku(i.get("armSkuName", ""))) == vcpus]
 
     logger.info("sku_advisor: after vCPU=%s filter → %d items", vcpus, len(items))
 
@@ -717,7 +718,7 @@ async def _pick_vms_from_prices(
         series   = _sku_series(sku_name)
         doc: dict = {
             "sku_name":        sku_name,
-            "vcpus":           meta.get("vcpus") or _vcpus_from_sku(sku_name),
+            "vcpus":           active_vcpu_count(sku_name, meta.get("vcpus") or _vcpus_from_sku(sku_name)),
             "ram_gb":          meta.get("ram_gb"),
             "temp_storage_gb": meta.get("temp_storage_gb") or 0,
             "use_cases":       meta.get("use_cases") or _SERIES_USE_CASES.get(series, ""),
@@ -778,20 +779,16 @@ async def _show_full_pricing(
 ) -> str:
     """Fetch live pricing and format full breakdown for each chosen SKU."""
     from app.agents.pricing_agent import _format_pricing, resolve_disks
-    from app.services.sql_pricing import constrained_vcpu_count
 
     parts = []
     for idx, sku_name in enumerate(skus):
         doc = sku_docs[idx] if sku_docs and idx < len(sku_docs) else {}
         sku_region = (sku_regions[idx] if sku_regions and idx < len(sku_regions) else None) or region
-        # Constrained-vCPU SKUs (e.g. E4-2as_v7): use active count for display and SQL billing.
-        # doc["vcpus"] is the physical count from the index; constrained_vcpu_count gives active.
-        _phys_vcpus   = doc.get("vcpus")
-        _active_vcpus = constrained_vcpu_count(sku_name)
-        _effective_v  = _active_vcpus or _phys_vcpus
+        _phys_vcpus  = doc.get("vcpus")
+        _effective_v = active_vcpu_count(sku_name, _phys_vcpus)
         logger.info(
-            "_show_full_pricing: sku=%s sku_region=%r vcpus_phys=%r vcpus_active=%r sql_edition=%r sql_ahb=%r",
-            sku_name, sku_region, _phys_vcpus, _active_vcpus, sql_edition, sql_ahb,
+            "_show_full_pricing: sku=%s sku_region=%r vcpus_phys=%r vcpus_effective=%r sql_edition=%r sql_ahb=%r",
+            sku_name, sku_region, _phys_vcpus, _effective_v, sql_edition, sql_ahb,
         )
         try:
             items            = await fetch_prices(sku_region, sku_name)

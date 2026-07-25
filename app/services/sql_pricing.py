@@ -27,6 +27,16 @@ def constrained_vcpu_count(sku_name: str) -> int | None:
     m = _re.search(r'[A-Za-z](\d+)-(\d+)', sku_name)
     return int(m.group(2)) if m else None
 
+
+def active_vcpu_count(sku_name: str, fallback: int | None = None) -> int | None:
+    """Single authoritative vCPU count for any SKU — use this everywhere.
+
+    Constrained SKUs (e.g. Standard_E4-2as_v7): returns active count (2).
+    Non-constrained SKUs: returns fallback (typically from index or name parse).
+    Covers billing, display, and recommendation filtering.
+    """
+    return constrained_vcpu_count(sku_name) or fallback
+
 # Per-vCPU hourly SQL Server license rates (License Included, global).
 # Express is $0 (free edition — no license fee).
 SQL_RATES: dict[str, float] = {
