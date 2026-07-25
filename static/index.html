@@ -1198,8 +1198,9 @@ function parsePickSelection(text){
   return null;
 }
 
-// For each selected index, send a fresh direct pricing query to /api/chat
-// using a one-time session — bypasses advisor STATE 5 entirely.
+// For each selected index, send the pick number to the CURRENT session.
+// Backend STATE 5 already has sql_edition/sql_ahb stored in picks_key and
+// calls _show_full_pricing() with the correct SQL params directly — no LLM.
 async function fetchPricingForPicks(indices){
   const picks    = storedPicks;
   const numPicks = picks.skus.length;
@@ -1214,18 +1215,11 @@ async function fetchPricingForPicks(indices){
   addTyping();
   const parts = [];
   for(const idx of valid){
-    const sku        = picks.skus[idx];
-    const regionDisp = (picks.sku_region_displays && picks.sku_region_displays[idx]) || picks.region_display;
-    let q = `${sku} ${picks.os} ${regionDisp}`;
-    if(picks.sql_edition){
-      const lic = picks.sql_ahb ? 'Azure Hybrid Benefit' : 'License Included';
-      q += ` SQL Server ${picks.sql_edition} ${lic}`;
-    }
     try{
       const r = await fetch('/api/chat',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({session_id: mkSid(), message: q}),
+        body: JSON.stringify({session_id: sessionId, message: String(idx + 1)}),
       });
       const d = await r.json();
       if(d.reply && d.reply.includes('=== Azure VM Pricing Estimate ===')){
