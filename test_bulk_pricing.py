@@ -202,6 +202,34 @@ async def main(xlsx_path: str) -> None:
         flush=True,
     )
 
+    # ── Sanity bound: matched SKU must not wildly exceed the requested spec ──────
+    # Active vCPUs <= max(4 × requested, 8); matched RAM <= 8 × requested.
+    # ND128isr (128 vCPU for 4 vCPU req = 32×) would break this; E8ads_v7 (2×) is fine.
+    sanity_failures = []
+    from app.services.sql_pricing import active_vcpu_count as _avc
+    for r in priced_rows:
+        phys  = r.get("matched_vcpus") or r["vcpus_req"]
+        active = _avc(r["sku_name"], phys) or phys
+        max_active = max(r["vcpus_req"] * 4, 8)
+        if active > max_active:
+            sanity_failures.append(
+                f"{r['vm_name']}: active_vcpus={active} > {max_active} (4× req={r['vcpus_req']})"
+            )
+        mram = r.get("matched_ram_gb")
+        if mram and mram > r["ram_gb_req"] * 8:
+            sanity_failures.append(
+                f"{r['vm_name']}: matched_ram={mram} GB > 8× req={r['ram_gb_req']} GB"
+            )
+    if sanity_failures:
+        print(f"\n{'!'*70}", flush=True)
+        print("  SANITY FAILURES (matched SKU wildly exceeds spec)", flush=True)
+        print(f"{'!'*70}", flush=True)
+        for msg in sanity_failures:
+            print(f"  FAIL  {msg}", flush=True)
+        raise AssertionError(f"{len(sanity_failures)} sanity failure(s) — fix SKU matching before deploying")
+    else:
+        print("\n  SANITY CHECK PASSED: all matched SKUs within 4× requested vCPUs / 8× requested RAM", flush=True)
+
     # ── Warnings ──────────────────────────────────────────────────────────────
     if warnings:
         print(f"\n{'─'*70}", flush=True)

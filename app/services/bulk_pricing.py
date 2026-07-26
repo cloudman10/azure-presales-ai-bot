@@ -11,6 +11,7 @@ no duplicate formulas here.
 import asyncio
 import logging
 import math
+import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -263,12 +264,65 @@ def parse_inventory_xlsx(file_bytes: bytes) -> tuple[list[dict], list[str]]:
 async def _pick_sku_cached(
     region: str, os_type: str, vcpus: int, ram_gb: int
 ) -> list[dict]:
-    """Call _pick_vms_from_prices with result caching by exact spec."""
-    from app.agents.sku_advisor_agent import _pick_vms_from_prices
+    """Best-fit D/E/F/B SKU for bulk pricing via AI Search (cached by exact spec).
+
+    Uses search_skus() which queries the vm-skus AI Search index restricted to
+    D/E/F/B series only — preventing GPU/HPC/M-series SKUs from contaminating
+    bulk pricing results regardless of region or ARM credential availability.
+    """
+    from app.agents.sku_advisor_agent import search_skus
+
     key = (region, os_type, vcpus, ram_gb)
-    if key not in _sku_match_cache:
-        _sku_match_cache[key] = await _pick_vms_from_prices(region, os_type, vcpus, ram_gb)
-    return _sku_match_cache[key]
+    if key in _sku_match_cache:
+        return _sku_match_cache[key]
+
+    docs = await asyncio.to_thread(search_skus, {"vcpus": vcpus, "ram_gb": ram_gb}, 20)
+
+    # Arm64 SKUs (B2pts_v2, D4pls_v5 …) don't support Windows — exclude them
+    if os_type == "Windows":
+        docs = [d for d in docs
+                if not re.search(r'Standard_[A-Za-z]\d+-?\d*p[a-z]', d.get("sku_name", ""), re.IGNORECASE)]
+
+    # Exclude constrained-vCPU SKUs (e.g. E8-2ads_v7) whose active count < requested.
+    # The AI Search index stores physical vCPUs; active_vcpu_count() gives the real number.
+    from app.services.sql_pricing import active_vcpu_count as _active_vcpu_count
+    docs = [d for d in docs
+            if (_active_vcpu_count(d.get("sku_name", ""), d.get("vcpus") or 0) or d.get("vcpus") or 0) >= vcpus]
+
+    if not docs:
+        logger.warning(
+            "bulk_pricing: no D/E/F/B SKU found for vcpus=%d ram_gb=%d — check AI Search index",
+            vcpus, ram_gb,
+        )
+        _sku_match_cache[key] = []
+        return []
+
+    # Sort by tightest fit: fewest vCPUs first, then smallest RAM, then newest gen
+    def _sort_key(d: dict) -> tuple:
+        m = re.search(r'_v(\d+)', d.get("sku_name", ""))
+        gen = int(m.group(1)) if m else 1
+        return (d.get("vcpus") or 999, d.get("ram_gb") or 999, -gen)
+
+    docs.sort(key=_sort_key)
+    best = docs[0]
+
+    matched_vcpus = best.get("vcpus") or vcpus
+    matched_ram   = best.get("ram_gb") or ram_gb
+    vcpu_excess   = matched_vcpus - vcpus
+    if vcpu_excess > 16:
+        logger.warning(
+            "bulk_pricing: sanity — %s has vcpu_excess=%d for req vcpus=%d ram=%d",
+            best.get("sku_name"), vcpu_excess, vcpus, ram_gb,
+        )
+
+    logger.info(
+        "bulk_pricing: SKU match vcpus_req=%d ram_req=%d → %s (%d vCPU %d GB)",
+        vcpus, ram_gb, best.get("sku_name"), matched_vcpus, matched_ram,
+    )
+
+    result = [best]
+    _sku_match_cache[key] = result
+    return result
 
 
 # ── Cached VM price fetch ─────────────────────────────────────────────────────
