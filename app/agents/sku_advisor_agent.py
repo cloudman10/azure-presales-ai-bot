@@ -624,12 +624,6 @@ async def _pick_vms_from_prices(
         # They do not support Windows — exclude them from Windows recommendations.
         if os_type == "Windows" and re.search(r'Standard_[A-Z]\d+-?\d*p[a-z]', arm, re.IGNORECASE):
             return False
-        # GPU/HPC SKUs are never appropriate for general-purpose VM matching.
-        # NV=GPU visualisation, ND=GPU AI/ML, NC=GPU compute, HB/HC=HPC.
-        # These end up winning RAM-constrained matches because they have fewer
-        # vCPUs than the next E-series option (NV6 beats E8 for a 4-vCPU need).
-        if re.match(r'Standard_(NV|ND|NC|HB|HC|NH|NG)', arm, re.IGNORECASE):
-            return False
         # Python-side OS filter — OData 'not contains()' is not reliably supported
         if os_type == "Windows" and "Windows" not in product:
             return False
