@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>HyperXen.ai — Bulk VM Pricing</title>
+<style>
+/* ── reset ─────────────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;min-height:100dvh;display:flex;flex-direction:column;max-width:980px;margin:0 auto}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+.header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid #E5E9ED;flex-shrink:0}
+.logo{width:32px;height:32px;border-radius:8px;background:#0078D4;color:#fff;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.header-text h1{font-size:15px;font-weight:600;color:#1A1A2E}
+.header-text p{font-size:11px;color:#8B95A2;margin-top:1px}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.dot{width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0}
+.nav-btn{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid #E5E9ED;background:#fff;color:#666;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap;line-height:1;text-decoration:none}
+.nav-btn:hover{border-color:#0078D4;color:#0078D4;background:#F0F7FF}
+
+/* ── main scroll area ───────────────────────────────────────────────────── */
+.main{flex:1;overflow-y:auto;padding:24px 20px;display:flex;flex-direction:column;gap:16px}
+.main::-webkit-scrollbar{width:4px}.main::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px}
+
+/* ── cards ──────────────────────────────────────────────────────────────── */
+.card{background:#fff;border:1px solid #E5E9ED;border-radius:12px;overflow:hidden}
+.card-head{padding:14px 18px;border-bottom:1px solid #EEF2F7;display:flex;align-items:center;gap:10px}
+.card-head h2{font-size:14px;font-weight:600;color:#1A1A2E}
+.card-head p{font-size:12px;color:#8B95A2;margin-top:1px}
+.card-body{padding:18px}
+
+/* ── upload zone ────────────────────────────────────────────────────────── */
+.upload-zone{border:2px dashed #C3DDF5;border-radius:10px;padding:40px 24px;text-align:center;cursor:pointer;transition:all .2s;background:#F8FBFF;position:relative}
+.upload-zone:hover,.upload-zone.drag{border-color:#0078D4;background:#EBF5FF}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.upload-icon{font-size:36px;margin-bottom:10px}
+.upload-zone h3{font-size:15px;font-weight:600;color:#1A1A2E;margin-bottom:4px}
+.upload-zone p{font-size:13px;color:#8B95A2}
+.upload-zone .hint{font-size:11px;color:#B0B8C4;margin-top:8px}
+.file-chosen{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#EBF5FF;border:1px solid #C3DDF5;border-radius:8px;margin-top:14px}
+.file-chosen-name{font-size:13px;font-weight:500;color:#1A1A2E;flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-clear{border:none;background:none;color:#8B95A2;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px}
+.file-clear:hover{color:#DC2626}
+
+/* ── buttons ────────────────────────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;border:none;white-space:nowrap}
+.btn-primary{background:#0078D4;color:#fff}
+.btn-primary:hover{background:#005A9E}
+.btn-primary:disabled{background:#A0C4E8;cursor:not-allowed}
+.btn-outline{background:#fff;color:#0078D4;border:1px solid #0078D4}
+.btn-outline:hover{background:#F0F7FF}
+.btn-green{background:#fff;color:#166534;border:1px solid #22C55E}
+.btn-green:hover{background:#DCFCE7}
+.btn-sm{padding:6px 12px;font-size:12px}
+
+/* ── processing panel ───────────────────────────────────────────────────── */
+.proc-card{background:#fff;border:1px solid #C3DDF5;border-radius:12px;padding:40px 24px;text-align:center}
+.spinner{width:44px;height:44px;border:4px solid #EEF2F7;border-top-color:#0078D4;border-radius:50%;animation:spin 0.9s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.proc-title{font-size:16px;font-weight:600;color:#1A1A2E;margin-bottom:6px}
+.proc-sub{font-size:13px;color:#8B95A2}
+.proc-elapsed{font-size:12px;color:#B0B8C4;margin-top:10px;font-variant-numeric:tabular-nums}
+.proc-bar-wrap{width:260px;height:4px;background:#EEF2F7;border-radius:4px;margin:14px auto 0;overflow:hidden}
+.proc-bar{height:100%;width:0%;background:linear-gradient(90deg,#0078D4,#50B0F0);border-radius:4px;animation:indeterminate 1.6s ease-in-out infinite}
+@keyframes indeterminate{0%{width:0%;margin-left:0}50%{width:60%;margin-left:20%}100%{width:0%;margin-left:100%}}
+
+/* ── error panel ────────────────────────────────────────────────────────── */
+.err-card{background:#FFF5F5;border:1px solid #FCA5A5;border-radius:12px;padding:24px}
+.err-title{font-size:14px;font-weight:600;color:#DC2626;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.err-msg{font-size:13px;color:#7F1D1D;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.err-actions{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap}
+
+/* ── totals card ────────────────────────────────────────────────────────── */
+.totals-card{background:linear-gradient(135deg,#0078D4 0%,#005A9E 100%);border-radius:12px;padding:20px 24px;color:#fff}
+.totals-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;opacity:.8;margin-bottom:6px}
+.totals-main{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.totals-mo{font-size:36px;font-weight:700}
+.totals-unit{font-size:15px;opacity:.8}
+.totals-annual{font-size:14px;opacity:.8;margin-top:4px}
+.totals-breakdown{display:flex;gap:20px;flex-wrap:wrap;margin-top:14px;border-top:1px solid rgba(255,255,255,.2);padding-top:12px}
+.tb-item{display:flex;flex-direction:column;gap:2px}
+.tb-lbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;opacity:.7}
+.tb-val{font-size:14px;font-weight:600}
+
+/* ── warnings strip ─────────────────────────────────────────────────────── */
+.warn-strip{background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:12px 16px}
+.warn-strip-head{font-size:13px;font-weight:600;color:#92400E;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.warn-strip-head .chev{transition:transform .2s;font-style:normal}
+.warn-strip.open .warn-strip-head .chev{transform:rotate(90deg)}
+.warn-list{display:none;margin-top:10px;display:flex;flex-direction:column;gap:4px}
+.warn-strip.open .warn-list{display:flex}
+.warn-item{font-size:12px;color:#78350F;padding:3px 0 3px 12px;border-left:3px solid #FCD34D}
+
+/* ── results table ──────────────────────────────────────────────────────── */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:860px}
+thead th{background:#F0F7FF;color:#005A9E;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;padding:9px 12px;text-align:left;white-space:nowrap;border-bottom:2px solid #C3DDF5;position:sticky;top:0}
+thead th.r{text-align:right}
+tbody tr{border-bottom:1px solid #EEF2F7;transition:background .1s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:#F8FBFF}
+tbody tr:nth-child(even){background:#FAFBFD}
+tbody tr:nth-child(even):hover{background:#F0F7FF}
+td{padding:8px 12px;color:#1A1A2E;vertical-align:middle}
+td.r{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+td.mono{font-family:ui-monospace,monospace;font-size:12px}
+td.muted{color:#8B95A2;font-size:12px}
+td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
+.badge{display:inline-block;font-size:10px;font-weight:600;padding:1px 7px;border-radius:8px}
+.badge-win{background:#DBEAFE;color:#1D4ED8}
+.badge-lin{background:#DCFCE7;color:#166534}
+.badge-sql{background:#F3E8FF;color:#7E22CE}
+
+/* ── pagination ─────────────────────────────────────────────────────────── */
+.pager{display:flex;align-items:center;gap:8px;justify-content:center;padding:14px 0 4px;flex-wrap:wrap}
+.pager-info{font-size:12px;color:#8B95A2}
+.pager-btn{min-width:32px;height:32px;border-radius:7px;border:1px solid #E5E9ED;background:#fff;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all .15s;padding:0 8px}
+.pager-btn:hover:not(:disabled){border-color:#0078D4;color:#0078D4;background:#F0F7FF}
+.pager-btn:disabled{color:#C5CDD5;cursor:not-allowed}
+.pager-btn.active{background:#0078D4;color:#fff;border-color:#0078D4}
+
+/* ── action row ─────────────────────────────────────────────────────────── */
+.action-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.dl-note{font-size:11px;color:#8B95A2;margin-left:auto}
+
+/* ── validation message ─────────────────────────────────────────────────── */
+.val-msg{font-size:12px;color:#DC2626;margin-top:8px;display:none}
+</style>
+</head>
+<body>
+
+<!-- ── header ─────────────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="logo">H</div>
+  <div class="header-text">
+    <h1>HyperXen.ai</h1>
+    <p>Bulk VM Pricing — Azure cost estimate from inventory sheet</p>
+  </div>
+  <div class="header-right">
+    <span class="dot"></span>
+    <a href="/pricing" class="nav-btn">💬 Chat Pricing</a>
+    <a href="/architect" class="nav-btn">🏗 Architect</a>
+  </div>
+</header>
+
+<!-- ── main ───────────────────────────────────────────────────────────── -->
+<div class="main" id="main">
+
+  <!-- ─── UPLOAD PANEL ──────────────────────────────────────────────────── -->
+  <div id="panel-upload">
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Upload VM Inventory</h2>
+          <p>Upload your Public-Cloud-VM-Listing spreadsheet to price the full fleet</p>
+        </div>
+      </div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
+
+        <!-- Template download -->
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#F8FBFF;border:1px solid #C3DDF5;border-radius:8px;flex-wrap:wrap">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;color:#1A1A2E">Need the template?</div>
+            <div style="font-size:12px;color:#8B95A2;margin-top:2px">Location · VM Name · OS · MS SQL · Server Role · vCPUs · Mem (GB) · Provisioned Space (GB)</div>
+          </div>
+          <a href="/api/bulk-pricing/template" class="btn btn-outline btn-sm" download>
+            ⬇ Download template
+          </a>
+        </div>
+
+        <!-- Drop zone -->
+        <div class="upload-zone" id="drop-zone">
+          <input type="file" id="file-input" accept=".xlsx" />
+          <div class="upload-icon">📊</div>
+          <h3>Drop your .xlsx file here</h3>
+          <p>or click to browse</p>
+          <div class="hint">Accepts .xlsx only · max 10 MB</div>
+        </div>
+        <div class="val-msg" id="val-msg"></div>
+
+        <!-- Chosen file strip (hidden until file selected) -->
+        <div id="file-chosen" class="file-chosen" style="display:none">
+          <span style="font-size:20px">📄</span>
+          <span class="file-chosen-name" id="file-chosen-name"></span>
+          <span id="file-chosen-size" style="font-size:12px;color:#8B95A2;white-space:nowrap"></span>
+          <button class="file-clear" id="file-clear" title="Remove">✕</button>
+        </div>
+
+        <!-- Submit -->
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="btn btn-primary" id="btn-process" disabled>
+            ▶ Price this fleet
+          </button>
+          <span style="font-size:12px;color:#8B95A2" id="row-hint"></span>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /panel-upload -->
+
+  <!-- ─── PROCESSING PANEL ───────────────────────────────────────────────── -->
+  <div id="panel-processing" style="display:none">
+    <div class="proc-card">
+      <div class="spinner"></div>
+      <div class="proc-title" id="proc-title">Pricing your fleet…</div>
+      <div class="proc-sub" id="proc-sub">Fetching live Azure rates for all regions and OS types</div>
+      <div class="proc-elapsed" id="proc-elapsed">0s elapsed</div>
+      <div class="proc-bar-wrap"><div class="proc-bar"></div></div>
+      <div style="margin-top:20px">
+        <button class="btn btn-outline btn-sm" id="btn-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── ERROR PANEL ────────────────────────────────────────────────────── -->
+  <div id="panel-error" style="display:none">
+    <div class="err-card">
+      <div class="err-title">⚠ Processing failed</div>
+      <div class="err-msg" id="err-msg"></div>
+      <div class="err-actions">
+        <button class="btn btn-outline btn-sm" id="btn-retry">↩ Try again</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── RESULTS PANEL ─────────────────────────────────────────────────── -->
+  <div id="panel-results" style="display:none">
+
+    <!-- Grand total -->
+    <div class="totals-card">
+      <div class="totals-label">Fleet estimate — PAYG, License-Included, Standard SSD</div>
+      <div class="totals-main">
+        <span class="totals-mo" id="res-monthly">—</span>
+        <span class="totals-unit">/month</span>
+      </div>
+      <div class="totals-annual" id="res-annual"></div>
+      <div class="totals-breakdown">
+        <div class="tb-item"><span class="tb-lbl">Compute</span><span class="tb-val" id="tb-compute">—</span></div>
+        <div class="tb-item"><span class="tb-lbl">OS License</span><span class="tb-val" id="tb-oslic">—</span></div>
+        <div class="tb-item"><span class="tb-lbl">SQL License</span><span class="tb-val" id="tb-sql">—</span></div>
+        <div class="tb-item"><span class="tb-lbl">Disk</span><span class="tb-val" id="tb-disk">—</span></div>
+        <div class="tb-item"><span class="tb-lbl">VMs priced</span><span class="tb-val" id="tb-count">—</span></div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="action-row">
+      <button class="btn btn-green" id="btn-download">⬇ Download Excel</button>
+      <button class="btn btn-outline" id="btn-new-upload">↩ New upload</button>
+      <span class="dl-note">Azure Hybrid Benefit not applied · OS disk only</span>
+    </div>
+
+    <!-- Warnings (if any) -->
+    <div class="warn-strip" id="warn-strip" style="display:none">
+      <div class="warn-strip-head" id="warn-strip-head">
+        <span>⚠</span>
+        <span id="warn-count-label"></span>
+        <span class="chev">›</span>
+      </div>
+      <div class="warn-list" id="warn-list"></div>
+    </div>
+
+    <!-- Per-VM table -->
+    <div class="card">
+      <div class="card-head" style="justify-content:space-between">
+        <div>
+          <h2>Per-VM breakdown</h2>
+          <p id="tbl-subtitle"></p>
+        </div>
+        <div style="font-size:12px;color:#8B95A2" id="page-info"></div>
+      </div>
+      <div class="card-body" style="padding:0">
+        <div class="tbl-wrap">
+          <table id="results-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>VM Name</th>
+                <th>Region</th>
+                <th>SKU</th>
+                <th class="r">vCPU</th>
+                <th class="r">RAM</th>
+                <th>OS</th>
+                <th>SQL</th>
+                <th>OS Disk</th>
+                <th class="r">Compute</th>
+                <th class="r">OS Lic</th>
+                <th class="r">SQL Lic</th>
+                <th class="r">Disk</th>
+                <th class="r">Total/mo</th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pager" id="pager"></div>
+      </div>
+    </div>
+
+  </div><!-- /panel-results -->
+
+</div><!-- /main -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let _file     = null;
+let _result   = null;
+let _page     = 0;
+let _abortCtl = null;
+let _timer    = null;
+const PAGE_SIZE = 25;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const fmt  = n => n == null ? '—' : '$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtK = n => n == null ? '—' : '$' + (n/1000).toLocaleString('en-US', {minimumFractionDigits:1, maximumFractionDigits:1}) + 'k';
+
+function showPanel(name) {
+  ['upload','processing','error','results'].forEach(p =>
+    $('panel-' + p).style.display = p === name ? '' : 'none'
+  );
+}
+
+function setValidation(msg) {
+  const el = $('val-msg');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+// ── File selection ─────────────────────────────────────────────────────────
+function onFileChosen(file) {
+  setValidation('');
+  if (!file) { clearFile(); return; }
+  if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    setValidation('Only .xlsx files are accepted. Please select an Excel workbook.');
+    clearFile(); return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    setValidation('File is too large (max 10 MB).');
+    clearFile(); return;
+  }
+  _file = file;
+  $('file-chosen').style.display = 'flex';
+  $('file-chosen-name').textContent = file.name;
+  $('file-chosen-size').textContent = (file.size / 1024).toFixed(0) + ' KB';
+  $('btn-process').disabled = false;
+  $('row-hint').textContent = '';
+}
+
+function clearFile() {
+  _file = null;
+  $('file-input').value = '';
+  $('file-chosen').style.display = 'none';
+  $('btn-process').disabled = true;
+  $('row-hint').textContent = '';
+}
+
+$('file-input').addEventListener('change', e => onFileChosen(e.target.files[0]));
+$('file-clear').addEventListener('click', clearFile);
+
+// Drag-and-drop
+const zone = $('drop-zone');
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+zone.addEventListener('drop', e => {
+  e.preventDefault();
+  zone.classList.remove('drag');
+  onFileChosen(e.dataTransfer.files[0]);
+});
+
+// ── Processing timer ───────────────────────────────────────────────────────
+function startTimer(startMs) {
+  stopTimer();
+  _timer = setInterval(() => {
+    const secs = Math.floor((Date.now() - startMs) / 1000);
+    $('proc-elapsed').textContent = secs + 's elapsed';
+    if (secs >= 30 && secs < 90)
+      $('proc-sub').textContent = 'Fetching live Azure rates — large sheets take 60–90 s…';
+    if (secs >= 90)
+      $('proc-sub').textContent = 'Still working — nearly there…';
+  }, 1000);
+}
+function stopTimer() {
+  if (_timer) { clearInterval(_timer); _timer = null; }
+}
+
+// ── Process ────────────────────────────────────────────────────────────────
+$('btn-process').addEventListener('click', runPricing);
+$('btn-cancel').addEventListener('click', () => {
+  if (_abortCtl) _abortCtl.abort();
+  stopTimer();
+  showPanel('upload');
+});
+$('btn-retry').addEventListener('click', () => showPanel('upload'));
+$('btn-new-upload').addEventListener('click', () => { clearFile(); showPanel('upload'); });
+
+async function runPricing() {
+  if (!_file) return;
+  setValidation('');
+
+  $('proc-title').textContent = 'Pricing your fleet…';
+  $('proc-sub').textContent = 'Fetching live Azure rates for all regions and OS types';
+  $('proc-elapsed').textContent = '0s elapsed';
+  showPanel('processing');
+
+  _abortCtl = new AbortController();
+  const startMs = Date.now();
+  startTimer(startMs);
+
+  const fd = new FormData();
+  fd.append('file', _file);
+
+  // 3-minute timeout
+  const timeoutId = setTimeout(() => _abortCtl.abort(), 3 * 60 * 1000);
+
+  try {
+    const resp = await fetch('/api/bulk-pricing/upload', {
+      method: 'POST',
+      body: fd,
+      signal: _abortCtl.signal,
+    });
+    clearTimeout(timeoutId);
+    stopTimer();
+
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try { const j = await resp.json(); detail = j.detail || detail; } catch {}
+      showError(detail, resp.status);
+      return;
+    }
+
+    _result = await resp.json();
+    showResults(_result);
+
+  } catch (err) {
+    clearTimeout(timeoutId);
+    stopTimer();
+    if (err.name === 'AbortError') {
+      showError('Request timed out after 3 minutes. The fleet may be too large, or the backend is temporarily unavailable.\n\nTry again or contact support if the issue persists.');
+    } else {
+      showError('Network error: ' + err.message);
+    }
+  }
+}
+
+// ── Error display ──────────────────────────────────────────────────────────
+function showError(msg, status) {
+  let friendly = msg;
+  if (status === 400) friendly = 'Invalid file: ' + msg;
+  if (status === 413) friendly = 'File too large (max 10 MB). Reduce the sheet size and try again.';
+  if (status === 500) friendly = 'Backend error while pricing:\n' + msg;
+  $('err-msg').textContent = friendly;
+  showPanel('error');
+}
+
+// ── Results display ────────────────────────────────────────────────────────
+function showResults(r) {
+  const t = r.totals;
+
+  // Grand total card
+  $('res-monthly').textContent = fmt(t.monthly_total);
+  $('res-annual').textContent  = 'Annual estimate: ' + fmt(t.annual_total);
+  $('tb-compute').textContent  = fmt(t.monthly_compute);
+  $('tb-oslic').textContent    = fmt(t.monthly_os_license);
+  $('tb-sql').textContent      = fmt(t.monthly_sql);
+  $('tb-disk').textContent     = fmt(t.monthly_disk);
+  $('tb-count').textContent    = r.vm_count;
+
+  // Subtitle
+  $('tbl-subtitle').textContent = r.vm_count + ' VMs priced · PAYG · License-Included';
+
+  // Warnings
+  const warns = r.warnings || [];
+  if (warns.length) {
+    const ws = $('warn-strip');
+    ws.style.display = '';
+    ws.classList.remove('open');
+    $('warn-count-label').textContent = warns.length + ' warning' + (warns.length > 1 ? 's' : '') + ' — click to expand';
+    const wl = $('warn-list');
+    wl.innerHTML = '';
+    warns.forEach(w => {
+      const d = document.createElement('div');
+      d.className = 'warn-item';
+      d.textContent = w;
+      wl.appendChild(d);
+    });
+    $('warn-strip-head').onclick = () => ws.classList.toggle('open');
+  } else {
+    $('warn-strip').style.display = 'none';
+  }
+
+  // Table
+  _page = 0;
+  renderTable();
+  showPanel('results');
+}
+
+// ── Pagination ─────────────────────────────────────────────────────────────
+function renderTable() {
+  if (!_result) return;
+  const rows = _result.rows;
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  _page = Math.max(0, Math.min(_page, totalPages - 1));
+
+  const start = _page * PAGE_SIZE;
+  const slice = rows.slice(start, start + PAGE_SIZE);
+
+  const tbody = $('results-tbody');
+  tbody.innerHTML = '';
+  slice.forEach((r, idx) => {
+    const n = start + idx + 1;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="muted">${n}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.vm_name)}">${esc(r.vm_name)}</td>
+      <td class="muted">${esc(r.region_label)}</td>
+      <td class="sku">${esc(r.sku_name)}</td>
+      <td class="r">${r.matched_vcpus}</td>
+      <td class="r">${r.matched_ram_gb ?? '—'}</td>
+      <td><span class="badge ${r.os_type==='Windows'?'badge-win':'badge-lin'}">${esc(r.os_type)}</span></td>
+      <td>${r.sql_display ? `<span class="badge badge-sql">${esc(r.sql_display)}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="muted" style="white-space:nowrap">E-SSD ${esc(r.ssd_tier)}/${r.ssd_gib} GiB</td>
+      <td class="r">${fmt(r.monthly_compute)}</td>
+      <td class="r">${fmt(r.monthly_os_license)}</td>
+      <td class="r">${fmt(r.monthly_sql)}</td>
+      <td class="r">${fmt(r.monthly_disk)}</td>
+      <td class="r" style="font-weight:700">${fmt(r.monthly_total)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Page info
+  $('page-info').textContent = `Showing ${start+1}–${Math.min(start+PAGE_SIZE, rows.length)} of ${rows.length}`;
+
+  // Pager
+  const pager = $('pager');
+  pager.innerHTML = '';
+  if (totalPages <= 1) return;
+
+  const mkBtn = (label, pg, active, disabled) => {
+    const b = document.createElement('button');
+    b.className = 'pager-btn' + (active ? ' active' : '');
+    b.textContent = label;
+    b.disabled = disabled;
+    b.onclick = () => { _page = pg; renderTable(); };
+    return b;
+  };
+
+  pager.appendChild(mkBtn('‹', _page - 1, false, _page === 0));
+
+  // Show first, last, and window around current
+  const show = new Set([0, totalPages-1]);
+  for (let p = Math.max(0, _page-2); p <= Math.min(totalPages-1, _page+2); p++) show.add(p);
+  const sorted = [...show].sort((a,b) => a-b);
+  let prev = -1;
+  sorted.forEach(p => {
+    if (prev >= 0 && p > prev + 1) {
+      const span = document.createElement('span');
+      span.className = 'pager-info';
+      span.textContent = '…';
+      pager.appendChild(span);
+    }
+    pager.appendChild(mkBtn(p+1, p, p === _page, false));
+    prev = p;
+  });
+
+  pager.appendChild(mkBtn('›', _page + 1, false, _page === totalPages - 1));
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Excel download ─────────────────────────────────────────────────────────
+$('btn-download').addEventListener('click', async () => {
+  if (!_result) return;
+  const btn = $('btn-download');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating…';
+  try {
+    const resp = await fetch('/api/bulk-pricing/export-result', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(_result),
+    });
+    if (!resp.ok) { alert('Export failed: HTTP ' + resp.status); return; }
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'azure-vm-bulk-pricing.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert('Export error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⬇ Download Excel';
+  }
+});
+</script>
+</body>
+</html>
