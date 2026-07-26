@@ -297,11 +297,18 @@ async def _pick_sku_cached(
         _sku_match_cache[key] = []
         return []
 
-    # Sort by tightest fit: fewest vCPUs first, then smallest RAM, then newest gen
+    # Sort by tightest fit: fewest vCPUs, then smallest RAM, then no local NVMe
+    # (prefer cheaper 'as'/'als' over 'ads'/'alds' when vcpu/RAM are equal),
+    # then newest gen as final tiebreaker.
+    def _has_local_nvme(sku_name: str) -> int:
+        # 'd' in the suffix after the numeric vCPU count = local NVMe disk = pricier
+        m = re.match(r'Standard_[A-Za-z]+\d+-?\d*([a-z]+)_v\d+', sku_name, re.IGNORECASE)
+        return 1 if (m and 'd' in m.group(1).lower()) else 0
+
     def _sort_key(d: dict) -> tuple:
         m = re.search(r'_v(\d+)', d.get("sku_name", ""))
         gen = int(m.group(1)) if m else 1
-        return (d.get("vcpus") or 999, d.get("ram_gb") or 999, -gen)
+        return (d.get("vcpus") or 999, d.get("ram_gb") or 999, _has_local_nvme(d.get("sku_name", "")), -gen)
 
     docs.sort(key=_sort_key)
     best = docs[0]
