@@ -648,9 +648,9 @@ async def _pick_vms_from_prices(
 
     if vcpus:
         items = [i for i in items
-                 if active_vcpu_count(i.get("armSkuName", ""), _vcpus_from_sku(i.get("armSkuName", ""))) == vcpus]
+                 if (active_vcpu_count(i.get("armSkuName", ""), _vcpus_from_sku(i.get("armSkuName", ""))) or 0) >= vcpus]
 
-    logger.info("sku_advisor: after vCPU=%s filter → %d items", vcpus, len(items))
+    logger.info("sku_advisor: after vCPU>=%s filter → %d items", vcpus, len(items))
 
     # Deduplicate: one entry per armSkuName, keeping the cheapest price
     items.sort(key=lambda x: x.get("retailPrice", float("inf")))
@@ -662,11 +662,14 @@ async def _pick_vms_from_prices(
             seen.add(name)
             unique.append(item)
 
-    # Bucket by series category
+    # Bucket by series category.
+    # FX-series (Standard_FX...) is a niche high-memory compute family — keep it
+    # in "other", not "general".  Plain F-series (Standard_F[0-9]...) is fine in general.
     cats: dict[str, list[dict]] = {"general": [], "memory": [], "cost": [], "other": []}
     for item in unique:
-        s = _sku_series(item.get("armSkuName", ""))
-        if s in ("D", "F"):
+        arm = item.get("armSkuName", "")
+        s   = _sku_series(arm)
+        if s == "D" or (s == "F" and not re.match(r'^Standard_FX', arm, re.IGNORECASE)):
             cats["general"].append(item)
         elif s == "E":
             cats["memory"].append(item)
@@ -682,38 +685,37 @@ async def _pick_vms_from_prices(
     for cat in cats.values():
         cat.sort(key=_cat_sort)
 
-    # One representative per category, then fill remaining slots by price
-    picks: list[dict] = []
-    pick_names: set[str] = set()
+    # Build a wider candidate pool (up to 3 per category → ≤12 candidates).
+    # We enrich the whole pool with AI Search metadata so RAM is known BEFORE
+    # final selection — this is the only way to apply a RAM minimum filter and
+    # rank by closeness-to-requested-RAM (not just generation/price).
+    _POOL_PER_CAT = 3
+    pool: list[dict] = []
+    pool_names: set[str] = set()
     for cat_key in ("general", "memory", "cost", "other"):
-        if len(picks) >= 3:
-            break
-        for item in cats[cat_key]:
+        for item in cats[cat_key][:_POOL_PER_CAT]:
             name = item.get("armSkuName", "")
-            if name not in pick_names:
-                picks.append(item)
-                pick_names.add(name)
-                break
-
-    for item in unique:
-        if len(picks) >= 3:
+            if name not in pool_names:
+                pool.append(item)
+                pool_names.add(name)
+    for item in unique:                # fill any remaining slots up to 12
+        if len(pool) >= 12:
             break
         name = item.get("armSkuName", "")
-        if name not in pick_names:
-            picks.append(item)
-            pick_names.add(name)
+        if name not in pool_names:
+            pool.append(item)
+            pool_names.add(name)
 
     logger.info(
-        "sku_advisor: picked from %s → %s",
-        region, [p.get("armSkuName") for p in picks],
+        "sku_advisor: enriching candidate pool from %s → %s",
+        region, [p.get("armSkuName") for p in pool],
     )
 
-    # Enrich concurrently with AI Search metadata
-    sku_names = [p.get("armSkuName", "") for p in picks]
-    meta_list = await asyncio.gather(*[_get_sku_metadata(n) for n in sku_names])
+    # Enrich entire pool concurrently — RAM/vCPU data now available for all candidates
+    pool_meta = await asyncio.gather(*[_get_sku_metadata(p.get("armSkuName", "")) for p in pool])
 
-    results: list[dict] = []
-    for price_item, meta in zip(picks, meta_list):
+    enriched: list[dict] = []
+    for price_item, meta in zip(pool, pool_meta):
         sku_name = price_item.get("armSkuName", "")
         series   = _sku_series(sku_name)
         doc: dict = {
@@ -723,11 +725,52 @@ async def _pick_vms_from_prices(
             "temp_storage_gb": meta.get("temp_storage_gb") or 0,
             "use_cases":       meta.get("use_cases") or _SERIES_USE_CASES.get(series, ""),
             "_price_item":     price_item,
+            "_series":         series,
         }
         if region_label:
             doc["_region"]       = region
             doc["_region_label"] = region_label
-        results.append(doc)
+        enriched.append(doc)
+
+    # Apply hard RAM minimum — only relax if no RAM was requested or all candidates miss
+    if ram_gb:
+        ram_filtered = [d for d in enriched if (d.get("ram_gb") or 0) >= ram_gb]
+        if ram_filtered:
+            enriched = ram_filtered
+        else:
+            logger.warning("sku_advisor: RAM filter (%d GB) removed all candidates — relaxing", ram_gb)
+
+    # Rank by closeness to requested specs (tightest fit above minimum first),
+    # then newest generation, then lowest price.
+    # vCPU excess is the primary signal: if user asks for 6 and D8s_v5 (8) and D64s_v5
+    # both pass, pick D8s_v5 first.  RAM excess is secondary.
+    def _rank_key(doc: dict) -> tuple:
+        vcpu_excess = (doc.get("vcpus") or 99999) - (vcpus or 0)
+        ram_excess  = (doc.get("ram_gb") or 99999) - (ram_gb or 0)
+        gen         = _gen_from_sku(doc["sku_name"])
+        price       = doc["_price_item"].get("retailPrice", float("inf"))
+        return (vcpu_excess, ram_excess, -gen, price)
+
+    enriched.sort(key=_rank_key)
+
+    # Final top-3 with series diversity: one per series letter first, then fill
+    results: list[dict] = []
+    seen_series: set[str] = set()
+    for doc in enriched:
+        if len(results) >= 3:
+            break
+        s = doc.get("_series", "?")
+        if s not in seen_series:
+            results.append(doc)
+            seen_series.add(s)
+    for doc in enriched:
+        if len(results) >= 3:
+            break
+        if doc not in results:
+            results.append(doc)
+
+    for doc in results:
+        doc.pop("_series", None)
 
     return results
 
