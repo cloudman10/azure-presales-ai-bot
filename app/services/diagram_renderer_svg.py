@@ -182,6 +182,40 @@ _COLOR = {
     "OnPremNetwork": _PALETTE["badge_onprem_net"], "OnPremFirewall": _PALETTE["badge_onprem_net"],  "AzureService": _PALETTE["badge_compute"],
 }
 
+# ── Security & Management footer band ────────────────────────────────────────
+# Types that appear as badges in the horizontal footer strip — deduplicated by type.
+# EntraID is intentionally excluded (it participates in auth-flow arrows, not passive governance).
+_FOOTER_TYPES: set[str] = {
+    "NetworkSecurityGroup", "AzurePolicy", "KeyVault", "DefenderForCloud",
+    "RecoveryServicesVault", "LogAnalyticsWorkspace", "AzureMonitor",
+    "UpdateManager", "AutomationAccount", "CostManagement", "Sentinel",
+    "ManagedIdentity", "ApplicationInsights",
+}
+
+# Preferred display order in the footer (security first, then ops/mgmt)
+_FOOTER_ORDER: list[str] = [
+    "NetworkSecurityGroup", "KeyVault", "DefenderForCloud", "Sentinel",
+    "AzurePolicy", "ManagedIdentity",
+    "LogAnalyticsWorkspace", "AzureMonitor", "ApplicationInsights",
+    "UpdateManager", "AutomationAccount", "RecoveryServicesVault", "CostManagement",
+]
+
+_FOOTER_LABEL: dict[str, str] = {
+    "NetworkSecurityGroup":  "NSG",
+    "AzurePolicy":           "Azure Policy",
+    "KeyVault":              "Key Vault",
+    "DefenderForCloud":      "Defender",
+    "RecoveryServicesVault": "Backup & DR",
+    "LogAnalyticsWorkspace": "Log Analytics",
+    "AzureMonitor":          "Azure Monitor",
+    "UpdateManager":         "Update Manager",
+    "AutomationAccount":     "Automation",
+    "CostManagement":        "Cost Management",
+    "Sentinel":              "Sentinel",
+    "ManagedIdentity":       "Managed Identity",
+    "ApplicationInsights":   "App Insights",
+}
+
 # ── Zone colour styles ────────────────────────────────────────────────────────
 _ZONE_STYLE = {
     "onprem": _PALETTE["zone_onprem"],
@@ -286,8 +320,15 @@ _SB_PAD  = 6     # sidebar inner y-padding (top + bottom each)
 _SB_PG   = 10    # gap between sidebar panels
 
 _MBAND_H = 70    # migration band height
+_FTR_H   = 40    # Security & Management footer band height
 _LEG_H   = 36    # legend height
 _BAND_GAP= 10    # gap between bands
+
+_KEY_GAP    = 12   # gap above/below connection key strip
+_KEY_HDR_H  = 22   # "CONNECTION KEY" header row height
+_KEY_ROW_H  = 18   # height per key entry row
+_KEY_PAD    = 10   # padding inside key strip (top/bottom)
+_KEY_COLS   = 3    # key strip columns
 
 # Derived widths
 _ARCH_W    = 3 * _PANEL_W + 2 * _COL_GAP   # = 726
@@ -380,6 +421,27 @@ def render_architecture_svg(arch: dict) -> bytes:
         for p in sb_panels
     ) + _SB_PG * (len(sb_panels) - 1)
 
+    # ── Security & Management footer items ────────────────────────────────────
+    _ftr_seen: set[str] = set()
+    _ftr_raw:  dict[str, str] = {}   # type → display label (insertion order = first-seen)
+    for zone in zones:
+        for res in zone.get("resources", []):
+            t = res.get("type", "")
+            if t in _FOOTER_TYPES and t not in _ftr_seen:
+                _ftr_raw[t] = _FOOTER_LABEL.get(t, t)
+                _ftr_seen.add(t)
+    for ss in shared_services:
+        t = ss.get("type", "")
+        if t in _FOOTER_TYPES and t not in _ftr_seen:
+            _ftr_raw[t] = _FOOTER_LABEL.get(t, t)
+            _ftr_seen.add(t)
+    # Sort by canonical display order; unknown types go last
+    _ftr_items: list[tuple[str, str]] = sorted(
+        _ftr_raw.items(),
+        key=lambda kv: _FOOTER_ORDER.index(kv[0]) if kv[0] in _FOOTER_ORDER else 999,
+    )
+    has_ftr = bool(_ftr_items)
+
     # ── Architecture area height ──────────────────────────────────────────────
     arch_h = max(_col_h(col0), _col_h(col1), _col_h(col2), sb_total_h, 260)
 
@@ -400,11 +462,16 @@ def render_architecture_svg(arch: dict) -> bytes:
 
     # ── Vertical layout ───────────────────────────────────────────────────────
     arch_y   = _M + _HDR_H + _PIL_H + _PIL_GAP
-    bottom_y = arch_y + arch_h + 14
+    _n_badges = sum(1 for c in connections if c.get("label", "").strip())
+    _key_rows = -(-_n_badges // _KEY_COLS) if _n_badges else 0
+    _key_strip_h = (_KEY_HDR_H + _key_rows * _KEY_ROW_H + 2 * _KEY_PAD) if _n_badges else 0
+    key_strip_y = arch_y + arch_h + 14
+    bottom_y = key_strip_y + (_key_strip_h + _KEY_GAP if _n_badges else 0)
 
     total_bottom = 0
     if has_mig: total_bottom += _MBAND_H + _BAND_GAP
     if has_cp:  total_bottom += cp_h     + _BAND_GAP
+    if has_ftr: total_bottom += _FTR_H   + _BAND_GAP
     total_bottom += _LEG_H
 
     H = bottom_y + total_bottom + _M
@@ -430,8 +497,9 @@ def render_architecture_svg(arch: dict) -> bytes:
     out: list[str] = []
     zone_svgs: list[str] = []
     conn_svgs: list[str] = []
-    zone_bounds: dict[str, tuple] = {}   # zone_id → (x, y, w, h)
-    res_to_zone: dict[str, str]  = {}   # resource_id → zone_id
+    zone_bounds: dict[str, tuple] = {}            # zone_id → (x, y, w, h)
+    res_to_zone: dict[str, str]  = {}            # resource_id → zone_id
+    res_center:  dict[str, tuple] = {}           # resource_id → (abs_cx, abs_cy)
 
     # SVG root + defs
     out += [
@@ -443,7 +511,13 @@ def render_architecture_svg(arch: dict) -> bytes:
         f'    <stop offset="100%" stop-color="{_PALETTE["hdr_end"]}"/>',
         '  </linearGradient>',
         '  <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">',
-        f'    <polygon points="0 0, 8 3, 0 6" fill="{_PALETTE["accent"]}" opacity="0.8"/>',
+        f'    <polygon points="0 0, 8 3, 0 6" fill="{_PALETTE["accent"]}" opacity="0.9"/>',
+        '  </marker>',
+        '  <marker id="arr_intra" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">',
+        f'    <polygon points="0 0, 7 2.5, 0 5" fill="{_PALETTE["accent_teal"]}" opacity="0.85"/>',
+        '  </marker>',
+        '  <marker id="arr_dim" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">',
+        f'    <polygon points="0 0, 7 2.5, 0 5" fill="{_PALETTE["accent"]}" opacity="0.5"/>',
         '  </marker>',
         '</defs>',
         # Canvas background
@@ -555,6 +629,7 @@ def render_architecture_svg(arch: dict) -> bytes:
                 ISIZ  = 26
 
                 res_to_zone[rid] = zid
+                res_center[rid] = (float(col_x + _PANEL_W / 2), ry + res_y + _RES_H / 2)
                 icon = _icon_uri(rtype)
 
                 p += [
@@ -606,72 +681,241 @@ def render_architecture_svg(arch: dict) -> bytes:
     _place_column(col1, cx1)
     _place_column(col2, cx2)
 
-    # ── Connection arrows ─────────────────────────────────────────────────────
-    drawn_pairs: set = set()
+    # ── Connection badge placement ────────────────────────────────────────────
+    # Each labeled connection gets a small numbered circle badge on the arrow.
+    # Full label text is shown in the CONNECTION KEY strip below the arch area.
+    _conn_key: list[tuple[int, str, str]] = []   # (badge_num, text, color)
+    _badge_counter = 0
+
+    _placed_badges: list[tuple[float, float, float, float]] = []
+
+    # Badges must avoid zone headers and the above-arch_y area.
+    _badge_blocks: list[tuple[float, float, float, float]] = []
+    _badge_blocks.append((-9999.0, 9999.0, -9999.0, float(arch_y)))
+    for _zx, _zy, _zw, _ in zone_bounds.values():
+        _badge_blocks.append((_zx, _zx + _zw, _zy, _zy + _ZTH))
+    if az_has:
+        _badge_blocks.append((float(az_x + 8), float(az_x + 8 + 130),
+                               float(az_y - 12), float(az_y - 12 + 20)))
+
+    _BADGE_R = 7
+
+    def _place_badge_y(bx: float, by: float) -> float:
+        """Find clear y for a 14-px badge, avoiding other badges and hard blocks."""
+        r  = _BADGE_R + 1
+        x0 = bx - _BADGE_R
+        x1 = bx + _BADGE_R
+
+        def _ok(ty: float) -> bool:
+            ty0, ty1 = ty - r, ty + r
+            for ox0, ox1, oy0, oy1 in _placed_badges:
+                if x0 < ox1 + 2 and x1 > ox0 - 2 and ty0 < oy1 + 2 and ty1 > oy0 - 2:
+                    return False
+            for hx0, hx1, hy0, hy1 in _badge_blocks:
+                if x0 < hx1 and x1 > hx0 and ty0 < hy1 + 4 and ty1 > hy0 - 4:
+                    return False
+            return True
+
+        for delta in (0, -14, 14, -28, 28, -42, 42, -56, 56, -70, 70,
+                      -84, 84, -98, 98, -112, 112, -126, 126, -140, 140):
+            if _ok(by + delta):
+                fy = by + delta
+                _placed_badges.append((x0, x1, fy - r, fy + r))
+                return fy
+        _placed_badges.append((x0, x1, by - r, by + r))
+        return by
+
+    def _badge_svg(bx: float, by: float, num: int, color: str) -> list:
+        if num < 10:
+            return [
+                f'<circle cx="{bx:.0f}" cy="{by:.0f}" r="{_BADGE_R}"'
+                f' fill="{color}" stroke="{_PALETTE["canvas"]}" stroke-width="1"/>',
+                f'<text x="{bx:.0f}" y="{by:.0f}" text-anchor="middle"'
+                f' dominant-baseline="middle" font-size="7" font-weight="700"'
+                f' fill="#ffffff" font-family="system-ui,Arial,sans-serif">{num}</text>',
+            ]
+        w = 18
+        return [
+            f'<rect x="{bx - w / 2:.0f}" y="{by - 7:.0f}" width="{w}" height="14"'
+            f' rx="7" fill="{color}" stroke="{_PALETTE["canvas"]}" stroke-width="1"/>',
+            f'<text x="{bx:.0f}" y="{by:.0f}" text-anchor="middle"'
+            f' dominant-baseline="middle" font-size="7" font-weight="700"'
+            f' fill="#ffffff" font-family="system-ui,Arial,sans-serif">{num}</text>',
+        ]
+
+    # ── Connection arrows v2 ──────────────────────────────────────────────────
+    # Every connection[] entry draws its own arrow — no zone-pair deduplication.
+    # Routing cases:
+    #   1. Intra-zone (sz == dz):              LEFT-side bypass into inter-column gap, teal
+    #   2. Mgmt sidebar target (no zone_bounds): dashed bezier to sidebar panel
+    #   3. Cross-column (different x):         horizontal bezier at resource y-height
+    #   4. Same-column different zone:         LEFT-side bypass (same gap, wider span)
+
+    # Pre-compute sidebar panel centre-points for mgmt connection targets
+    _sb_targets: dict[str, tuple] = {}
+    _sy_acc = float(arch_y)
+    for _plab, _pcol, _pitems in sb_panels:
+        _ph = _sb_panel_h(len(_pitems) if _pitems is not None else region_items_count)
+        if _plab == "Management & Monitoring":
+            _sb_targets["mgmt"] = (sb_x + _SB_W / 2, _sy_acc + _ph / 2)
+        _sy_acc += _ph + _SB_PG
+
+    _stagger: dict[str, int] = {}  # per-zone bypass stagger counter
+
     for conn in connections:
         sid = conn.get("from", "")
         did = conn.get("to",   "")
-        lbl = _trunc(conn.get("label", ""), 18)
+        lbl = conn.get("label", "").strip()
 
         sz = res_to_zone.get(sid) or (sid if sid in zone_bounds else None)
         dz = res_to_zone.get(did) or (did if did in zone_bounds else None)
-        if not sz or not dz or sz == dz:
+
+        if not sz:
             continue
-        pair = (sz, dz)
-        if pair in drawn_pairs:
-            continue
-        drawn_pairs.add(pair)
 
         sb_b = zone_bounds.get(sz)
-        db_b = zone_bounds.get(dz)
-        if not sb_b or not db_b:
+        db_b = zone_bounds.get(dz) if dz else None
+
+        if not sb_b:
             continue
 
+        zone_right = sb_b[0] + sb_b[2]
+
+        # Resource y-centre; fallback to zone vertical mid if not tracked
+        src_cy = res_center.get(sid, (0.0, sb_b[1] + sb_b[3] / 2))[1]
+        dst_cy = (res_center.get(did, (0.0, db_b[1] + db_b[3] / 2))[1]
+                  if db_b else res_center.get(did, (0.0, src_cy))[1])
+
+        # ── Case 1: intra-zone ────────────────────────────────────────────────
+        # Route LEFT into the inter-column gap — always clear of the sidebar.
+        if sz == dz:
+            si = _stagger.get(sz, 0)
+            _stagger[sz] = si + 1
+            zone_left = sb_b[0]
+            bx = zone_left - min(8 + si * 3, 28)
+            d_ = (f"M {zone_left:.0f},{src_cy:.0f}"
+                  f" L {bx:.0f},{src_cy:.0f}"
+                  f" L {bx:.0f},{dst_cy:.0f}"
+                  f" L {zone_left:.0f},{dst_cy:.0f}")
+            conn_svgs.append(
+                f'<path d="{d_}" fill="none" stroke="{_PALETTE["accent_teal"]}"'
+                f' stroke-width="1.2" opacity="0.75" marker-end="url(#arr_intra)"/>'
+            )
+            if lbl:
+                _badge_counter += 1
+                _bn = _badge_counter
+                _by = _place_badge_y(bx, (src_cy + dst_cy) / 2)
+                _conn_key.append((_bn, lbl, _PALETTE["accent_teal"]))
+                conn_svgs += _badge_svg(bx, _by, _bn, _PALETTE["accent_teal"])
+            continue
+
+        # ── Case 2: sidebar-only target (mgmt zone has no zone_bounds entry) ─
+        if db_b is None:
+            mgmt_tgt = _sb_targets.get("mgmt")
+            if mgmt_tgt:
+                tgt_cx, tgt_cy = mgmt_tgt
+                px1, py1 = zone_right, src_cy
+                px2, py2 = tgt_cx - _SB_W / 2, tgt_cy
+                off = min(abs(px2 - px1) * 0.35, 30)
+                d_ = (f"M {px1:.0f},{py1:.0f}"
+                      f" C {px1 + off:.0f},{py1:.0f}"
+                      f" {px2 - off:.0f},{py2:.0f}"
+                      f" {px2:.0f},{py2:.0f}")
+                conn_svgs.append(
+                    f'<path d="{d_}" fill="none" stroke="{_PALETTE["accent"]}"'
+                    f' stroke-width="1.0" opacity="0.40" stroke-dasharray="4,3"'
+                    f' marker-end="url(#arr_dim)"/>'
+                )
+                if lbl:
+                    _badge_counter += 1
+                    _bn  = _badge_counter
+                    _bx2 = (px1 + px2) / 2
+                    _by  = _place_badge_y(_bx2, (py1 + py2) / 2)
+                    _conn_key.append((_bn, lbl, _PALETTE["text_muted"]))
+                    conn_svgs += _badge_svg(_bx2, _by, _bn, _PALETTE["text_muted"])
+            continue
+
+        # ── Case 3 + 4: cross-zone (both have zone_bounds) ───────────────────
         sx_c = sb_b[0] + sb_b[2] / 2
         dx_c = db_b[0] + db_b[2] / 2
-        sy_c = sb_b[1] + sb_b[3] / 2
-        dy_c = db_b[1] + db_b[3] / 2
 
         if abs(sx_c - dx_c) > 20:
+            # Case 3: Different columns → horizontal bezier at resource y-heights
             if sx_c < dx_c:
-                px1, py1 = sb_b[0] + sb_b[2], sy_c
-                px2, py2 = db_b[0],            dy_c
+                px1, py1 = sb_b[0] + sb_b[2], src_cy
+                px2, py2 = db_b[0],            dst_cy
             else:
-                px1, py1 = sb_b[0],            sy_c
-                px2, py2 = db_b[0] + db_b[2],  dy_c
-            off = min(abs(px2 - px1) * 0.45, 28)
+                px1, py1 = sb_b[0],            src_cy
+                px2, py2 = db_b[0] + db_b[2],  dst_cy
+            off = min(abs(px2 - px1) * 0.40, 30)
             d_ = (f"M {px1:.0f},{py1:.0f}"
-                  f" C {px1+(off if px1<px2 else -off):.0f},{py1:.0f}"
-                  f" {px2+(-off if px1<px2 else off):.0f},{py2:.0f}"
+                  f" C {px1 + (off if px1 < px2 else -off):.0f},{py1:.0f}"
+                  f" {px2 + (-off if px1 < px2 else off):.0f},{py2:.0f}"
                   f" {px2:.0f},{py2:.0f}")
-            lx, ly = (px1 + px2) / 2, min(py1, py2) - 5
+            badge_bx = px1 + (_COL_GAP / 2 if sx_c < dx_c else -_COL_GAP / 2)
         else:
-            if sy_c < dy_c:
-                px1, py1 = sx_c, sb_b[1] + sb_b[3]
-                px2, py2 = dx_c, db_b[1]
-            else:
-                px1, py1 = sx_c, sb_b[1]
-                px2, py2 = dx_c, db_b[1] + db_b[3]
-            d_ = f"M {px1:.0f},{py1:.0f} L {px2:.0f},{py2:.0f}"
-            lx, ly = (px1 + px2) / 2 + 6, (py1 + py2) / 2
+            # Case 4: Same column, different zone → left-side bypass into inter-column gap
+            si = _stagger.get(f"{sz}|{dz}", 0)
+            _stagger[f"{sz}|{dz}"] = si + 1
+            zone_left = sb_b[0]
+            c4_bx = zone_left - min(8 + si * 3, 28)
+            dzone_left = db_b[0]
+            px1, py1 = zone_left,  src_cy
+            px2, py2 = dzone_left, dst_cy
+            d_ = (f"M {px1:.0f},{py1:.0f}"
+                  f" L {c4_bx:.0f},{py1:.0f}"
+                  f" L {c4_bx:.0f},{py2:.0f}"
+                  f" L {px2:.0f},{py2:.0f}")
+            badge_bx = c4_bx
 
         conn_svgs.append(
             f'<path d="{d_}" fill="none" stroke="{_PALETTE["accent"]}"'
-            f' stroke-width="1.5" opacity="0.7" marker-end="url(#arr)"/>'
+            f' stroke-width="1.5" opacity="0.85" marker-end="url(#arr)"/>'
         )
         if lbl:
-            tw = len(lbl) * 5 + 6
-            conn_svgs += [
-                f'<rect x="{lx - 2:.0f}" y="{ly - 10:.0f}" width="{tw}" height="12"'
-                f' rx="2" fill="{_PALETTE["canvas"]}" opacity="0.9"/>',
-                f'<text x="{lx:.0f}" y="{ly:.0f}" dominant-baseline="middle"'
-                f' font-size="8" fill="{_PALETTE["accent"]}" font-style="italic"'
-                f' font-family="system-ui,Arial,sans-serif">{_e(lbl)}</text>',
-            ]
+            _badge_counter += 1
+            _bn = _badge_counter
+            _by = _place_badge_y(badge_bx, (py1 + py2) / 2)
+            _conn_key.append((_bn, lbl, _PALETTE["accent"]))
+            conn_svgs += _badge_svg(badge_bx, _by, _bn, _PALETTE["accent"])
 
-    # Draw connections first (z-order), then zones on top
-    out += conn_svgs
+    # Z-ORDER: zones first (behind), connections on top
     out += zone_svgs
+    out += conn_svgs
+
+    # ── Connection key strip ──────────────────────────────────────────────────
+    if _conn_key:
+        _kw   = cx2 + _PANEL_W - cx0
+        _kx0  = float(cx0)
+        _sep_y = key_strip_y + _KEY_HDR_H
+        out += [
+            f'<rect x="{_kx0:.0f}" y="{key_strip_y:.0f}" width="{_kw}" height="{_key_strip_h}"'
+            f' rx="6" fill="{_PALETTE["surface_alt"]}" stroke="{_PALETTE["border_panel"]}" stroke-width="1"/>',
+            f'<text x="{_kx0 + 10:.0f}" y="{key_strip_y + _KEY_HDR_H // 2:.0f}"'
+            f' dominant-baseline="middle" font-size="9" font-weight="700"'
+            f' letter-spacing="1" fill="{_PALETTE["text_muted"]}"'
+            f' font-family="system-ui,Arial,sans-serif">CONNECTION KEY</text>',
+            f'<line x1="{_kx0:.0f}" y1="{_sep_y:.0f}" x2="{_kx0 + _kw:.0f}" y2="{_sep_y:.0f}"'
+            f' stroke="{_PALETTE["border"]}" stroke-width="0.5"/>',
+        ]
+        _kcol_w = _kw / _KEY_COLS
+        for _ki, (_knum, _ktxt, _kcol) in enumerate(_conn_key):
+            _kc  = _ki % _KEY_COLS
+            _kr  = _ki // _KEY_COLS
+            _ex  = _kx0 + _kc * _kcol_w + _KEY_PAD
+            _ey  = _sep_y + _KEY_PAD + _kr * _KEY_ROW_H + _KEY_ROW_H // 2
+            _bw  = 14 if _knum < 10 else 18
+            out += [
+                f'<rect x="{_ex:.0f}" y="{_ey - 7:.0f}" width="{_bw}" height="14"'
+                f' rx="7" fill="{_kcol}"/>',
+                f'<text x="{_ex + _bw / 2:.0f}" y="{_ey:.0f}" text-anchor="middle"'
+                f' dominant-baseline="middle" font-size="7" font-weight="700"'
+                f' fill="#ffffff" font-family="system-ui,Arial,sans-serif">{_knum}</text>',
+                f'<text x="{_ex + _bw + 5:.0f}" y="{_ey:.0f}"'
+                f' dominant-baseline="middle" font-size="9"'
+                f' fill="{_PALETTE["text_primary"]}"'
+                f' font-family="system-ui,Arial,sans-serif">{_e(_ktxt)}</text>',
+            ]
 
     # ── Right sidebar ─────────────────────────────────────────────────────────
     # Subtle background panel
@@ -854,6 +1098,63 @@ def render_architecture_svg(arch: dict) -> bytes:
             )
 
         cur_y += cp_h + _BAND_GAP
+
+    # Security & Management footer band
+    if has_ftr:
+        ISIZ_FTR = 18   # icon size in footer badges
+        BADGE_PAD = 10  # gap between badges
+        HDR_W = 152     # width of left "Security & Management" label area
+
+        out += [
+            f'<rect x="{bx}" y="{cur_y}" width="{bw}" height="{_FTR_H}"'
+            f' rx="6" fill="{_PALETTE["surface_leg"]}" stroke="{_PALETTE["border_leg"]}" stroke-width="1"/>',
+            # Left accent bar (orange — security/governance)
+            f'<rect x="{bx}" y="{cur_y}" width="4" height="{_FTR_H}" rx="2"'
+            f' fill="{_PALETTE["pillar_secure"]}" opacity="0.9"/>',
+            # Section label
+            f'<text x="{bx + 14}" y="{cur_y + _FTR_H // 2 + 1}" dominant-baseline="middle"'
+            f' font-size="9" font-weight="700" fill="{_PALETTE["pillar_secure"]}"'
+            f' font-family="system-ui,Arial,sans-serif">Security &amp; Management</text>',
+            # Vertical separator after label
+            f'<line x1="{bx + HDR_W}" y1="{cur_y + 8}" x2="{bx + HDR_W}" y2="{cur_y + _FTR_H - 8}"'
+            f' stroke="{_PALETTE["border_leg"]}" stroke-width="1"/>',
+        ]
+
+        bx_badge = float(bx + HDR_W + 10)
+        mid_fy   = cur_y + _FTR_H // 2
+
+        for rtype, rlabel in _ftr_items:
+            icon  = _icon_uri(rtype)
+            color = _COLOR.get(rtype, _PALETTE["badge_security"])
+            abbr  = _ABBREV.get(rtype, rtype[:3].upper())
+
+            if icon:
+                iy = mid_fy - ISIZ_FTR // 2
+                out.append(f'<image href="{icon}" x="{bx_badge:.0f}" y="{iy}" width="{ISIZ_FTR}" height="{ISIZ_FTR}"/>')
+                tx = bx_badge + ISIZ_FTR + 3
+                icon_w = float(ISIZ_FTR)
+            else:
+                aw = max(22, len(abbr) * 5 + 6)
+                out += [
+                    f'<rect x="{bx_badge:.0f}" y="{mid_fy - 9}" width="{aw}" height="18"'
+                    f' rx="3" fill="{color}"/>',
+                    f'<text x="{bx_badge + aw / 2:.0f}" y="{mid_fy + 1}"'
+                    f' text-anchor="middle" dominant-baseline="middle"'
+                    f' font-size="7" font-weight="700" fill="#FFFFFF"'
+                    f' font-family="system-ui,Arial,sans-serif">{_e(abbr)}</text>',
+                ]
+                tx = bx_badge + aw + 3
+                icon_w = float(aw)
+
+            out.append(
+                f'<text x="{tx:.0f}" y="{mid_fy + 1}" dominant-baseline="middle"'
+                f' font-size="8.5" fill="{_PALETTE["text_secondary"]}"'
+                f' font-family="system-ui,Arial,sans-serif">{_e(rlabel)}</text>'
+            )
+            label_px = len(rlabel) * 4.9 + 4
+            bx_badge += icon_w + 3 + label_px + BADGE_PAD
+
+        cur_y += _FTR_H + _BAND_GAP
 
     # Legend
     out += [

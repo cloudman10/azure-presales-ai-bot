@@ -155,16 +155,26 @@ identity zone (type "identity"): EntraID, KeyVault, DefenderForCloud, AzurePolic
   - Do NOT list these in shared_services[] -- resources there have no id and cannot be
     referenced in connections[]. Zone placement is required for auth-flow connections.
 mgmt zone (type "mgmt"):        LogAnalyticsWorkspace, AzureMonitor, RecoveryServicesVault, UpdateManager
-  - Connect primary workload VMs to LogAnalyticsWorkspace with label "diagnostics".
+  - Always include these. Do NOT connect them with arrows -- they appear as a context panel, not a data-flow target.
 
 === DEFAULTS ===
   Region:      Australia East  (assume, never ask)
   OS:          Windows Server  (assume, never ask)
   Identity:    Entra ID; hybrid AD sync if any domain-joined workload
 
-=== CONNECTIONS (REQUIRED DATA FLOWS) ===
-connections[] is NOT optional decoration -- it MUST represent the architecture's data flows.
-Include ALL of the following that apply to the pattern:
+=== CONNECTIONS (PRIMARY DATA FLOWS ONLY) ===
+connections[] represents PRIMARY data flows ONLY -- NOT passive/background relationships.
+
+NEVER add connections to or from:
+  Management & Security resources: LogAnalyticsWorkspace, AzureMonitor, RecoveryServicesVault,
+  UpdateManager, DefenderForCloud, KeyVault, AzurePolicy, Sentinel, CostManagement,
+  NetworkSecurityGroup, ManagedIdentity, AutomationAccount, ApplicationInsights.
+These appear as context panels (sidebar / footer band), never wired with arrows.
+
+Exception: EntraID IS a valid connection target for auth flows (it is an active participant
+in the session/request path, not passive monitoring).
+
+Include ONLY the following primary flows that apply to the pattern:
 
   1. USER ACCESS PATH
      Add an EndUser resource in the workload spoke zone, then connect to the entry point:
@@ -193,9 +203,6 @@ Include ALL of the following that apply to the pattern:
   4. ZONE-TO-ZONE ROUTING (hybrid and hub-spoke)
        on_prem_resource_id -> vpn_gateway_id        label "IPSec VPN"
        firewall_id -> spoke_entry_resource_id       label "inspected"
-
-  5. MANAGEMENT / LOGGING
-       primary_vm_ids -> log_analytics_workspace_id label "diagnostics"
 
 LABEL RULE: Include a label ONLY when a genuine protocol/port applies.
   Omit the label for structural/membership-only connections.
@@ -276,7 +283,9 @@ Key points shown in this example:
   - identity zone (type "identity") for EntraID/KV/Dfc/Policy -- their ids appear in connections[]
   - Session hosts connect to EntraID (cross-zone, labelled auth flow) and FSLogix (labelled data flow)
   - shared_services[] is EMPTY -- identity resources live in the identity zone instead
-DESIGN_SPEC: {{"title":"AVD - 50 Users - Australia East","subtitle":"Assumed: Australia East, cloud-only Entra-joined, pooled host pool, Windows 11 Multi-Session","zones":[{{"id":"z_avd","label":"AVD Spoke VNet - 10.1.0.0/16","type":"spoke","resources":[{{"id":"eu1","type":"EndUser","name":"End Users (50)","role":"Remote desktop via HTTPS reverse-connect"}},{{"id":"hp1","type":"AVDHostPool","name":"AVD Host Pool","role":"Pooled - 50 concurrent users, Windows 11 Multi-Session"}},{{"id":"sh1","type":"VirtualMachine","name":"Session Host 1","role":"D4s_v5 - 25 sessions"}},{{"id":"sh2","type":"VirtualMachine","name":"Session Host 2","role":"D4s_v5 - 25 sessions"}},{{"id":"fsl","type":"StorageAccount","name":"FSLogix Profile Storage","role":"Azure Files Premium - user profile containers"}},{{"id":"nsg_avd","type":"NetworkSecurityGroup","name":"AVD Subnet NSG","role":"Session host subnet rules"}}]}},{{"id":"z_identity","label":"Identity & Security","type":"identity","resources":[{{"id":"eid","type":"EntraID","name":"Microsoft Entra ID","role":"Cloud-only identity - Entra-joined session hosts"}},{{"id":"kv","type":"KeyVault","name":"Azure Key Vault","role":"Secrets and certificates"}},{{"id":"dfc","type":"DefenderForCloud","name":"Defender for Cloud","role":"Security posture"}},{{"id":"pol","type":"AzurePolicy","name":"Azure Policy","role":"Governance"}}]}},{{"id":"z_mgmt","label":"Management Zone","type":"mgmt","resources":[{{"id":"law","type":"LogAnalyticsWorkspace","name":"Log Analytics","role":"Session host diagnostics"}},{{"id":"mon","type":"AzureMonitor","name":"Azure Monitor","role":"Alerts and metrics"}},{{"id":"rsv","type":"RecoveryServicesVault","name":"Recovery Services Vault","role":"Session host VM backup"}},{{"id":"um","type":"UpdateManager","name":"Update Manager","role":"OS patching"}}]}}],"connections":[{{"from":"eu1","to":"hp1","label":"HTTPS 443 (reverse-connect)"}},{{"from":"sh1","to":"eid","label":"HTTPS 443 (Entra auth)"}},{{"from":"sh2","to":"eid","label":"HTTPS 443 (Entra auth)"}},{{"from":"sh1","to":"fsl","label":"SMB 445"}},{{"from":"sh2","to":"fsl","label":"SMB 445"}},{{"from":"sh1","to":"law","label":"diagnostics"}},{{"from":"sh2","to":"law","label":"diagnostics"}}],"shared_services":[],"migration_approach":[],"design_principles":["Cloud-only Entra-joined AVD removes dependency on on-prem AD DS","FSLogix on Azure Files Premium delivers sub-second profile load times","NSG on session host subnet controls inbound/outbound traffic","Pooled Windows 11 Multi-Session maximises seat density per VM"],"future_options":["Add VPN Gateway or ExpressRoute if hybrid connectivity to on-prem is later required","Enable AVD Autoscale to reduce costs outside business hours"],"assumptions":["Australia East region","Cloud-only deployment - Entra-joined session hosts (no on-prem AD DS)","Pooled host pool, Windows 11 Multi-Session","D4s_v5 session hosts (2 hosts for 50 users at 25 sessions each)"],"optional_components":[{{"id":"opt_hybrid","name":"Hybrid connectivity","question":"Are AVD users connecting from an on-prem network (needs VPN Gateway or ExpressRoute), or is this cloud-only?"}},{{"id":"opt_firewall","name":"Azure Firewall","question":"Add Azure Firewall for outbound internet traffic inspection and FQDN-based egress control?"}},{{"id":"opt_bastion","name":"Azure Bastion","question":"Add Azure Bastion for secure admin RDP/SSH access to session host VMs?"}}]}}
+  - mgmt zone resources (law, mon, rsv, um) have NO connections -- they are context panels only
+  - connections[] has EXACTLY 5 entries: 1 user-access + 2 auth + 2 data -- no diagnostics/mgmt arrows
+DESIGN_SPEC: {{"title":"AVD - 50 Users - Australia East","subtitle":"Assumed: Australia East, cloud-only Entra-joined, pooled host pool, Windows 11 Multi-Session","zones":[{{"id":"z_avd","label":"AVD Spoke VNet - 10.1.0.0/16","type":"spoke","resources":[{{"id":"eu1","type":"EndUser","name":"End Users (50)","role":"Remote desktop via HTTPS reverse-connect"}},{{"id":"hp1","type":"AVDHostPool","name":"AVD Host Pool","role":"Pooled - 50 concurrent users, Windows 11 Multi-Session"}},{{"id":"sh1","type":"VirtualMachine","name":"Session Host 1","role":"D4s_v5 - 25 sessions"}},{{"id":"sh2","type":"VirtualMachine","name":"Session Host 2","role":"D4s_v5 - 25 sessions"}},{{"id":"fsl","type":"StorageAccount","name":"FSLogix Profile Storage","role":"Azure Files Premium - user profile containers"}},{{"id":"nsg_avd","type":"NetworkSecurityGroup","name":"AVD Subnet NSG","role":"Session host subnet rules"}}]}},{{"id":"z_identity","label":"Identity & Security","type":"identity","resources":[{{"id":"eid","type":"EntraID","name":"Microsoft Entra ID","role":"Cloud-only identity - Entra-joined session hosts"}},{{"id":"kv","type":"KeyVault","name":"Azure Key Vault","role":"Secrets and certificates"}},{{"id":"dfc","type":"DefenderForCloud","name":"Defender for Cloud","role":"Security posture"}},{{"id":"pol","type":"AzurePolicy","name":"Azure Policy","role":"Governance"}}]}},{{"id":"z_mgmt","label":"Management Zone","type":"mgmt","resources":[{{"id":"law","type":"LogAnalyticsWorkspace","name":"Log Analytics","role":"Session host diagnostics"}},{{"id":"mon","type":"AzureMonitor","name":"Azure Monitor","role":"Alerts and metrics"}},{{"id":"rsv","type":"RecoveryServicesVault","name":"Recovery Services Vault","role":"Session host VM backup"}},{{"id":"um","type":"UpdateManager","name":"Update Manager","role":"OS patching"}}]}}],"connections":[{{"from":"eu1","to":"hp1","label":"HTTPS 443 (reverse-connect)"}},{{"from":"sh1","to":"eid","label":"HTTPS 443 (Entra auth)"}},{{"from":"sh2","to":"eid","label":"HTTPS 443 (Entra auth)"}},{{"from":"sh1","to":"fsl","label":"SMB 445"}},{{"from":"sh2","to":"fsl","label":"SMB 445"}}],"shared_services":[],"migration_approach":[],"design_principles":["Cloud-only Entra-joined AVD removes dependency on on-prem AD DS","FSLogix on Azure Files Premium delivers sub-second profile load times","NSG on session host subnet controls inbound/outbound traffic","Pooled Windows 11 Multi-Session maximises seat density per VM"],"future_options":["Add VPN Gateway or ExpressRoute if hybrid connectivity to on-prem is later required","Enable AVD Autoscale to reduce costs outside business hours"],"assumptions":["Australia East region","Cloud-only deployment - Entra-joined session hosts (no on-prem AD DS)","Pooled host pool, Windows 11 Multi-Session","D4s_v5 session hosts (2 hosts for 50 users at 25 sessions each)"],"optional_components":[{{"id":"opt_hybrid","name":"Hybrid connectivity","question":"Are AVD users connecting from an on-prem network (needs VPN Gateway or ExpressRoute), or is this cloud-only?"}},{{"id":"opt_firewall","name":"Azure Firewall","question":"Add Azure Firewall for outbound internet traffic inspection and FQDN-based egress control?"}},{{"id":"opt_bastion","name":"Azure Bastion","question":"Add Azure Bastion for secure admin RDP/SSH access to session host VMs?"}}]}}
 """
 
 # Accept either marker so a single-token hallucination doesn't break the whole flow.
