@@ -618,6 +618,11 @@ async def _pick_vms_from_prices(
         sku     = item.get("skuName", "")
         arm     = item.get("armSkuName", "")
         product = item.get("productName", "")
+        # Arm64 (Ampere Altra) SKUs are identified by 'p' between size and suffix,
+        # e.g. Standard_B2pts_v2, Standard_D2pds_v5, Standard_D4pls_v5.
+        # They do not support Windows — exclude them from Windows recommendations.
+        if os_type == "Windows" and re.search(r'Standard_[A-Z]\d+-?\d*p[a-z]', arm, re.IGNORECASE):
+            return False
         # Python-side OS filter — OData 'not contains()' is not reliably supported
         if os_type == "Windows" and "Windows" not in product:
             return False
