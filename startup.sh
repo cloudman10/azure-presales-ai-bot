@@ -11,6 +11,8 @@
 # embeds /tmp/<old-hash>/ shebangs that break on container recycle.
 
 ZSTD_SRC="/home/site/wwwroot/output.tar.zst"
+WWWROOT="/home/site/wwwroot"
+DEPLOY_ID="${WWWROOT}/.deploy_id"
 
 # ── System tools ──────────────────────────────────────────────────────────────
 
@@ -51,17 +53,25 @@ MARKER="${APP_DIR}/.app_code_synced"
 # once, then touch the marker so subsequent process restarts skip the extract.
 
 if [ "${ZSTD_SRC}" -nt "$MARKER" ]; then
-    echo "[startup] new deployment detected — refreshing app/ and static/ in ${APP_DIR}..."
-    # Extract everything EXCEPT antenv (the venv).  Antenv has hardcoded /tmp
-    # shebangs from build time — rewriting them breaks gunicorn on recycle.
-    # Excluding it keeps the extract small (seconds, not minutes).
+    # ── tar.zst deploy path (legacy) ──────────────────────────────────────
+    echo "[startup] new tar.zst deployment detected — refreshing app/ and static/ in ${APP_DIR}..."
     zstd -d "${ZSTD_SRC}" -c | tar -x -C "${APP_DIR}" \
         --exclude='./antenv' --exclude='antenv' 2>/dev/null
     SYNC_EXIT=$?
     touch "$MARKER"
-    echo "[startup] refresh done (exit=${SYNC_EXIT})"
+    echo "[startup] tar.zst refresh done (exit=${SYNC_EXIT})"
+elif [ -f "${DEPLOY_ID}" ] && [ "${DEPLOY_ID}" -nt "$MARKER" ]; then
+    # ── zip deploy path — GHA writes .deploy_id after each zip deploy ─────
+    # Copy app/ and static/ from wwwroot (where the zip was extracted) into
+    # the current APP_DIR.  Antenv is intentionally excluded — the venv stays
+    # from the Oryx build, avoiding shebang invalidation on process restart.
+    echo "[startup] new zip deployment detected (.deploy_id) — syncing app/ and static/ from ${WWWROOT}..."
+    cp -r "${WWWROOT}/app/." "${APP_DIR}/app/"
+    cp -r "${WWWROOT}/static/." "${APP_DIR}/static/"
+    touch "$MARKER"
+    echo "[startup] zip sync done"
 else
-    echo "[startup] app code up-to-date (marker newer than ${ZSTD_SRC})"
+    echo "[startup] app code up-to-date"
 fi
 
 # ── Launch gunicorn ───────────────────────────────────────────────────────────
