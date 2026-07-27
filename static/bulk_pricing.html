@@ -94,7 +94,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#F4F6F8;min-heigh
 
 /* ── results table ──────────────────────────────────────────────────────── */
 .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{width:100%;border-collapse:collapse;font-size:13px;min-width:860px}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:1020px}
 thead th{background:#F0F7FF;color:#005A9E;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;padding:9px 12px;text-align:left;white-space:nowrap;border-bottom:2px solid #C3DDF5;position:sticky;top:0}
 thead th.r{text-align:right}
 tbody tr{border-bottom:1px solid #EEF2F7;transition:background .1s}
@@ -126,6 +126,27 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
 
 /* ── validation message ─────────────────────────────────────────────────── */
 .val-msg{font-size:12px;color:#DC2626;margin-top:8px;display:none}
+
+/* ── fleet context row ──────────────────────────────────────────────────── */
+.fleet-ctx{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:0 2px}
+.fleet-ctx-lbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:#8B95A2}
+.fleet-ctx-vms{font-size:12px;color:#8B95A2}
+.fleet-ctx-vms strong{color:#1A1A2E}
+
+/* ── three-tier pricing grid ────────────────────────────────────────────── */
+.tier-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.tier-card{background:#fff;border:.5px solid #E5E9ED;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.tier-card.accent{border:2px solid #0078D4}
+.tier-hdr{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:22px}
+.tier-lbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8B95A2}
+.save-badge{font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;background:#DCFCE7;color:#166534;white-space:nowrap;flex-shrink:0}
+.tier-mo{font-size:26px;font-weight:700;color:#1A1A2E;font-variant-numeric:tabular-nums;line-height:1.1}
+.tier-annual{font-size:12px;color:#8B95A2;margin-top:3px;font-variant-numeric:tabular-nums}
+.tier-div{height:1px;background:#EEF2F7}
+.tier-bk{display:flex;flex-direction:column;gap:8px}
+.tier-bk-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.tier-bk-lbl{font-size:11px;color:#8B95A2}
+.tier-bk-val{font-size:13px;font-weight:600;color:#1A1A2E;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -229,21 +250,71 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
   <!-- ─── RESULTS PANEL ─────────────────────────────────────────────────── -->
   <div id="panel-results" style="display:none">
 
-    <!-- Grand total -->
-    <div class="totals-card">
-      <div class="totals-label">Fleet estimate — PAYG, License-Included, Standard SSD</div>
-      <div class="totals-main">
-        <span class="totals-mo" id="res-monthly">—</span>
-        <span class="totals-unit">/month</span>
+    <!-- Fleet context + VMs count -->
+    <div class="fleet-ctx">
+      <span class="fleet-ctx-lbl">Fleet estimate — PAYG, License-Included, Standard SSD</span>
+      <span class="fleet-ctx-vms">VMs priced: <strong id="tb-count">—</strong></span>
+    </div>
+
+    <!-- Three-tier pricing cards -->
+    <div class="tier-row">
+
+      <!-- PAYG -->
+      <div class="tier-card">
+        <div class="tier-hdr">
+          <span class="tier-lbl">Pay-as-you-go</span>
+        </div>
+        <div>
+          <div class="tier-mo" id="tier-payg-mo">—</div>
+          <div class="tier-annual" id="tier-payg-annual"></div>
+        </div>
+        <div class="tier-div"></div>
+        <div class="tier-bk">
+          <div class="tier-bk-row"><span class="tier-bk-lbl">Compute</span><span class="tier-bk-val" id="tier-payg-compute">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">OS License</span><span class="tier-bk-val" id="tier-payg-oslic">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">SQL License</span><span class="tier-bk-val" id="tier-payg-sql">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">Disk</span><span class="tier-bk-val" id="tier-payg-disk">—</span></div>
+        </div>
       </div>
-      <div class="totals-annual" id="res-annual"></div>
-      <div class="totals-breakdown">
-        <div class="tb-item"><span class="tb-lbl">Compute</span><span class="tb-val" id="tb-compute">—</span></div>
-        <div class="tb-item"><span class="tb-lbl">OS License</span><span class="tb-val" id="tb-oslic">—</span></div>
-        <div class="tb-item"><span class="tb-lbl">SQL License</span><span class="tb-val" id="tb-sql">—</span></div>
-        <div class="tb-item"><span class="tb-lbl">Disk</span><span class="tb-val" id="tb-disk">—</span></div>
-        <div class="tb-item"><span class="tb-lbl">VMs priced</span><span class="tb-val" id="tb-count">—</span></div>
+
+      <!-- 1yr RI (accent border) -->
+      <div class="tier-card accent">
+        <div class="tier-hdr">
+          <span class="tier-lbl">1-year reserved</span>
+          <span class="save-badge" id="tier-ri1-badge"></span>
+        </div>
+        <div>
+          <div class="tier-mo" id="tier-ri1-mo">—</div>
+          <div class="tier-annual" id="tier-ri1-annual"></div>
+        </div>
+        <div class="tier-div"></div>
+        <div class="tier-bk">
+          <div class="tier-bk-row"><span class="tier-bk-lbl">Compute</span><span class="tier-bk-val" id="tier-ri1-compute">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">OS License</span><span class="tier-bk-val" id="tier-ri1-oslic">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">SQL License</span><span class="tier-bk-val" id="tier-ri1-sql">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">Disk</span><span class="tier-bk-val" id="tier-ri1-disk">—</span></div>
+        </div>
       </div>
+
+      <!-- 3yr RI -->
+      <div class="tier-card">
+        <div class="tier-hdr">
+          <span class="tier-lbl">3-year reserved</span>
+          <span class="save-badge" id="tier-ri3-badge"></span>
+        </div>
+        <div>
+          <div class="tier-mo" id="tier-ri3-mo">—</div>
+          <div class="tier-annual" id="tier-ri3-annual"></div>
+        </div>
+        <div class="tier-div"></div>
+        <div class="tier-bk">
+          <div class="tier-bk-row"><span class="tier-bk-lbl">Compute</span><span class="tier-bk-val" id="tier-ri3-compute">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">OS License</span><span class="tier-bk-val" id="tier-ri3-oslic">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">SQL License</span><span class="tier-bk-val" id="tier-ri3-sql">—</span></div>
+          <div class="tier-bk-row"><span class="tier-bk-lbl">Disk</span><span class="tier-bk-val" id="tier-ri3-disk">—</span></div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Actions -->
@@ -290,7 +361,9 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
                 <th class="r">OS Lic</th>
                 <th class="r">SQL Lic</th>
                 <th class="r">Disk</th>
-                <th class="r">Total/mo</th>
+                <th class="r">PAYG/mo</th>
+                <th class="r">1yr RI/mo</th>
+                <th class="r">3yr RI/mo</th>
               </tr>
             </thead>
             <tbody id="results-tbody"></tbody>
@@ -460,14 +533,41 @@ function showError(msg, status) {
 function showResults(r) {
   const t = r.totals;
 
-  // Grand total card
-  $('res-monthly').textContent = fmt(t.monthly_total);
-  $('res-annual').textContent  = 'Annual estimate: ' + fmt(t.annual_total);
-  $('tb-compute').textContent  = fmt(t.monthly_compute);
-  $('tb-oslic').textContent    = fmt(t.monthly_os_license);
-  $('tb-sql').textContent      = fmt(t.monthly_sql);
-  $('tb-disk').textContent     = fmt(t.monthly_disk);
-  $('tb-count').textContent    = r.vm_count;
+  // Three-tier pricing cards
+  const savePct = (base, val) => 'Save ' + Math.round((base - val) / base * 100) + '%';
+  // RI compute = RI total minus the fixed costs (OS lic + SQL + disk stay at PAYG rate)
+  const fixedCosts = t.monthly_os_license + t.monthly_sql + t.monthly_disk;
+  const ri1Compute = Math.round((t.monthly_total_ri1 - fixedCosts) * 100) / 100;
+  const ri3Compute = Math.round((t.monthly_total_ri3 - fixedCosts) * 100) / 100;
+
+  // PAYG card
+  $('tier-payg-mo').textContent     = fmt(t.monthly_total);
+  $('tier-payg-annual').textContent = 'Annual: ' + fmt(t.annual_total);
+  $('tier-payg-compute').textContent = fmt(t.monthly_compute);
+  $('tier-payg-oslic').textContent   = fmt(t.monthly_os_license);
+  $('tier-payg-sql').textContent     = fmt(t.monthly_sql);
+  $('tier-payg-disk').textContent    = fmt(t.monthly_disk);
+
+  // 1yr RI card
+  $('tier-ri1-mo').textContent      = fmt(t.monthly_total_ri1);
+  $('tier-ri1-annual').textContent  = 'Annual: ' + fmt(t.annual_total_ri1);
+  $('tier-ri1-badge').textContent   = savePct(t.monthly_total, t.monthly_total_ri1);
+  $('tier-ri1-compute').textContent  = fmt(ri1Compute);
+  $('tier-ri1-oslic').textContent    = fmt(t.monthly_os_license);
+  $('tier-ri1-sql').textContent      = fmt(t.monthly_sql);
+  $('tier-ri1-disk').textContent     = fmt(t.monthly_disk);
+
+  // 3yr RI card
+  $('tier-ri3-mo').textContent      = fmt(t.monthly_total_ri3);
+  $('tier-ri3-annual').textContent  = 'Annual: ' + fmt(t.annual_total_ri3);
+  $('tier-ri3-badge').textContent   = savePct(t.monthly_total, t.monthly_total_ri3);
+  $('tier-ri3-compute').textContent  = fmt(ri3Compute);
+  $('tier-ri3-oslic').textContent    = fmt(t.monthly_os_license);
+  $('tier-ri3-sql').textContent      = fmt(t.monthly_sql);
+  $('tier-ri3-disk').textContent     = fmt(t.monthly_disk);
+
+  // VMs count
+  $('tb-count').textContent = r.vm_count;
 
   // Subtitle
   $('tbl-subtitle').textContent = r.vm_count + ' VMs priced · PAYG · License-Included';
@@ -528,6 +628,8 @@ function renderTable() {
       <td class="r">${fmt(r.monthly_sql)}</td>
       <td class="r">${fmt(r.monthly_disk)}</td>
       <td class="r" style="font-weight:700">${fmt(r.monthly_total)}</td>
+      <td class="r">${fmt(r.monthly_total_ri1)}</td>
+      <td class="r">${fmt(r.monthly_total_ri3)}</td>
     `;
     tbody.appendChild(tr);
   });
