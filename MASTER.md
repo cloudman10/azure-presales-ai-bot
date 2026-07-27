@@ -624,17 +624,14 @@ The `diagrams` library (`/api/diagram/*`) requires the `dot` binary, which is no
 
 Future hardening option: a custom Docker image with Graphviz baked in (`FROM mcr.microsoft.com/appsvc/python:3.11 && RUN apt-get install -y graphviz`) is the robust long-term alternative if the startup-install ever proves flaky (slow cold starts, apt unavailable, Azure removes root access). Requires switching App Service to Custom Container mode with ACR. Filed as a known future hardening item — current approach is stable.
 
-**Self-healing fallback for `az webapp restart`.**
-`az webapp restart` kills the container process and clears ephemeral `/tmp/`. The Oryx-built `antenv` (normally in `/tmp/<hash>/antenv/`) is gone, so the standard gunicorn launch path breaks. `startup.sh` detects this and falls back to re-extracting `/home/site/wwwroot/output.tar.zst` into persistent `/home/site/oryx-build/`. Re-extraction only runs when `output.tar.zst` is newer than the last extract (~2–4 min for 242 MB uncompressed); subsequent restarts reuse the existing `/home/site/oryx-build/antenv` directly (fast path, <1s).
+**CORRECTED (see memory/feedback_post_deploy_restart.md): `az webapp restart` is HARMFUL, not required.**
+`az webapp restart` triggers a full container recycle, wiping `/tmp/` entirely. `startup.sh` locates gunicorn exclusively via `find /tmp -path '*/antenv/bin/gunicorn'` — Oryx populates that path only at deploy time (during pip install). After a container recycle with no new deploy, gunicorn is gone, the app fails with "FATAL: gunicorn not found in /tmp", and Azure retries indefinitely. This caused a real outage on 2026-07-26.
 
-**CRITICAL: Linux App Service requires `azure/webapps-deploy@v3` for reliable code reload (commit `ad2c152`).**
-Raw Kudu zipdeploy (`POST /api/zipdeploy`) triggers an Oryx recycle that does NOT reliably reload Python modules in the running Linux App Service container. Symptom: GHA reports "Deployment successful" (HTTP 200) but the live app still serves old code.
+**Correct post-deploy process:** GHA's own workflow issues a Kudu process-only restart (`DELETE /api/processes/0`) after each deploy. This recycles gunicorn workers within the same container, leaving `/tmp` intact, and is sufficient to pick up new code. No manual restart step is needed or safe.
 
-Root cause: on Linux App Service, the Kudu SCM container and the main app container are separate processes. `DELETE /api/processes/0` (previously used as a post-deploy restart step) kills a Kudu process, not the gunicorn app process — and `|| true` hid the failure silently in GHA logs.
+**If stale-code symptoms appear after a deploy:** Re-push a trivial commit to force a fresh GHA run (Oryx rebuilds, fresh code lands). Do NOT run `az webapp restart`, `az webapp stop/start`, or any other command that recycles the container.
 
-**Fix:** Use `azure/webapps-deploy@v3` in both dev and prod GHA workflows. This action performs a proper full container restart. Both workflows (`deploy-dev.yml` and `deploy-prod.yml`) now use this action.
-
-If stale-code symptoms recur after a deploy, check the GHA "Deploy to Azure Web App" step first. Manual unblock (full restart): `az webapp stop --resource-group rg-hyperxen-app-dev --name <app-name>` then `az webapp start ...`.
+**If the app is already down ("gunicorn not found in /tmp"):** Run `az webapp deploy` (zip) to trigger Oryx pip install and repopulate `/tmp`. Do NOT restart.
 
 ---
 

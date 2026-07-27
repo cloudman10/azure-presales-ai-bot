@@ -116,7 +116,8 @@ def _print_detail(rows: list[dict]):
     """Print full cost breakdown per VM."""
     hdr = (
         f"{'#':>4}  {'VM Name':<28}  {'SKU':<22}  "
-        f"{'Compute':>10}  {'OS Lic':>9}  {'SQL Lic':>9}  {'Disk':>9}  {'Total':>10}"
+        f"{'Compute':>10}  {'OS Lic':>9}  {'SQL Lic':>9}  {'Disk':>9}  "
+        f"{'PAYG':>10}  {'1yr RI':>10}  {'3yr RI':>10}"
     )
     print(hdr, flush=True)
     print("-" * len(hdr), flush=True)
@@ -127,7 +128,9 @@ def _print_detail(rows: list[dict]):
             f"${r['monthly_os_license']:>8,.2f}  "
             f"${r['monthly_sql']:>8,.2f}  "
             f"${r['monthly_disk']:>8,.2f}  "
-            f"${r['monthly_total']:>9,.2f}",
+            f"${r['monthly_total']:>9,.2f}  "
+            f"${r['monthly_total_ri1']:>9,.2f}  "
+            f"${r['monthly_total_ri3']:>9,.2f}",
             flush=True,
         )
     print("-" * len(hdr), flush=True)
@@ -184,23 +187,65 @@ async def main(xlsx_path: str) -> None:
 
     # ── Grand total ───────────────────────────────────────────────────────────
     print(f"\n{'═'*70}", flush=True)
+
+    def _pct_save(base: float, discounted: float) -> str:
+        if base <= 0:
+            return " —"
+        return f"save {(base - discounted) / base * 100:.0f}%"
+
+    payg = totals['monthly_total']
+    ri1  = totals['monthly_total_ri1']
+    ri3  = totals['monthly_total_ri3']
     print(
         f"  GRAND TOTAL ({result['vm_count']} VMs)\n"
-        f"    Compute:     ${totals['monthly_compute']:>12,.2f}/mo\n"
-        f"    OS License:  ${totals['monthly_os_license']:>12,.2f}/mo\n"
-        f"    SQL License: ${totals['monthly_sql']:>12,.2f}/mo\n"
-        f"    Disk:        ${totals['monthly_disk']:>12,.2f}/mo\n"
-        f"    ─────────────────────────────\n"
-        f"    Monthly:     ${totals['monthly_total']:>12,.2f}/mo\n"
-        f"    Annual:      ${totals['annual_total']:>12,.2f}/yr",
+        f"    Compute (PAYG): ${totals['monthly_compute']:>12,.2f}/mo\n"
+        f"    OS License:     ${totals['monthly_os_license']:>12,.2f}/mo\n"
+        f"    SQL License:    ${totals['monthly_sql']:>12,.2f}/mo\n"
+        f"    Disk:           ${totals['monthly_disk']:>12,.2f}/mo\n"
+        f"    {'─'*43}\n"
+        f"    PAYG total:     ${payg:>12,.2f}/mo   "
+        f"Annual: ${totals['annual_total']:>13,.2f}/yr\n"
+        f"    1yr RI total:   ${ri1:>12,.2f}/mo   "
+        f"Annual: ${totals['annual_total_ri1']:>13,.2f}/yr   ({_pct_save(payg, ri1)} vs PAYG)\n"
+        f"    3yr RI total:   ${ri3:>12,.2f}/mo   "
+        f"Annual: ${totals['annual_total_ri3']:>13,.2f}/yr   ({_pct_save(payg, ri3)} vs PAYG)",
         flush=True,
     )
     print(f"{'═'*70}\n", flush=True)
     print(
-        "Note: OS disk only (no data disks). Standard SSD LRS. PAYG rates.\n"
+        "Note: OS disk only (no data disks). Standard SSD LRS. PAYG + RI rates.\n"
+        "      RI discount on compute only — OS/SQL license at PAYG rate.\n"
         "      Azure Hybrid Benefit NOT applied (License-Included for all rows).",
         flush=True,
     )
+
+    # ── Spot-check: row 1 RI math ─────────────────────────────────────────────
+    if priced_rows:
+        r1 = priced_rows[0]
+
+        def _pct(base, val):
+            return f"-{(base - val) / base * 100:.1f}%" if base > 0 else "n/a"
+
+        print(f"{'─'*70}", flush=True)
+        print(f"  SPOT-CHECK: Row 1 — {r1['vm_name']} ({r1['sku_name']})", flush=True)
+        print(f"{'─'*70}", flush=True)
+        payg_c = r1['monthly_compute']
+        ri1_c  = r1['monthly_compute_ri1']
+        ri3_c  = r1['monthly_compute_ri3']
+        print(
+            f"    Compute PAYG:    ${payg_c:>9,.2f}/mo\n"
+            f"    Compute 1yr RI:  ${ri1_c:>9,.2f}/mo  ({_pct(payg_c, ri1_c)})\n"
+            f"    Compute 3yr RI:  ${ri3_c:>9,.2f}/mo  ({_pct(payg_c, ri3_c)})\n"
+            f"    OS License:      ${r1['monthly_os_license']:>9,.2f}/mo  (PAYG, unchanged)\n"
+            f"    SQL License:     ${r1['monthly_sql']:>9,.2f}/mo  (PAYG, unchanged)\n"
+            f"    Disk:            ${r1['monthly_disk']:>9,.2f}/mo  (unchanged)\n"
+            f"    {'─'*35}\n"
+            f"    Total PAYG:      ${r1['monthly_total']:>9,.2f}/mo\n"
+            f"    Total 1yr RI:    ${r1['monthly_total_ri1']:>9,.2f}/mo  ({_pct(r1['monthly_total'], r1['monthly_total_ri1'])})\n"
+            f"    Total 3yr RI:    ${r1['monthly_total_ri3']:>9,.2f}/mo  ({_pct(r1['monthly_total'], r1['monthly_total_ri3'])})",
+            flush=True,
+        )
+        print(f"{'─'*70}\n", flush=True)
 
     # ── Sanity bound: matched SKU must not wildly exceed the requested spec ──────
     # Active vCPUs <= max(4 × requested, 8); matched RAM <= 8 × requested.
