@@ -371,7 +371,7 @@ async def _get_ssd_tier_price(region: str, tier: str) -> float:
 
 async def _price_row(row: dict) -> dict:
     """Resolve SKU, fetch prices, and compute the full monthly breakdown for one VM row."""
-    from app.utils.pricing_calculator import find_price
+    from app.utils.pricing_calculator import find_price, ri_monthly
     from app.services.sql_pricing import active_vcpu_count, sql_license_hourly
 
     region      = row["arm_region"]
@@ -438,6 +438,22 @@ async def _price_row(row: dict) -> dict:
     monthly_disk       = round(disk_monthly, 2)
     monthly_total      = round(monthly_compute + monthly_os_license + monthly_sql + monthly_disk, 2)
 
+    # ── RI compute rates ──────────────────────────────────────────────────────
+    # Linux RI items = compute-only rate (no OS license bundled).
+    # OS license, SQL license, and disk remain at their PAYG rate for all tiers.
+    ri1_item = find_price(vm_items, 'Linux', 'Reservation', '1 Year')
+    ri3_item = find_price(vm_items, 'Linux', 'Reservation', '3 Years')
+
+    if not ri1_item:
+        logger.warning("bulk_pricing: no 1yr RI item for %s in %s — using PAYG compute", sku_name, region)
+    if not ri3_item:
+        logger.warning("bulk_pricing: no 3yr RI item for %s in %s — using PAYG compute", sku_name, region)
+
+    monthly_compute_ri1 = round(ri_monthly(ri1_item), 2) if ri1_item else monthly_compute
+    monthly_compute_ri3 = round(ri_monthly(ri3_item), 2) if ri3_item else monthly_compute
+    monthly_total_ri1   = round(monthly_compute_ri1 + monthly_os_license + monthly_sql + monthly_disk, 2)
+    monthly_total_ri3   = round(monthly_compute_ri3 + monthly_os_license + monthly_sql + monthly_disk, 2)
+
     return {
         # ── Input fields (pass-through) ───────────────────────────────────
         "sheet_row":    row["sheet_row"],
@@ -459,11 +475,15 @@ async def _price_row(row: dict) -> dict:
         "windows_payg_hr": windows_payg,
         "linux_payg_hr":   linux_payg,
         # ── Monthly costs ─────────────────────────────────────────────────
-        "monthly_compute":    monthly_compute,
-        "monthly_os_license": monthly_os_license,
-        "monthly_sql":        monthly_sql,
-        "monthly_disk":       monthly_disk,
-        "monthly_total":      monthly_total,
+        "monthly_compute":     monthly_compute,
+        "monthly_os_license":  monthly_os_license,
+        "monthly_sql":         monthly_sql,
+        "monthly_disk":        monthly_disk,
+        "monthly_total":       monthly_total,
+        "monthly_compute_ri1": monthly_compute_ri1,
+        "monthly_compute_ri3": monthly_compute_ri3,
+        "monthly_total_ri1":   monthly_total_ri1,
+        "monthly_total_ri3":   monthly_total_ri3,
     }
 
 
@@ -497,6 +517,8 @@ async def process_inventory(file_bytes: bytes) -> dict:
     monthly_sql        = sum(r["monthly_sql"]        for r in result_rows)
     monthly_disk       = sum(r["monthly_disk"]       for r in result_rows)
     monthly_total      = monthly_compute + monthly_os_license + monthly_sql + monthly_disk
+    monthly_total_ri1  = sum(r["monthly_total_ri1"]  for r in result_rows)
+    monthly_total_ri3  = sum(r["monthly_total_ri3"]  for r in result_rows)
 
     return {
         "rows":     result_rows,
@@ -506,7 +528,11 @@ async def process_inventory(file_bytes: bytes) -> dict:
             "monthly_sql":        round(monthly_sql,        2),
             "monthly_disk":       round(monthly_disk,       2),
             "monthly_total":      round(monthly_total,      2),
+            "monthly_total_ri1":  round(monthly_total_ri1,  2),
+            "monthly_total_ri3":  round(monthly_total_ri3,  2),
             "annual_total":       round(monthly_total * 12, 2),
+            "annual_total_ri1":   round(monthly_total_ri1 * 12, 2),
+            "annual_total_ri3":   round(monthly_total_ri3 * 12, 2),
         },
         "warnings": parse_warnings + pricing_warnings,
         "vm_count": len(result_rows),
@@ -548,20 +574,22 @@ def generate_bulk_excel(result: dict) -> bytes:
 
     # ── Column layout ─────────────────────────────────────────────────────────
     cols = [
-        ("#",              5),
-        ("VM Name",       28),
-        ("Region",        16),
-        ("Resolved SKU",  24),
-        ("vCPU",           6),
-        ("RAM (GB)",       9),
-        ("OS",            10),
-        ("SQL Edition",   13),
-        ("OS Disk",       12),
-        ("Compute/mo",    12),
-        ("OS Lic/mo",     11),
-        ("SQL Lic/mo",    11),
-        ("Disk/mo",       10),
-        ("Total/mo",      12),
+        ("#",                5),
+        ("VM Name",         28),
+        ("Region",          16),
+        ("Resolved SKU",    24),
+        ("vCPU",             6),
+        ("RAM (GB)",         9),
+        ("OS",              10),
+        ("SQL Edition",     13),
+        ("OS Disk",         12),
+        ("Compute/mo",      12),
+        ("OS Lic/mo",       11),
+        ("SQL Lic/mo",      11),
+        ("Disk/mo",         10),
+        ("Total PAYG/mo",   13),
+        ("1yr RI/mo",       12),
+        ("3yr RI/mo",       12),
     ]
     for col_idx, (hdr, width) in enumerate(cols, start=1):
         cell = ws.cell(row=1, column=col_idx)
@@ -594,11 +622,13 @@ def generate_bulk_excel(result: dict) -> bytes:
         _w(7,  row["os_type"],             align=CENTER)
         _w(8,  row["sql_display"] or "—",  align=CENTER)
         _w(9,  ssd_label,                  align=CENTER)
-        _w(10, row["monthly_compute"],     MONEY, RIGHT)
+        _w(10, row["monthly_compute"],      MONEY, RIGHT)
         _w(11, row["monthly_os_license"],  MONEY, RIGHT)
         _w(12, row["monthly_sql"],         MONEY, RIGHT)
         _w(13, row["monthly_disk"],        MONEY, RIGHT)
         _w(14, row["monthly_total"],       MONEY, RIGHT)
+        _w(15, row["monthly_total_ri1"],   MONEY, RIGHT)
+        _w(16, row["monthly_total_ri3"],   MONEY, RIGHT)
 
     # ── Grand total row ───────────────────────────────────────────────────────
     total_row = len(result["rows"]) + 2
@@ -622,19 +652,32 @@ def generate_bulk_excel(result: dict) -> bytes:
     _tot(12, t["monthly_sql"],        MONEY)
     _tot(13, t["monthly_disk"],       MONEY)
     _tot(14, t["monthly_total"],      MONEY)
+    _tot(15, t["monthly_total_ri1"],  MONEY)
+    _tot(16, t["monthly_total_ri3"],  MONEY)
     ws.row_dimensions[total_row].height = 18
 
     # ── Annual summary block ──────────────────────────────────────────────────
     ann_row = total_row + 2
-    ws.cell(row=ann_row, column=1, value="Annual total (×12)").font = Font(bold=True, size=10)
-    c = ws.cell(row=ann_row, column=14, value=t["annual_total"])
-    c.number_format = MONEY
-    c.font          = Font(bold=True, size=10)
-    c.alignment     = RIGHT
+    bold10  = Font(bold=True, size=10)
+    _ann_labels = [
+        ("Annual PAYG (×12)",    "annual_total"),
+        ("Annual 1yr RI (×12)", "annual_total_ri1"),
+        ("Annual 3yr RI (×12)", "annual_total_ri3"),
+    ]
+    for offset, (label, key) in enumerate(_ann_labels):
+        r = ann_row + offset
+        ws.cell(row=r, column=1, value=label).font = bold10
+        c2 = ws.cell(row=r, column=14, value=t[key])
+        c2.number_format = MONEY
+        c2.font          = bold10
+        c2.alignment     = RIGHT
 
-    note_row = ann_row + 1
+    note_row = ann_row + len(_ann_labels) + 1
     ws.cell(row=note_row, column=1,
-            value="Note: OS disk only (no data disks priced). PAYG rates, License-Included. Standard SSD LRS."
+            value=(
+                "Note: OS disk only (no data disks priced). PAYG rates, License-Included. "
+                "Standard SSD LRS. RI discount on compute only — OS/SQL license at PAYG rate."
+            )
     ).font = Font(italic=True, size=9, color="FF666666")
 
     # ── Warnings sheet ────────────────────────────────────────────────────────
