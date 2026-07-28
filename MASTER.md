@@ -633,6 +633,17 @@ Future hardening option: a custom Docker image with Graphviz baked in (`FROM mcr
 
 **If the app is already down ("gunicorn not found in /tmp"):** Run `az webapp deploy` (zip) to trigger Oryx pip install and repopulate `/tmp`. Do NOT restart.
 
+**"GHA green, behavior unchanged" — diagnostic checklist (recurring pattern, 3 incidents this app).**
+When a deploy shows green in GitHub Actions but the live app still shows old behavior, work through this list before blaming browser cache:
+
+1. **Missing dependency — whole app crashes at import.** A missing package (e.g. `python-multipart`) throws at `app.main` import time, crashing every route, not just the affected one. Symptom: all pages return 500 or the app restarts in a loop. Check: Kudu log stream for `ModuleNotFoundError`; fix by adding to `requirements.txt` and redeploying.
+
+2. **`az webapp restart` breaks gunicorn startup.** Never run manually. It triggers a full container recycle, wiping `/tmp/` where Oryx placed gunicorn. The app then fails with "FATAL: gunicorn not found in /tmp" on every restart attempt until a real `az webapp deploy` re-runs Oryx. See `memory/feedback_post_deploy_restart.md`. Caused a real outage 2026-07-26.
+
+3. **Static files (HTML/CSS/JS) silently stay stale after zip deploy.** `startup.sh`'s original code-refresh checked `output.tar.zst -nt MARKER`. Zip deploys (`azure/webapps-deploy@v3`) never write `output.tar.zst`, so this condition was always false — Python/venv changes deployed fine (Oryx rebuilds), but files in `static/` were never refreshed in the running `APP_DIR`. Fixed 2026-07-28: GHA now writes `/home/site/wwwroot/.deploy_id` (timestamp) after each zip deploy; `startup.sh` detects it and `cp -r`s `wwwroot/app/` and `wwwroot/static/` into `APP_DIR` before launching gunicorn. See `memory/feedback_static_file_deploy.md`.
+
+**Standing rule:** GHA green means the zip was accepted and Oryx ran. It does NOT guarantee the running process loaded the new code. When behavior doesn't match the commit, fetch the live page source (`Invoke-WebRequest`) and grep for a unique string from the new version before spending time elsewhere.
+
 ---
 
 ### Bicep Infrastructure
