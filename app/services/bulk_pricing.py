@@ -274,6 +274,14 @@ def parse_inventory_xlsx(file_bytes: bytes) -> tuple[list[dict], list[str]]:
         sql_ahb   = _cell(col_sql_ahb).strip().lower() == "yes"
         disk_type = _resolve_disk_type(_cell(col_disk_type))
 
+        # Web edition is SPLA-only — no perpetual license to bring; AHB never applies.
+        if sql_ahb and sql_billing == "Web":
+            warnings.append(
+                f"Row {sheet_row_num} '{vm_name}': SQL AHB not applicable to Web edition "
+                "(SPLA-only; no perpetual license to bring) — priced at standard rate"
+            )
+            sql_ahb = False
+
         rows.append({
             "sheet_row":    sheet_row_num,
             "vm_name":      vm_name,

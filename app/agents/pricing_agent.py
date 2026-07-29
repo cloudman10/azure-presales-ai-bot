@@ -46,6 +46,26 @@ RULES:
 - Normalize region to armRegionName: australiaeast, southeastasia, eastus
 - Never make up prices
 
+SQL SERVER PRICING:
+When the user mentions "SQL Server", "SQL", or an SQL edition name (Enterprise, Standard,
+Web, Express) alongside a VM SKU, collect TWO additional fields before emitting FETCH_PRICING:
+  4. SQL Edition: Enterprise, Standard, Web, or Express
+     - If not specified, ask: "Which SQL Server edition: Enterprise, Standard, Web, or Express?"
+  5. SQL License Model: License-Included (LI) or Azure Hybrid Benefit (AHB)?
+     - LI  = Azure charges the SQL Server license per vCPU per hour
+     - AHB = customer brings own SQL Server license ($0 SQL charge from Azure)
+     - Express is always free — skip this question for Express edition
+     - Web edition is SPLA-only; AHB does not apply — skip this question for Web edition
+     - If not specified, ask: "SQL license: License-Included, or do you have SQL AHB/BYOL?"
+     - Default to LI if the user does not clearly specify
+IMPORTANT — SQL and Windows licenses are INDEPENDENT:
+  - wants_hb = Windows Server AHB (existing field, covers Windows OS licence)
+  - sql_ahb  = SQL Server AHB    (new field, covers SQL Server licence only)
+  Ask them as separate questions. Never conflate the two.
+When all fields are collected, add sql_edition and sql_ahb to FETCH_PRICING:
+  FETCH_PRICING:{"skus":["Standard_E8s_v5"],"region":"australiaeast","os":"Windows","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"sql_edition":"Standard","sql_ahb":false}
+  FETCH_PRICING:{"skus":["Standard_E8s_v5"],"region":"australiaeast","os":"Linux","qty":1,"storage_gb":null,"wants_hb":false,"wants_ri":null,"sql_edition":"Enterprise","sql_ahb":true}
+
 STORAGE PRICING (always included — server injects default if not specified):
 A default OS disk (128 GiB, premium_ssd on premium-capable VMs, else standard_ssd) is
 always shown in the pricing output. The server handles this — you do NOT need to add a
@@ -366,14 +386,75 @@ def _format_pricing(
     out += "\n"
 
     out += "--- PAYG (Pay-as-you-go) ---\n"
-    out += f"Per VM:  {currency} {f4(price_h)}/hr  |  {c(price_m)}/month\n"
-    if qty > 1:
-        out += f"Total:   {c(price_m * qty)}/month\n"
-    if os_type == 'Windows' and linux_payg_direct:
-        ahb_payg_m = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH
-        out += f"AHB PAYG: {currency} {ahb_payg_m:.2f}/month  (save {pct(price_m, ahb_payg_m)}% vs Windows PAYG RRP)\n"
+    # ── SQL Server pricing breakdown ──────────────────────────────────────────
+    is_sql = bool(sql_edition and vcpus and linux_payg_direct)
+    if is_sql:
+        lnx_h    = linux_payg_direct['retailPrice']
+        win_os_h = max(0.0, price_h - lnx_h)           # OS surcharge per hour
+        sql_h    = sql_license_hourly(vcpus, sql_edition, sql_ahb)
+        base_m   = lnx_h    * HOURS_PER_MONTH
+        win_os_m = (0.0 if wants_hb else win_os_h) * HOURS_PER_MONTH
+        sql_m    = sql_h     * HOURS_PER_MONTH
+        total_m  = base_m + win_os_m + sql_m
+        sep      = "─" * 34
 
-    out += "\n--- Savings Plan (flexible, compute discount only) ---\n"
+        out += f"  Base compute:   {c(base_m)}/month  (Linux base rate)\n"
+        if os_type == 'Windows':
+            win_label = "Windows OS: (AHB applied)" if wants_hb else "Windows OS:"
+            out += f"  {win_label:22s}{c(win_os_m)}/month\n"
+        sql_vcpu_note = f"{vcpus} vCPU" + (" → billed as 4" if vcpus <= 2 else "")
+        sql_free_note = "  — always free" if sql_edition == 'Express' else ""
+        out += f"  SQL Server:     {c(sql_m)}/month  ({sql_edition}, {sql_vcpu_note}{sql_free_note})\n"
+        out += f"  {sep}\n"
+        out += f"  Total PAYG:     {c(total_m)}/month\n"
+        out += f"Per VM:  {currency} {total_m / HOURS_PER_MONTH:.4f}/hr  |  {c(total_m)}/month\n"
+        if qty > 1:
+            out += f"  {qty} VMs:          {c(total_m * qty)}/month\n"
+
+        # AHB comparison table. SQL AHB only shown for Enterprise/Standard (AHB-eligible).
+        # Web is SPLA-only — no perpetual license; skip SQL AHB rows entirely for Web.
+        _sql_ahb_ok = sql_edition in ('Enterprise', 'Standard')
+        _show_ahb_table = os_type == 'Windows' or _sql_ahb_ok
+        if _show_ahb_table:
+            sql_full_h = sql_license_hourly(vcpus, sql_edition, False)
+            sql_full_m = sql_full_h * HOURS_PER_MONTH
+            out += "\n--- AHB Options (independent axes) ---\n"
+            if os_type == 'Windows':
+                li_li_m    = base_m + win_os_h * HOURS_PER_MONTH + sql_full_m
+                win_only_m = base_m                             + sql_full_m   # Win AHB only
+                out += f"  No AHB (LI / LI):          {c(li_li_m)}/month  — baseline\n"
+                if _sql_ahb_ok:
+                    sql_only_m = base_m + win_os_h * HOURS_PER_MONTH          # SQL AHB only
+                    both_m     = base_m                                        # both AHB
+                    out += f"  SQL AHB only  (BYOL SQL):   {c(sql_only_m)}/month  (save {pct(li_li_m, sql_only_m)}%)\n"
+                    out += f"  Windows AHB only (BYOL Win):{c(win_only_m)}/month  (save {pct(li_li_m, win_only_m)}%)\n"
+                    out += f"  Both AHB  (BYOL both):      {c(both_m)}/month  (save {pct(li_li_m, both_m)}%)\n"
+                else:
+                    out += f"  Windows AHB (BYOL Win):    {c(win_only_m)}/month  (save {pct(li_li_m, win_only_m)}%)\n"
+                    if sql_edition == 'Web':
+                        out += "  Note: SQL AHB not applicable to Web edition (SPLA-only)\n"
+            else:
+                # Linux + AHB-eligible SQL edition
+                li_m   = base_m + sql_full_m
+                ahb_m  = base_m
+                out += f"  SQL LI:   {c(li_m)}/month\n"
+                out += f"  SQL AHB:  {c(ahb_m)}/month  (save {pct(li_m, ahb_m)}%, BYOL SQL)\n"
+    else:
+        # ── Non-SQL PAYG (existing behaviour) ────────────────────────────────
+        out += f"Per VM:  {currency} {f4(price_h)}/hr  |  {c(price_m)}/month\n"
+        if qty > 1:
+            out += f"Total:   {c(price_m * qty)}/month\n"
+        if os_type == 'Windows' and linux_payg_direct:
+            ahb_payg_m = linux_payg_direct['retailPrice'] * HOURS_PER_MONTH
+            out += f"AHB PAYG: {currency} {ahb_payg_m:.2f}/month  (save {pct(price_m, ahb_payg_m)}% vs Windows PAYG RRP)\n"
+
+    # For SQL: add SQL license overhead to SP/RI totals and note it's a fixed addition
+    _sql_overhead_m = sql_m if is_sql else 0.0   # monthly SQL license at user's chosen model
+
+    sp_header = "--- Compute Commitments — Savings Plan / RI ---\n" if is_sql else "--- Savings Plan (flexible, compute discount only) ---\n"
+    out += f"\n{sp_header}"
+    if is_sql:
+        out += f"Note: SQL license ({c(sql_m)}/month) and Windows OS costs are fixed — not discounted by SP or RI.\n"
     if sp_rates:
         if os_type == "Windows":
             out += f"License: {c(win_lic_payg)}/month  (at RRP, no discount)\n\n"

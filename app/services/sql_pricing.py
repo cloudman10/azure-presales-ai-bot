@@ -48,17 +48,22 @@ SQL_RATES: dict[str, float] = {
 
 EDITIONS = frozenset(SQL_RATES)
 
+# Web is SPLA-only (no perpetual/volume license to bring) — AHB never applies.
+_SQL_AHB_ELIGIBLE: frozenset[str] = frozenset({"Enterprise", "Standard"})
+
 
 def sql_license_hourly(vcpus: int, edition: str, sql_ahb: bool) -> float:
     """SQL Server license component of the total hourly cost.
 
     AHB (Azure Hybrid Benefit) = BYOL — $0 license charge from Azure.
-    Express edition is always free.
+    Express is always free. Web is SPLA-only; AHB is not applicable to Web.
     Minimum billing unit: 4 vCPUs for VMs with 1–2 vCPUs (confirmed from
     the API's "1-4 vCPU VM" bucket which equals 4 × per-vCPU rate).
     VMs with 3+ vCPUs are billed at exact count × per-vCPU rate.
     """
-    if sql_ahb or edition == "Express":
+    if edition == "Express":
+        return 0.0
+    if sql_ahb and edition in _SQL_AHB_ELIGIBLE:
         return 0.0
     rate = SQL_RATES.get(edition, 0.0)
     billed_vcpus = 4 if vcpus <= 2 else vcpus
