@@ -56,6 +56,7 @@ Web, Express) alongside a VM SKU, collect TWO additional fields before emitting 
      - LI  = Azure charges the SQL Server license per vCPU per hour
      - AHB = customer brings own SQL Server license ($0 SQL charge from Azure)
      - Express is always free — skip this question for Express edition
+     - Web edition is SPLA-only; AHB does not apply — skip this question for Web edition
      - If not specified, ask: "SQL license: License-Included, or do you have SQL AHB/BYOL?"
      - Default to LI if the user does not clearly specify
 IMPORTANT — SQL and Windows licenses are INDEPENDENT:
@@ -423,21 +424,30 @@ def _format_pricing(
         if qty > 1:
             out += f"  {qty} VMs:          {c(total_m * qty)}/month\n"
 
-        # AHB comparison table (all four combos, always shown for non-Express)
-        if sql_edition != 'Express' or os_type == 'Windows':
+        # AHB comparison table. SQL AHB only shown for Enterprise/Standard (AHB-eligible).
+        # Web is SPLA-only — no perpetual license; skip SQL AHB rows entirely for Web.
+        _sql_ahb_ok = sql_edition in ('Enterprise', 'Standard')
+        _show_ahb_table = os_type == 'Windows' or _sql_ahb_ok
+        if _show_ahb_table:
             sql_full_h = sql_license_hourly(vcpus, sql_edition, False)
             sql_full_m = sql_full_h * HOURS_PER_MONTH
             out += "\n--- AHB Options (independent axes) ---\n"
             if os_type == 'Windows':
                 li_li_m    = base_m + win_os_h * HOURS_PER_MONTH + sql_full_m
-                sql_only_m = base_m + win_os_h * HOURS_PER_MONTH              # SQL AHB
-                win_only_m = base_m                             + sql_full_m   # Win AHB
-                both_m     = base_m                                            # both AHB
+                win_only_m = base_m                             + sql_full_m   # Win AHB only
                 out += f"  No AHB (LI / LI):          {c(li_li_m)}/month  — baseline\n"
-                out += f"  SQL AHB only  (BYOL SQL):   {c(sql_only_m)}/month  (save {pct(li_li_m, sql_only_m)}%)\n"
-                out += f"  Windows AHB only (BYOL Win):{c(win_only_m)}/month  (save {pct(li_li_m, win_only_m)}%)\n"
-                out += f"  Both AHB  (BYOL both):      {c(both_m)}/month  (save {pct(li_li_m, both_m)}%)\n"
+                if _sql_ahb_ok:
+                    sql_only_m = base_m + win_os_h * HOURS_PER_MONTH          # SQL AHB only
+                    both_m     = base_m                                        # both AHB
+                    out += f"  SQL AHB only  (BYOL SQL):   {c(sql_only_m)}/month  (save {pct(li_li_m, sql_only_m)}%)\n"
+                    out += f"  Windows AHB only (BYOL Win):{c(win_only_m)}/month  (save {pct(li_li_m, win_only_m)}%)\n"
+                    out += f"  Both AHB  (BYOL both):      {c(both_m)}/month  (save {pct(li_li_m, both_m)}%)\n"
+                else:
+                    out += f"  Windows AHB (BYOL Win):    {c(win_only_m)}/month  (save {pct(li_li_m, win_only_m)}%)\n"
+                    if sql_edition == 'Web':
+                        out += "  Note: SQL AHB not applicable to Web edition (SPLA-only)\n"
             else:
+                # Linux + AHB-eligible SQL edition
                 li_m   = base_m + sql_full_m
                 ahb_m  = base_m
                 out += f"  SQL LI:   {c(li_m)}/month\n"
