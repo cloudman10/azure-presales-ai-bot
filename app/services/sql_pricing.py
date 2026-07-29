@@ -50,8 +50,19 @@ EDITIONS = frozenset(SQL_RATES)
 
 
 def sql_license_hourly(vcpus: int, edition: str, sql_ahb: bool) -> float:
-    # INTENTIONAL BREAK — smoke test validation only. Revert before merging.
-    raise RuntimeError("sql_license_hourly intentionally broken for smoke-test break-test")
+    """SQL Server license component of the total hourly cost.
+
+    AHB (Azure Hybrid Benefit) = BYOL — $0 license charge from Azure.
+    Express edition is always free.
+    Minimum billing unit: 4 vCPUs for VMs with 1–2 vCPUs (confirmed from
+    the API's "1-4 vCPU VM" bucket which equals 4 × per-vCPU rate).
+    VMs with 3+ vCPUs are billed at exact count × per-vCPU rate.
+    """
+    if sql_ahb or edition == "Express":
+        return 0.0
+    rate = SQL_RATES.get(edition, 0.0)
+    billed_vcpus = 4 if vcpus <= 2 else vcpus
+    return billed_vcpus * rate
 
 
 def compute_hourly(
