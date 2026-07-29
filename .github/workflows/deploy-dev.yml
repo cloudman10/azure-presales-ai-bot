@@ -48,9 +48,15 @@ jobs:
           BASE_URL="https://hyperxen-pricing-bot-dev.azurewebsites.net"
           FIXTURE="tests/fixtures/bulk_pricing_smoke_test.xlsx"
 
-          # Poll /api/bulk-pricing/template until gunicorn is back up (max 20 × 10s = 200s).
-          # Avoids a fixed sleep — stops as soon as the app responds.
-          echo "Waiting for app to come up..."
+          # Wait for old gunicorn to fully die. DELETE /processes/0 is async — the
+          # old process may still serve requests for several seconds after the API
+          # returns. Without this sleep, attempt 1 of the health check can hit the
+          # old process (still alive) and give a false "app ready" signal.
+          echo "Waiting 20s for process restart to propagate..."
+          sleep 20
+
+          # Poll /api/bulk-pricing/template until new gunicorn is up (max 20 × 10s = 200s).
+          echo "Polling for app readiness..."
           for i in $(seq 1 20); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/api/bulk-pricing/template" 2>/dev/null || echo "000")
             if [ "$STATUS" = "200" ]; then
@@ -87,15 +93,21 @@ jobs:
           rows   = data.get('rows', [])
           totals = data.get('totals', {})
           total  = totals.get('monthly_total', 0)
+          sql_t  = totals.get('monthly_sql', 0)
           warns  = data.get('warnings', [])
-          print(f"  rows priced : {len(rows)}")
+          print(f"  rows priced : {len(rows)}/2")
           print(f"  grand total : ${total:.2f}/mo")
+          print(f"  SQL total   : ${sql_t:.2f}/mo  (expected ~$23.36 for Web SQL row)")
           print(f"  warnings    : {warns}")
           errors = []
-          if len(rows) == 0:
-              errors.append("no rows in response — SKU matching or parse failed")
+          if len(rows) != 2:
+              errors.append(f"expected 2 rows priced, got {len(rows)} — row(s) failed silently (check warnings)")
+          if warns:
+              errors.append(f"pricing warnings present — rows failed: {warns}")
+          if sql_t <= 0:
+              errors.append(f"monthly_sql={sql_t} — expected >0; row 2 has Web SQL (~$23.36/mo) — sql_pricing import failure?")
           if total <= 0:
-              errors.append(f"monthly_total={total} — expected > 0 (lazy import or pricing API failure)")
+              errors.append(f"monthly_total={total} — expected > 0")
           if errors:
               for e in errors:
                   print(f"SMOKE TEST FAILED: {e}")
