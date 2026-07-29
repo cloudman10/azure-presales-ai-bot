@@ -184,7 +184,7 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
         <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#F8FBFF;border:1px solid #C3DDF5;border-radius:8px;flex-wrap:wrap">
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:600;color:#1A1A2E">Need the template?</div>
-            <div style="font-size:12px;color:#8B95A2;margin-top:2px">Location · VM Name · OS · MS SQL · Server Role · vCPUs · Mem (GB) · Provisioned Space (GB)</div>
+            <div style="font-size:12px;color:#8B95A2;margin-top:2px">Location · VM Name · OS · MS SQL · Server Role · vCPUs · Mem (GB) · Provisioned Space (GB) · Windows AHB · SQL AHB · Disk Type</div>
           </div>
           <a href="/api/bulk-pricing/template" class="btn btn-outline btn-sm" download>
             ⬇ Download template
@@ -252,7 +252,7 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
 
     <!-- Fleet context + VMs count -->
     <div class="fleet-ctx">
-      <span class="fleet-ctx-lbl">Fleet estimate — PAYG, License-Included, Standard SSD</span>
+      <span class="fleet-ctx-lbl">Fleet estimate — PAYG (per-row AHB &amp; disk type applied)</span>
       <span class="fleet-ctx-vms">VMs priced: <strong id="tb-count">—</strong></span>
     </div>
 
@@ -321,7 +321,7 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
     <div class="action-row">
       <button class="btn btn-green" id="btn-download">⬇ Download Excel</button>
       <button class="btn btn-outline" id="btn-new-upload">↩ New upload</button>
-      <span class="dl-note">Azure Hybrid Benefit not applied · OS disk only</span>
+      <span class="dl-note">AHB applied per row where specified · OS disk only</span>
     </div>
 
     <!-- Warnings (if any) -->
@@ -620,9 +620,9 @@ function renderTable() {
       <td class="sku">${esc(r.sku_name)}</td>
       <td class="r">${r.matched_vcpus}</td>
       <td class="r">${r.matched_ram_gb ?? '—'}</td>
-      <td><span class="badge ${r.os_type==='Windows'?'badge-win':'badge-lin'}">${esc(r.os_type)}</span></td>
-      <td>${r.sql_display ? `<span class="badge badge-sql">${esc(r.sql_display)}</span>` : '<span class="muted">—</span>'}</td>
-      <td class="muted" style="white-space:nowrap">E-SSD ${esc(r.ssd_tier)}/${r.ssd_gib} GiB</td>
+      <td><span class="badge ${r.os_type==='Windows'?'badge-win':'badge-lin'}">${esc(r.os_type)}${r.win_ahb?' (AHB)':''}</span></td>
+      <td>${r.sql_display ? `<span class="badge badge-sql">${esc(r.sql_display)}${r.sql_ahb?' (AHB)':''}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="muted" style="white-space:nowrap">${esc(r.disk_label || ('E-SSD '+r.ssd_tier+'/'+r.ssd_gib+' GiB'))}</td>
       <td class="r">${fmt(r.monthly_compute)}</td>
       <td class="r">${fmt(r.monthly_os_license)}</td>
       <td class="r">${fmt(r.monthly_sql)}</td>
