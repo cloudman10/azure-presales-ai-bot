@@ -2,6 +2,7 @@
 Bulk VM pricing — Public-Cloud-VM-Listing Excel sheet processor.
 
 Input columns:  Location | VM Name | OS | MS SQL | Server Role | vCPUs | Mem (GB) | Provisioned Space (GB)
+Optional:       Windows AHB | SQL AHB | Disk Type
 
 Reuses the same SKU-matching and pricing functions as the chat advisor path.
 All pricing math flows through existing sql_pricing / azure_pricing utilities —
@@ -25,13 +26,18 @@ REGION_MAP: dict[str, tuple[str, str]] = {
     "USA": ("eastus",        "East US"),
 }
 
-# ── Azure Standard SSD (E-series) tier table ──────────────────────────────────
-# Source: azure_pricing.DISK_TIER_SIZES_GIB with Standard SSD prefix "E"
-# Each entry: (tier_name, size_gib)
+# ── Azure disk tier tables ────────────────────────────────────────────────────
+# Each entry: (tier_name, size_gib). Size thresholds are identical across E and
+# P series — only the prefix differs.
 _SSD_TIERS: list[tuple[str, int]] = [
     ("E1",  4),    ("E2",  8),    ("E3",  16),   ("E4",  32),   ("E6",  64),
     ("E10", 128),  ("E15", 256),  ("E20", 512),  ("E30", 1024),
     ("E40", 2048), ("E50", 4096), ("E60", 8192), ("E70", 16384), ("E80", 32767),
+]
+_PREMIUM_SSD_TIERS: list[tuple[str, int]] = [
+    ("P1",  4),    ("P2",  8),    ("P3",  16),   ("P4",  32),   ("P6",  64),
+    ("P10", 128),  ("P15", 256),  ("P20", 512),  ("P30", 1024),
+    ("P40", 2048), ("P50", 4096), ("P60", 8192), ("P70", 16384), ("P80", 32767),
 ]
 
 # ── Module-level caches (lives for the duration of one process run) ───────────
@@ -41,23 +47,45 @@ _sku_match_cache: dict[tuple, list[dict]] = {}
 _vm_price_cache: dict[tuple, list[dict]] = {}
 # Keyed by region → {tier_name: monthly_usd} for Standard SSD
 _ssd_price_cache: dict[str, dict[str, float]] = {}
+# Keyed by region → {tier_name: monthly_usd} for Premium SSD (P-series)
+_premium_ssd_cache: dict[str, dict[str, float]] = {}
+# Keyed by region → monthly USD/GiB for Premium SSD v2 capacity
+_pv2_rate_cache: dict[str, Optional[float]] = {}
 
 
-# ── Utility: Standard SSD tier resolution ────────────────────────────────────
+# ── Utility: disk tier resolution ────────────────────────────────────────────
 
 def resolve_ssd_tier(size_gb: float) -> tuple[str, int]:
-    """Round UP to the smallest Azure Standard SSD tier that fits.
-
-    Examples:
-        84.14 → ("E10", 128)
-        128.0 → ("E10", 128)
-        129.0 → ("E15", 256)
-    """
+    """Round UP to the smallest Azure Standard SSD tier that fits."""
     size_ceil = math.ceil(size_gb)
     for tier_name, tier_gib in _SSD_TIERS:
         if tier_gib >= size_ceil:
             return tier_name, tier_gib
     return "E80", 32767
+
+
+def resolve_premium_ssd_tier(size_gb: float) -> tuple[str, int]:
+    """Round UP to the smallest Azure Premium SSD tier that fits."""
+    size_ceil = math.ceil(size_gb)
+    for tier_name, tier_gib in _PREMIUM_SSD_TIERS:
+        if tier_gib >= size_ceil:
+            return tier_name, tier_gib
+    return "P80", 32767
+
+
+def _resolve_disk_type(raw: str) -> str:
+    """Map the 'Disk Type' column to an internal key.
+
+    'Premium SSD v2' → 'premium_ssd_v2'
+    'Premium SSD'    → 'premium_ssd'
+    ''  / 'Standard SSD' / anything else → 'standard_ssd'  (default)
+    """
+    lower = (raw or "").strip().lower()
+    if "v2" in lower:
+        return "premium_ssd_v2"
+    if "premium" in lower:
+        return "premium_ssd"
+    return "standard_ssd"
 
 
 # ── Utility: SQL edition mapping ──────────────────────────────────────────────
@@ -147,6 +175,10 @@ def parse_inventory_xlsx(file_bytes: bytes) -> tuple[list[dict], list[str]]:
     col_vcpus    = _col("vCPUs")
     col_mem      = _col("Mem (GB)")
     col_disk     = _col("Provisioned Space (GB)")
+    # Optional new columns — None if not present in the uploaded file (backward-compat)
+    col_win_ahb  = _col("Windows AHB")
+    col_sql_ahb  = _col("SQL AHB")
+    col_disk_type = _col("Disk Type")
 
     missing = [nm for nm, idx in [
         ("Location", col_location), ("VM Name", col_vmname),
@@ -234,7 +266,13 @@ def parse_inventory_xlsx(file_bytes: bytes) -> tuple[list[dict], list[str]]:
             )
 
         arm_region, region_label = REGION_MAP[location_upper]
-        ssd_tier, ssd_gib = resolve_ssd_tier(disk_gb if disk_gb > 0 else 128.0)
+        disk_gb_eff = disk_gb if disk_gb > 0 else 128.0
+        ssd_tier, ssd_gib = resolve_ssd_tier(disk_gb_eff)
+
+        # Parse optional new columns (default to False / standard_ssd when absent)
+        win_ahb   = _cell(col_win_ahb).strip().lower() == "yes"
+        sql_ahb   = _cell(col_sql_ahb).strip().lower() == "yes"
+        disk_type = _resolve_disk_type(_cell(col_disk_type))
 
         rows.append({
             "sheet_row":    sheet_row_num,
@@ -251,6 +289,9 @@ def parse_inventory_xlsx(file_bytes: bytes) -> tuple[list[dict], list[str]]:
             "sql_display":  sql_display,
             "sql_billing":  sql_billing,
             "role":         role,
+            "win_ahb":      win_ahb,
+            "sql_ahb":      sql_ahb,
+            "disk_type":    disk_type,
         })
 
     logger.info(
@@ -353,7 +394,7 @@ async def _get_vm_prices(region: str, sku_name: str) -> list[dict]:
     return _vm_price_cache[key]
 
 
-# ── Cached Standard SSD disk pricing ─────────────────────────────────────────
+# ── Cached disk pricing ───────────────────────────────────────────────────────
 
 async def _get_ssd_tier_price(region: str, tier: str) -> float:
     """Return the monthly Standard SSD price for a given tier in the region."""
@@ -365,6 +406,38 @@ async def _get_ssd_tier_price(region: str, tier: str) -> float:
             logger.warning("bulk_pricing: SSD price fetch failed region=%s: %s", region, exc)
             _ssd_price_cache[region] = {}
     return _ssd_price_cache[region].get(tier, 0.0)
+
+
+async def _get_premium_ssd_tier_price(region: str, tier: str) -> float:
+    """Return the monthly Premium SSD (P-series) price for a given tier in the region."""
+    from app.services.azure_pricing import fetch_disk_tier_prices
+    if region not in _premium_ssd_cache:
+        try:
+            _premium_ssd_cache[region] = await fetch_disk_tier_prices(region, "premium_ssd")
+        except Exception as exc:
+            logger.warning("bulk_pricing: Premium SSD price fetch failed region=%s: %s", region, exc)
+            _premium_ssd_cache[region] = {}
+    return _premium_ssd_cache[region].get(tier, 0.0)
+
+
+async def _get_pv2_monthly_cost(region: str, disk_gb: float) -> float:
+    """Return the monthly Premium SSD v2 capacity cost for disk_gb GiB.
+
+    Uses fetch_v2_capacity_rate() which returns $/GiB/month (already ×730).
+    Covers capacity only — IOPS/throughput above the free baseline (3000/125)
+    are not priced here, consistent with how the single-VM card prices Pv2.
+    """
+    from app.services.azure_pricing import fetch_v2_capacity_rate
+    if region not in _pv2_rate_cache:
+        try:
+            _pv2_rate_cache[region] = await fetch_v2_capacity_rate(region)
+        except Exception as exc:
+            logger.warning("bulk_pricing: Pv2 rate fetch failed region=%s: %s", region, exc)
+            _pv2_rate_cache[region] = None
+    rate = _pv2_rate_cache[region]
+    if rate is None:
+        return 0.0
+    return rate * max(1.0, disk_gb)
 
 
 # ── Per-row price computation ─────────────────────────────────────────────────
@@ -381,6 +454,10 @@ async def _price_row(row: dict) -> dict:
     ssd_tier    = row["ssd_tier"]
     ssd_gib     = row["ssd_gib"]
     sql_billing = row["sql_billing"]
+    win_ahb     = row.get("win_ahb", False)
+    sql_ahb     = row.get("sql_ahb", False)
+    disk_type   = row.get("disk_type", "standard_ssd")
+    disk_gb_raw = row.get("disk_gb_raw", 0.0)
 
     # 1. Best-fit VM SKU (reuses advisor matching logic + caching)
     candidates = await _pick_sku_cached(region, os_type, vcpus_req, ram_gb_req)
@@ -404,18 +481,32 @@ async def _price_row(row: dict) -> dict:
     windows_payg = win_item["retailPrice"] if win_item else None
     linux_payg   = lin_item["retailPrice"] if lin_item else None
 
-    # 3. Standard SSD monthly cost for the resolved tier
-    disk_monthly = await _get_ssd_tier_price(region, ssd_tier)
+    # 3. Disk monthly cost — routed through existing fetch functions by disk_type
+    disk_gb_eff = disk_gb_raw if disk_gb_raw > 0 else 128.0
+    if disk_type == "premium_ssd":
+        p_tier, p_gib = resolve_premium_ssd_tier(disk_gb_eff)
+        disk_monthly = await _get_premium_ssd_tier_price(region, p_tier)
+        disk_label   = f"P-SSD {p_tier}/{p_gib} GiB"
+    elif disk_type == "premium_ssd_v2":
+        disk_monthly = await _get_pv2_monthly_cost(region, disk_gb_eff)
+        disk_label   = f"Pv2 {int(disk_gb_eff)} GiB"
+    else:  # standard_ssd (default)
+        disk_monthly = await _get_ssd_tier_price(region, ssd_tier)
+        disk_label   = f"E-SSD {ssd_tier}/{ssd_gib} GiB"
 
     # 4. Monthly breakdown
     #    compute  = base Linux-equivalent rate (bare metal, no OS charge)
-    #    os_lic   = Windows Server OS surcharge (0 for Linux VMs)
-    #    sql_lic  = SQL Server license per-vCPU (0 if no SQL or AHB)
+    #    os_lic   = Windows Server OS surcharge (0 for Linux or Windows AHB)
+    #    sql_lic  = SQL Server license per-vCPU (0 if no SQL or SQL AHB)
     if os_type == "Linux":
         compute_h = linux_payg or 0.0
         os_lic_h  = 0.0
+    elif win_ahb:
+        # Windows AHB: pay Linux compute rate, no OS license (BYOL)
+        compute_h = linux_payg or 0.0
+        os_lic_h  = 0.0
     else:
-        # Windows: split into compute (Linux base) + OS surcharge
+        # Windows License-Included: split into compute (Linux base) + OS surcharge
         if linux_payg is not None and windows_payg is not None:
             compute_h = linux_payg
             os_lic_h  = max(0.0, windows_payg - linux_payg)
@@ -428,7 +519,7 @@ async def _price_row(row: dict) -> dict:
             os_lic_h  = 0.0
 
     sql_h = (
-        sql_license_hourly(billing_vcpus, sql_billing, sql_ahb=False)
+        sql_license_hourly(billing_vcpus, sql_billing, sql_ahb=sql_ahb)
         if sql_billing else 0.0
     )
 
@@ -465,6 +556,9 @@ async def _price_row(row: dict) -> dict:
         "ram_gb_req":   ram_gb_req,
         "disk_gb_raw":  row["disk_gb_raw"],
         "sql_display":  row["sql_display"],
+        "win_ahb":      win_ahb,
+        "sql_ahb":      sql_ahb,
+        "disk_type":    disk_type,
         # ── Resolved values ───────────────────────────────────────────────
         "sku_name":        sku_name,
         "matched_vcpus":   matched_vcpus,
@@ -472,6 +566,7 @@ async def _price_row(row: dict) -> dict:
         "billing_vcpus":   billing_vcpus,
         "ssd_tier":        ssd_tier,
         "ssd_gib":         ssd_gib,
+        "disk_label":      disk_label,
         "windows_payg_hr": windows_payg,
         "linux_payg_hr":   linux_payg,
         # ── Monthly costs ─────────────────────────────────────────────────
@@ -612,16 +707,19 @@ def generate_bulk_excel(result: dict) -> bytes:
             c.alignment = align
             return c
 
-        ssd_label = f"E-SSD {row['ssd_tier']}/{row['ssd_gib']} GiB"
+        disk_label = row.get("disk_label", f"E-SSD {row['ssd_tier']}/{row['ssd_gib']} GiB")
+        os_label   = f"{row['os_type']} (AHB)" if row.get("win_ahb") else row["os_type"]
+        sql_raw    = row["sql_display"]
+        sql_label  = (f"{sql_raw} (AHB)" if row.get("sql_ahb") else sql_raw) if sql_raw else "—"
         _w(1,  i,                          align=CENTER)
         _w(2,  row["vm_name"])
         _w(3,  row["region_label"])
         _w(4,  row["sku_name"])
         _w(5,  row["matched_vcpus"],       align=CENTER)
         _w(6,  row.get("matched_ram_gb"),  align=CENTER)
-        _w(7,  row["os_type"],             align=CENTER)
-        _w(8,  row["sql_display"] or "—",  align=CENTER)
-        _w(9,  ssd_label,                  align=CENTER)
+        _w(7,  os_label,                   align=CENTER)
+        _w(8,  sql_label,                  align=CENTER)
+        _w(9,  disk_label,                 align=CENTER)
         _w(10, row["monthly_compute"],      MONEY, RIGHT)
         _w(11, row["monthly_os_license"],  MONEY, RIGHT)
         _w(12, row["monthly_sql"],         MONEY, RIGHT)
@@ -675,8 +773,10 @@ def generate_bulk_excel(result: dict) -> bytes:
     note_row = ann_row + len(_ann_labels) + 1
     ws.cell(row=note_row, column=1,
             value=(
-                "Note: OS disk only (no data disks priced). PAYG rates, License-Included. "
-                "Standard SSD LRS. RI discount on compute only — OS/SQL license at PAYG rate."
+                "Note: OS disk only (no data disks priced). PAYG rates. "
+                "Windows/SQL AHB applied per row where specified. "
+                "Standard SSD LRS by default; Premium SSD and Premium SSD v2 available per row. "
+                "RI discount on compute only — OS/SQL license at PAYG rate."
             )
     ).font = Font(italic=True, size=9, color="FF666666")
 
