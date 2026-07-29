@@ -184,7 +184,8 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
         <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#F8FBFF;border:1px solid #C3DDF5;border-radius:8px;flex-wrap:wrap">
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:600;color:#1A1A2E">Need the template?</div>
-            <div style="font-size:12px;color:#8B95A2;margin-top:2px">Location · VM Name · OS · MS SQL · Server Role · vCPUs · Mem (GB) · Provisioned Space (GB) · Windows AHB · SQL AHB · Disk Type</div>
+            <div style="font-size:12px;color:#8B95A2;margin-top:2px">Location · VM Name · OS · MS SQL · Server Role · vCPUs · Mem (GB) · Provisioned Space (GB) · Windows AHB · SQL AHB</div>
+            <div style="font-size:11px;color:#B0B8C4;margin-top:3px">All rows priced at Standard SSD LRS. For Premium SSD or Pv2, use the <a href="/pricing" style="color:#0078D4;text-decoration:none">single-VM pricing card</a>.</div>
           </div>
           <a href="/api/bulk-pricing/template" class="btn btn-outline btn-sm" download>
             ⬇ Download template
@@ -252,7 +253,7 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
 
     <!-- Fleet context + VMs count -->
     <div class="fleet-ctx">
-      <span class="fleet-ctx-lbl">Fleet estimate — PAYG (per-row AHB &amp; disk type applied)</span>
+      <span class="fleet-ctx-lbl">Fleet estimate — PAYG (per-row AHB applied · Standard SSD LRS)</span>
       <span class="fleet-ctx-vms">VMs priced: <strong id="tb-count">—</strong></span>
     </div>
 
@@ -321,7 +322,7 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
     <div class="action-row">
       <button class="btn btn-green" id="btn-download">⬇ Download Excel</button>
       <button class="btn btn-outline" id="btn-new-upload">↩ New upload</button>
-      <span class="dl-note">AHB applied per row where specified · OS disk only</span>
+      <span class="dl-note">AHB applied per row where specified · Standard SSD LRS · use /pricing for Premium SSD / Pv2</span>
     </div>
 
     <!-- Warnings (if any) -->
