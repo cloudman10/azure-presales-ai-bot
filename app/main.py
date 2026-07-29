@@ -104,7 +104,7 @@ async def bulk_pricing_template():
 
     headers = ["Location", "VM Name", "OS", "MS SQL", "Server Role",
                "vCPUs", "Mem (GB)", "Provisioned Space (GB)",
-               "Windows AHB", "SQL AHB", "Disk Type"]
+               "Windows AHB", "SQL AHB"]
     ws.append(headers)
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=1, column=i)
@@ -112,26 +112,27 @@ async def bulk_pricing_template():
         c.fill = HDR_FILL
         c.alignment = CTR
 
-    # Columns 1-8 are the original required columns.
-    # Columns 9-11 are the new optional columns — blank = use the default.
+    # Columns 1-8 are required. Columns 9-10 (Windows AHB / SQL AHB) are optional.
     examples = [
-        # All defaults — Standard SSD, License-Included, no AHB
-        ["AU",  "PROD-WEB-01",  "Windows Server", "--",         "Web",      2,  8,   128,  "",    "",    ""],
+        # All defaults — License-Included, no AHB
+        ["AU",  "PROD-WEB-01",  "Windows Server", "--",         "Web",      2,  8,   128,  "No",  "No"],
         # Windows AHB: compute priced at Linux rate, no Windows OS license charge
-        ["AU",  "PROD-WEB-02",  "Windows Server", "--",         "Web",      4,  16,  128,  "Yes", "",    ""],
+        ["AU",  "PROD-WEB-02",  "Windows Server", "--",         "Web",      4,  16,  128,  "Yes", "No"],
         # SQL AHB: SQL Server license waived (BYOL)
-        ["AU",  "PROD-DB-01",   "Windows Server", "Enterprise", "Database", 8,  32,  1024, "",    "Yes", ""],
-        # Premium SSD (P-series) — tiered, monthly flat rate per tier
-        ["AU",  "PROD-DB-02",   "Windows Server", "Standard",   "Database", 4,  16,  512,  "",    "",    "Premium SSD"],
-        # Premium SSD v2 — provisioned $/GiB/month, more flexible sizing
-        ["AU",  "PERF-DB-01",   "Windows Server", "--",         "Database", 8,  32,  2048, "",    "",    "Premium SSD v2"],
-        # Linux default — no AHB needed, Standard SSD
-        ["USA", "DR-WEB-01",    "Linux",           "--",         "Web",      2,  8,   128,  "",    "",    ""],
+        ["AU",  "PROD-DB-01",   "Windows Server", "Enterprise", "Database", 8,  32,  1024, "No",  "Yes"],
+        # Linux default — no AHB needed
+        ["USA", "DR-WEB-01",    "Linux",          "--",         "Web",      2,  8,   128,  "No",  "No"],
     ]
     for row in examples:
         ws.append(row)
 
-    col_widths = [10, 20, 18, 14, 14, 8, 10, 22, 13, 10, 16]
+    # Yes/No dropdown validation for the two AHB columns (cols I and J)
+    from openpyxl.worksheet.datavalidation import DataValidation
+    dv_ahb = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
+    ws.add_data_validation(dv_ahb)
+    dv_ahb.sqref = f"I2:J{1 + len(examples)}"
+
+    col_widths = [10, 20, 18, 14, 14, 8, 10, 22, 13, 10]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
 
@@ -144,12 +145,10 @@ async def bulk_pricing_template():
         ("vCPUs:",                   "Integer — the VM's requested vCPU count"),
         ("Mem (GB):",                "Integer — the VM's requested RAM in GB"),
         ("Provisioned Space (GB):",  "Float — OS disk size in GiB"),
-        ("Windows AHB:",             "Yes = Azure Hybrid Benefit applied — compute priced at Linux rate, no Windows OS license charge.  Blank = License-Included (default)."),
-        ("SQL AHB:",                 "Yes = SQL Server license waived (BYOL).  Blank = License-Included PAYG rate (default).  Only relevant when MS SQL is set."),
-        ("Disk Type:",               "Standard SSD (default)  |  Premium SSD  |  Premium SSD v2.  Blank = Standard SSD."),
-        ("",                         "Standard SSD: rounded UP to nearest E-series tier, flat monthly rate."),
-        ("",                         "Premium SSD: rounded UP to nearest P-series tier, flat monthly rate."),
-        ("",                         "Premium SSD v2: provisioned $/GiB/month × disk size (capacity cost only)."),
+        ("Windows AHB:",             "Yes / No (dropdown) — Azure Hybrid Benefit: compute priced at Linux rate, no Windows OS license charge.  Blank = No."),
+        ("SQL AHB:",                 "Yes / No (dropdown) — SQL Server BYOL: license charge waived.  Blank = No.  Not applicable to Web edition (SPLA-only; will be ignored with a warning)."),
+        ("Disk:",                    "All rows priced with Standard SSD LRS (OS disk only, rounded up to nearest E-series tier)."),
+        ("",                         "For granular disk analysis (Premium SSD, Premium SSD v2), use the single-VM pricing card at /pricing."),
     ]
     for r, (k, v) in enumerate(notes, 1):
         ws2.cell(row=r, column=1, value=k).font = Font(bold=True)
