@@ -42,3 +42,63 @@ jobs:
           echo "app process restarted"
         env:
           PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_DEV }}
+
+      - name: Smoke test — bulk pricing upload
+        run: |
+          BASE_URL="https://hyperxen-pricing-bot-dev.azurewebsites.net"
+          FIXTURE="tests/fixtures/bulk_pricing_smoke_test.xlsx"
+
+          # Poll /api/bulk-pricing/template until gunicorn is back up (max 20 × 10s = 200s).
+          # Avoids a fixed sleep — stops as soon as the app responds.
+          echo "Waiting for app to come up..."
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/api/bulk-pricing/template" 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "App ready (attempt $i)"
+              break
+            fi
+            echo "  attempt $i: HTTP $STATUS — retrying in 10s"
+            if [ "$i" = "20" ]; then
+              echo "ERROR: app did not come up after 200s"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          # POST the two-row fixture — exercises _price_row, _pick_sku_cached,
+          # search_skus (AI Search), and sql_license_hourly (sql_pricing module).
+          HTTP_CODE=$(curl -s -o /tmp/smoke_response.json -w "%{http_code}" \
+            -X POST "${BASE_URL}/api/bulk-pricing/upload" \
+            -F "file=@${FIXTURE}" 2>/dev/null)
+
+          echo "POST /api/bulk-pricing/upload → HTTP $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "SMOKE TEST FAILED: expected HTTP 200, got $HTTP_CODE"
+            echo "--- response body ---"
+            cat /tmp/smoke_response.json
+            exit 1
+          fi
+
+          python3 - <<'PYEOF'
+          import json, sys
+          with open('/tmp/smoke_response.json') as f:
+              data = json.load(f)
+          rows   = data.get('rows', [])
+          totals = data.get('totals', {})
+          total  = totals.get('monthly_total', 0)
+          warns  = data.get('warnings', [])
+          print(f"  rows priced : {len(rows)}")
+          print(f"  grand total : ${total:.2f}/mo")
+          print(f"  warnings    : {warns}")
+          errors = []
+          if len(rows) == 0:
+              errors.append("no rows in response — SKU matching or parse failed")
+          if total <= 0:
+              errors.append(f"monthly_total={total} — expected > 0 (lazy import or pricing API failure)")
+          if errors:
+              for e in errors:
+                  print(f"SMOKE TEST FAILED: {e}")
+              sys.exit(1)
+          print("SMOKE TEST PASSED")
+          PYEOF
