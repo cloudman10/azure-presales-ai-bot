@@ -160,6 +160,7 @@ td.sku{font-family:ui-monospace,monospace;font-size:11px;color:#005A9E}
   </div>
   <div class="header-right">
     <span class="dot"></span>
+    <button class="nav-btn" id="btn-reset" title="Clear selection and start fresh">↺ New</button>
     <a href="/pricing" class="nav-btn">💬 Chat Pricing</a>
     <a href="/architect" class="nav-btn">🏗 Architect</a>
   </div>
@@ -470,6 +471,15 @@ $('btn-cancel').addEventListener('click', () => {
 });
 $('btn-retry').addEventListener('click', () => showPanel('upload'));
 $('btn-new-upload').addEventListener('click', () => { clearFile(); showPanel('upload'); });
+
+function resetToUpload() {
+  if (_abortCtl) { _abortCtl.abort(); _abortCtl = null; }
+  stopTimer();
+  clearFile();
+  setValidation('');
+  showPanel('upload');
+}
+$('btn-reset').addEventListener('click', resetToUpload);
 
 async function runPricing() {
   if (!_file) return;
