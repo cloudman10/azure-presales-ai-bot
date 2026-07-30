@@ -152,6 +152,7 @@ td.col-price.has-val{color:#1A1A2E}
     <p>Filter and compare Azure VM pricing across all commitment terms — any region, live data</p>
   </div>
   <div class="header-right">
+    <button class="nav-btn" id="btn-header-reset" title="Reset all filters to defaults">↺ Reset</button>
     <a href="/" class="nav-btn">VM Advisor</a>
     <a href="/architect" class="nav-btn">Architecture</a>
   </div>
@@ -545,7 +546,7 @@ document.getElementById('f-search').addEventListener('input', () => {
   render();
 });
 
-document.getElementById('reset-btn').addEventListener('click', () => {
+function resetFilters() {
   selectRegion('australiaeast');
   document.getElementById('f-os').value        = 'Windows';
   document.getElementById('f-vcpus-min').value = '1';
@@ -554,7 +555,9 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   document.getElementById('f-ram-max').value   = '12288';
   document.getElementById('f-search').value    = '';
   _sort = {col:'payg_monthly', asc:true};
-});
+}
+document.getElementById('reset-btn').addEventListener('click', resetFilters);
+document.getElementById('btn-header-reset').addEventListener('click', resetFilters);
 
 // Column sort
 document.querySelectorAll('#price-table thead th').forEach(th => {
